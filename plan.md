@@ -1,0 +1,255 @@
+# plan.md — exdir 分步实现计划
+
+> 目的：把 Directory Opus 级别的功能拆成**每次只做一步**的任务，确保任何单次会话都不超出大模型上下文窗口。
+> 通用约定、命令、坑位记录见 **`AGENTS.md`**；本文件只负责“下一步做什么、怎么算做完”。
+> 每完成一步，就把该步的 `[ ]` 改成 `[x]`，并同步更新 `AGENTS.md` 的“当前状态”。
+
+---
+
+## 0. 每一步的标准流程（必须照做）
+
+1. 只读本步骤列出的“涉及文件”+ 必要的相邻文件，不要全仓库通读。
+2. 改代码 → `dotnet build exdir.csproj -c Debug -p:Platform=x64 --nologo`，零错误零新增警告。
+3. 用 `tools/capture.ps1` 截图 / `tools/inspect-ui.ps1` 查控件坐标，确认界面真的对（不要凭感觉）。
+4. 结果不符合预期时，第一件事是 `Get-Content $env:LOCALAPPDATA\exdir\exdir.log`。
+5. 如果发现了新的 WinUI 坑或约定，写进 `AGENTS.md` 的“踩过的坑”。
+6. 更新本文件的 `[x]` 与“当前状态”。
+7. `git add -A && git commit`（提交信息用中文，说明本步做了什么、怎么验证的）。
+
+**每步的规模上限**：新增/修改代码控制在 ~600 行以内、涉及文件不超过 8 个。超了就再拆一步。
+
+---
+
+## 1. 当前状态（已完成，可直接运行）
+
+- [x] **S0 主体框架**（本次完成）
+  - 非打包（unpackaged）工程改造：`WindowsPackageType=None` + `WindowsAppSDKSelfContained` + `SelfContained`；
+    移除 MSIX 清单与 `EnableMsixTooling`；`Assets\exdir.ico` 由脚本生成并设为应用图标。
+  - 外壳布局：`TitleBar` 控件（菜单栏 + 当前目录名 + 原生窗口按钮）/ 工具条（磁盘 + 固定目录 + 快捷菜单）/ 侧边栏文件夹树 / 1~2 个窗格。
+  - `PaneSplitter`（WinUI 无 GridSplitter）、Mica 背景、紧凑密度（标题栏 36、列表行 24）。
+  - 窗格：导航条（后退/前进/上一级/刷新 + 可编辑路径框）+ TabView 多标签。
+  - 列表：详细信息布局，列 名称/修改日期/类型/大小，点列头排序、多选、双击进入目录 / 打开文件、空目录与错误提示、选中摘要。
+  - 侧边栏：主目录（含桌面/文档/下载/图片/音乐/视频）、云存储（注册表探测同步根）、此电脑（各磁盘）；展开时懒加载子目录。
+  - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%LOCALAPPDATA%\exdir\settings.json`。
+  - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
+  - 工具脚本：`capture.ps1`（截图）、`inspect-ui.ps1`（UIA 控件树 / 点击）、`publish.ps1`（Release 产物）、`make-icon.ps1`。
+  - Release 产物：`dist\win-x64\exdir.exe`（自包含，224 MB / 531 文件，已验证可运行）。
+  - 已知技术债：见本文件第 5 节。
+
+---
+
+## 2. 待用户确认的决策
+
+这些会影响后续步骤的写法，**动手前先问清楚**（一次问完，不要在多个会话里反复问）：
+
+1. **每个窗格是否保留“导航条 + 路径框”？** 目前是我按 DOpus 习惯加的（需求里只写了“每个窗口可以有单独的 tab”）。
+   若不要，可以改成只靠面包屑 + 工具栏前进后退。
+2. **文件操作的实现路线**：
+   - (A) 调用系统 `IFileOperation`（资源管理器同款进度/冲突/撤销对话框，代码最少，行为最“Windows”）；
+   - (B) 自研复制/移动引擎（可完全控制 UI、支持队列、可暂停，但工作量大很多）。
+   建议先 A，后续需要再逐步替换成 B。
+3. **右键菜单**：直接弹**系统真实右键菜单**（`IContextMenu` + `SHBindToParent`，能拿到第三方 shell 扩展，但 UI 风格不统一、难以自动化测试）
+   还是**自建菜单**（风格统一、可测试，但只能用自己实现的命令）？建议：自建为主 + “显示系统菜单”兜底项。
+4. **视图形态**：目前只有“详细信息列表”。后续要不要 图标/缩略图/紧凑 三种？优先级如何？
+5. **快捷菜单**首批要内置哪些命令（当前按需求留空，只保留了数据驱动的框架）。
+6. **是否需要单元测试工程**（`exdir.Tests`，xUnit）？如果要，建议在第 3 步之前建立，之后每步补测试。
+7. **深色/浅色主题**：跟随系统即可，还是需要手动切换？
+
+---
+
+## 3. 分步实施计划
+
+### Phase 1 — 把“看得见的列表”做扎实（不涉及写文件，风险最低）
+
+- [ ] **S1 列表交互与列管理**
+  - 目标：列表具备真实文件管理器的基本手感和列控制能力。
+  - 涉及：`Views/DetailsView.xaml(.cs)`、`Helpers/ColumnLayout.cs`、`ViewModels/FolderTabViewModel.cs`、`Themes/ExdirTheme.xaml`、`Models/AppSettings.cs`。
+  - 内容：
+    - 列宽可拖动（自研列头分隔条，可复用 `PaneSplitter` 的指针拖拽思路，改成竖直细条）；
+    - 列宽持久化到设置（全局）；
+    - 窗格过窄时按优先级自动隐藏 类型 → 大小 → 修改日期 列（避免列被挤出可视区，这是当前已知瑕疵）；
+    - 列头排序增加“名称自然排序”（`strings like file2 < file10`，实现 `NaturalStringComparer`）；
+    - 右键列头 → 显示/隐藏列菜单（先只做 UI 骨架，行为在 S1 实现）。
+  - 验收：拖动分隔条列宽变化且重启后保持；把窗格拖到 400 DIP 宽时低优先级列自动隐藏，不出现横向溢出；截图确认列头与数据行仍严格对齐。
+  - 预估：~450 行，5 个文件。
+
+- [ ] **S2 键盘与多选导航**
+  - 目标：纯键盘可用。
+  - 涉及：`Views/DetailsView.xaml(.cs)`、`ViewModels/FolderTabViewModel.cs`、`MainWindow.xaml(.cs)`。
+  - 内容：`Ctrl+A` 全选、`Ctrl+Shift+A` 反选、`Enter` 打开、`Backspace` 上一级（仅当焦点在列表时，不要抢占路径框输入）、
+    `Home/End/PageUp/PageDown`、输入字母快速定位（type-ahead）、`Esc` 清空选择、
+    多选状态下 `Enter` 只打开第一项且目录全部在新标签页打开（可配置）。
+  - 验收：`inspect-ui.ps1 -Keys` 发送按键后控件树中选中项数量正确；路径框输入 `Backspace` 不受影响。
+  - 预估：~250 行，3 个文件。
+
+- [ ] **S3 状态栏与选择统计**
+  - 目标：底部细状态栏，显示“N 项 / 已选 M 项（合计 X）/ 磁盘可用空间”。
+  - 涉及：新建 `Views/StatusBarView.xaml(.cs)`、`MainWindow.xaml(.cs)`、`ViewModels/MainViewModel.cs`、`ViewModels/FolderTabViewModel.cs`。
+  - 内容：选中项总大小（后台异步求和，避免大目录卡顿）、活动窗格磁盘剩余、加载状态。
+  - 验收：切换目录/选择时数字实时正确；状态栏高度 ≤ 22 DIP，不破坏紧凑观感。
+  - 预估：~300 行，5 个文件。
+
+### Phase 2 — 文件操作基础设施（本项目的核心，务必先建底座）
+
+- [ ] **S4 剪贴板与文件操作服务（只读骨架）**
+  - 目标：搭好 `IFileOperationService` / `IClipboardService` 抽象与实现，先只接通“复制路径/复制文件列表到剪贴板（CF_HDROP + Preferred DropEffect）”，不做真正的拷贝。
+  - 涉及：新增 `Services/IClipboardService.cs(.cs)`、`Services/IFileOperationService.cs(.cs)`、`Services/Native/ShellInterop.cs`、`App.xaml.cs`（注册）。
+  - 内容：
+    - Win32 `OleSetClipboard` 或 `DataPackage.SetStorageItems` 两种方案选一（非打包下推荐 Win32，避免包标识问题）；
+    - 读剪贴板写成 `ClipboardSnapshot { Operation: Copy|Move, Paths }`；
+    - `IFileOperationService` 先只声明方法签名 + 抛 `NotImplementedException` 的实现，便于后续步骤分步填充。
+  - 验收：在资源管理器里复制若干文件 → exdir 粘贴按钮能读出版本正确的列表（先用日志/状态栏显示）。
+  - 预估：~350 行，5 个文件。
+
+- [ ] **S5 删除 / 重命名 / 新建（第一批真实写操作）**
+  - 目标：`Delete`（进回收站）、`Shift+Delete`（永久删除）、`F2` 就地重命名、新建文件夹/文本文档。
+  - 涉及：`Services/IFileOperationService.cs` + 实现、`ViewModels/FolderTabViewModel.cs`、`Views/DetailsView.xaml(.cs)`、`Views/RenameBox`（就地编辑用 `TextBox` 覆盖行）。
+  - 内容：
+    - 用 `SHFileOperation`/`IFileOperation` 完成删除（带回收站）；
+    - 就地重命名：列表行切换到编辑态，回车确认、Esc 取消、查重名；
+    - 新建后自动进入重命名态并滚动到可见；
+    - 所有写操作完成后刷新当前目录并保留选中。
+  - 验收：删到回收站能在资源管理器“回收站”里看到；重命名后选中项跟随；无权限时报 `InfoBar` 错误而不是崩溃。
+  - 预估：~500 行，5 个文件。
+
+- [ ] **S6 复制 / 移动（含跨窗格与冲突处理）**
+  - 目标：剪贴板驱动的复制/剪切/粘贴，以及跨窗格直接复制/移动。
+  - 涉及：`Services/IFileOperationService.cs` + 实现、`ViewModels/MainViewModel.cs`、`ViewModels/PanelViewModel.cs`、新增 `Views/OperationProgressDialog.xaml(.cs)`。
+  - 内容：优先走系统 `IFileOperation`（获得标准进度/冲突/撤销对话框）；
+    源目录与目标目录相同、目标已存在同名等边界处理；操作为异步且可取消；完成后两个窗格各自刷新。
+  - 验收：复制 1 GB 目录有进度且可取消；同名冲突弹标准对话框；拖动窗格分隔条期间不阻塞。
+  - 预估：~550 行，6 个文件。
+
+- [ ] **S7 拖放**
+  - 目标：窗格内/窗格间/与资源管理器互相拖放（`DataPackageOperation.Copy/Move/Link`），拖到目录行上悬停 1 秒进入该目录。
+  - 涉及：`Views/DetailsView.xaml(.cs)`、`Views/PaneView.xaml(.cs)`、`Services/IFileOperationService.cs`。
+  - 验收：从 exdir 拖到资源管理器能复制；从资源管理器拖进 exdir 能复制；窗格间拖动默认移动（同盘）/复制（跨盘）。
+  - 预估：~500 行，4 个文件。
+
+### Phase 3 — 交互增强
+
+- [ ] **S8 右键上下文菜单**
+  - 目标：列表空白处 / 选中项 / 列头 / 侧边栏节点各自的菜单。
+  - 涉及：新增 `Views/ContextMenus/`、`ViewModels/ContextMenuBuilder.cs`、`Services/IShellService.cs`（增加 `ShowShellContextMenu(paths, hwnd, point)`）。
+  - 内容：自建菜单（打开、在新标签页打开、复制/剪切/粘贴、删除、重命名、属性、复制路径、在终端打开、压缩…）；
+    末项“显示系统菜单”调用 `IContextMenu` 弹出资源管理器同款菜单（能带第三方扩展）。
+  - 验收：不同上下文菜单项正确启用/禁用；系统菜单能弹出（P/Invoke 需 DPI 正确）。
+  - 预估：~550 行，6 个文件。
+
+- [ ] **S9 地址面包屑**
+  - 目标：导航条上的路径框旁边/替代品：可点击的路径分段，支持 `\\server\share`、`C:\`、WSL 路径。
+  - 涉及：新增 `Views/PathBreadcrumb.xaml(.cs)`、`ViewModels/FolderTabViewModel.cs`、`Views/PaneView.xaml(.cs)`。
+  - 内容：分段点击跳转、每段右侧下拉显示同级目录、点击空白处切换回可编辑 TextBox（保留现有回车行为）。
+  - 验收：深层路径渲染正确不溢出（超长时中间段省略）；截图确认高度不超过导航条。
+  - 预估：~450 行，4 个文件。
+
+- [ ] **S10 标签页与窗格增强**
+  - 目标：拖拽重排标签、复制标签、锁定标签（锁定后导航会新开标签）、标签页组保存/恢复、两窗格同步浏览（同时切换同一子目录）。
+  - 涉及：`ViewModels/PanelViewModel.cs`、`ViewModels/FolderTabViewModel.cs`、`Views/PaneView.xaml(.cs)`、`Models/AppSettings.cs`。
+  - 验收：10 个标签页拖拽重排后顺序持久化；锁定标签导航时新开标签。
+  - 预估：~450 行，4 个文件。
+
+### Phase 4 — 搜索 / 过滤 / 视图
+
+- [ ] **S11 当前目录快速过滤**
+  - 目标：导航条右侧输入框，实时（去抖 120 ms）过滤当前列表（支持 `*`/`?` 通配）。
+  - 涉及：`Views/DetailsView.xaml(.cs)`、`ViewModels/FolderTabViewModel.cs`。
+  - 验收：1 万项目录中输入时无明显卡顿（过滤在后台线程 + 结果整体替换）。
+  - 预估：~250 行，2 个文件。
+
+- [ ] **S12 递归搜索**
+  - 目标：`Ctrl+F` 打开搜索面板，后台递归枚举（可取消、可暂停），结果为“列表 + 所在目录”列。
+  - 涉及：新增 `ViewModels/SearchViewModel.cs`、`Views/SearchPanel.xaml(.cs)`、`Services/IFileSystemService.cs`（加递归枚举）。
+  - 验收：搜索 `C:\Users` 时 UI 不卡；能在中途取消；结果双击跳转到文件所在目录并选中。
+  - 预估：~550 行，5 个文件。
+
+- [ ] **S13 图标 / 紧凑 / 缩略图视图**
+  - 目标：落地已预留的 `ViewLayout` 枚举，导航条加视图切换按钮，每个标签页独立记住布局。
+  - 涉及：新增 `Views/IconsView.xaml(.cs)`、`Views/CompactView.xaml(.cs)`；`Views/PaneView.xaml(.cs)`；`Services/IImageCacheService`（缩略图 `IThumbnailProvider`）。
+  - 验收：切换布局即时生效并持久化；1000 张图片目录滚动流畅（缩略图异步加载 + 缓存）。
+  - 预估：~500 行（缩略图另算一步）。
+  - 建议拆分为 S13a（图标/紧凑，无缩略图）与 S13b（缩略图）。
+
+- [ ] **S14 真实 Shell 图标**
+  - 目标：用 `SHGetFileInfo`/`IImageList` 取系统图标，替换当前的 Segoe 字形（`Helpers/FileTypeHelper` 里的字形兜底保留）。
+  - 涉及：`Services/IShellIconService.cs(.cs)`、`Helpers/FileTypeHelper.cs`、`Views/DetailsView.xaml`、`ViewModels/FileItemViewModel.cs`。
+  - 验收：`.exe/.lnk/.文件夹` 显示与资源管理器一致；图标有缓存，滚动不重复取。
+  - 预估：~350 行，4 个文件。
+
+### Phase 5 — 压缩、设置、平台
+
+- [ ] **S15 压缩与解压**
+  - 目标：`Compress-Archive` 等价功能，自带进度，可解压到当前/新建目录。
+  - 涉及：新增 `Services/IArchiveService.cs(.cs)`；`ViewModels/ContextMenuBuilder.cs`。
+  - 验收：压缩 1 GB 目录有进度可取消；zip64 大文件可用。
+  - 预估：~400 行，3 个文件。
+
+- [ ] **S16 哈希与属性**
+  - 目标：SHA256/MD5 计算（后台、可取消、多文件队列）、只读属性对话框、占用空间统计。
+  - 涉及：新增 `Services/IHashService.cs(.cs)`、`Views/HashDialog.xaml(.cs)`、`Views/PropertiesDialog.xaml(.cs)`。
+  - 预估：~450 行，5 个文件。
+
+- [ ] **S17 设置窗口**
+  - 目标：把设置从 JSON 手改变成可编辑 UI：外观（紧凑度/主题/列显示）、标签页与会话行为、固定目录管理、快捷命令编辑器（名称/图标/命令行/是否需要管理员）。
+  - 涉及：新增 `Views/SettingsWindow.xaml(.cs)` + `ViewModels/SettingsViewModel.cs`；`Models/AppSettings.cs`。
+  - 验收：改完立即生效并落盘；快捷菜单里出现自定义命令且能真正执行。
+  - 预估：~600 行，4 个文件（可能需拆成“设置外壳 + 各分页”两步）。
+
+- [ ] **S18 文件系统监视自动刷新**
+  - 目标：`FileSystemWatcher` 监视当前目录，外部变动时增量刷新（去抖），保持选中与滚动位置。
+  - 涉及：新增 `Services/IDirectoryWatcher.cs(.cs)`、`ViewModels/FolderTabViewModel.cs`。
+  - 验收：在资源管理器里新建文件，exdir 1 秒内出现该文件且不闪烁、不丢选中。
+  - 预估：~350 行，3 个文件。
+
+- [ ] **S19 单实例 + 命令行参数 + 管理员**
+  - 目标：`exdir.exe <path>` 在当前实例的新标签页打开；已运行时把请求转发给已有实例；“以管理员身份重新启动”。
+  - 涉及：`App.xaml.cs`、新增 `Services/IInstanceService.cs(.cs)`（命名管道/互斥体）、`Program.cs`（自定义 `Main` 以便在 `Application.Start` 之前处理参数）。
+  - 验收：命令行第二次启动会把路径交给第一个实例；无参数时按会话恢复。
+  - 预估：~400 行，4 个文件。
+
+### Phase 6 — 质量
+
+- [ ] **S20 单元测试工程**
+  - 目标：`exdir.Tests`（xUnit）覆盖纯逻辑：`FileSystemService` 路径规整、`SizeFormatter`/`FileTypeHelper`、
+    排序比较器、`AppSettings` 序列化、`SidebarViewModel` 构建、`FolderTabViewModel` 导航历史。
+  - 注意：不要引用 WinUI 类型，把这些逻辑保持在无 UI 依赖的层（必要时抽接口）。
+  - 验收：`dotnet test` 全绿；CI 可在无桌面环境下跑。
+  - 预估：~500 行，8 个文件。
+
+- [ ] **S21 性能与稳定性收尾**
+  - 目标：10 万文件目录的枚举/显示性能（分批填充 + 虚拟化确认）、大目录排序不卡、
+    内存占用（图标/缩略图缓存上限）、异常兜底（路径过长、网络盘断开、介质移除）。
+  - 验收：写一份 `docs/performance.md` 记录测量方法与结果。
+  - 预估：~300 行 + 文档。
+
+- [ ] **S22 可访问性与文档**
+  - 目标：补齐 `AutomationProperties.Name`、Tab 键顺序、快捷键提示；更新 `README.md`（截图 + 使用说明）与 `AGENTS.md`。
+  - 预估：~200 行 + 文档。
+
+---
+
+## 4. 横切关注点
+
+* **不要引入新的 NuGet 依赖**，除非本计划里明确写了。特别是不用 `CommunityToolkit.WinUI.Controls`（会带一堆样式覆盖，和我们的紧凑主题打架）。
+* **每个新功能都要能被自动化验证**：控件加 `AutomationProperties.Name`，然后用 `tools/inspect-ui.ps1 -Click/-Keys` 断言。
+* **所有耗时操作必须可取消**（`CancellationTokenSource`），并且取消后 UI 状态要能回到一致状态（当前 `FolderTabViewModel._loadCts` 是范例）。
+* **UI 线程规则**：`ObservableCollection` 只在 UI 线程改；后台只产出 `IReadOnlyList`。
+* **写文件前先确认**：删除/覆盖类操作必须有二次确认或进回收站，避免测试脚本误删用户数据。
+
+---
+
+## 5. 已知技术债 / 需要留意的瑕疵
+
+| 项 | 说明 | 计划处理 |
+| --- | --- | --- |
+| 列被挤出可视区 | 窗格很窄（< ~410 DIP）时固定列溢出，`大小` 列看不见 | S1 |
+| 图标是字形不是系统图标 | `Helpers/FileTypeHelper` 用 Segoe Fluent 字形兜底 | S14 |
+| 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
+| 无文件系统监视 | 外部改动需手动 F5 | S18 |
+| 快捷菜单为空 | 按需求刻意留空，仅数据驱动 | S17 |
+| 无右键菜单 | 需求未明确，需先确认路线 | S8 |
+| 侧边栏同步是“尽力而为” | 只在已加载节点里查找，深层目录不会自动展开定位 | S10（可加“展开到当前路径”） |
+| 单实例未处理 | 多次启动会有多个进程 | S19 |
+| 只有 x64 验证过 | x86/ARM64 未测试 | 需要时再验证 |
+| 无单元测试 | 纯逻辑可测但尚未建工程 | S20 |
+| Release 产物 224 MB | 因为 .NET + WinAppSDK 全自包含。若可接受“要求目标机装 Windows App Runtime”，可改回框架依赖以大幅减小体积 | 按需 |

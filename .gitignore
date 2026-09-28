@@ -1,0 +1,28 @@
+## Build output
+bin/
+obj/
+dist/
+.artifacts/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+
+## NuGet
+*.nupkg
+packages/
+project.lock.json
+
+## Misc
+*.log
+*.tmp
+*.bak
+Thumbs.db
+desktop.ini

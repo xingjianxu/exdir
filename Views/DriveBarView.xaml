@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Exdir.Views.DriveBarView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:Exdir.Models"
+    xmlns:vm="using:Exdir.ViewModels"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid
+        Height="{StaticResource ExToolbarHeight}"
+        Padding="6,0,6,0"
+        Background="{ThemeResource LayerFillColorDefaultBrush}"
+        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+        BorderThickness="0,0,0,1"
+        ColumnSpacing="6">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左：磁盘 / 网络盘 / 可移动盘 -->
+        <ScrollViewer
+            Grid.Column="0"
+            HorizontalScrollBarVisibility="Hidden"
+            HorizontalScrollMode="Auto"
+            VerticalScrollBarVisibility="Disabled"
+            VerticalScrollMode="Disabled">
+            <ItemsControl ItemsSource="{x:Bind ViewModel.Drives, Mode=OneWay}" VerticalAlignment="Center">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="2" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="models:DriveModel">
+                        <Button
+                            MinHeight="26"
+                            Padding="8,1,8,1"
+                            AutomationProperties.Name="{x:Bind ToolbarText}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="DriveButton_Click"
+                            ToolTipService.ToolTip="{x:Bind Tooltip}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontSize="14" Glyph="{x:Bind Glyph}" />
+                                <TextBlock VerticalAlignment="Center" Text="{x:Bind ToolbarText}" />
+                            </StackPanel>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- 右：固定目录 + 快捷菜单 -->
+        <StackPanel
+            Grid.Column="1"
+            Orientation="Horizontal"
+            Spacing="2"
+            VerticalAlignment="Center">
+            <ItemsControl ItemsSource="{x:Bind ViewModel.PinnedFolders, Mode=OneWay}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="2" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PinnedFolderViewModel">
+                        <Button
+                            MinHeight="26"
+                            Padding="8,1,8,1"
+                            AutomationProperties.Name="{x:Bind Name}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Click="PinnedButton_Click"
+                            ToolTipService.ToolTip="{x:Bind Tooltip}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon FontSize="14" Glyph="&#xE8B7;" />
+                                <TextBlock VerticalAlignment="Center" Text="{x:Bind Name}" />
+                            </StackPanel>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <Button
+                x:Name="QuickMenuButton"
+                MinWidth="30"
+                MinHeight="26"
+                Padding="6,1,6,1"
+                AutomationProperties.Name="快捷菜单"
+                Background="Transparent"
+                BorderThickness="0"
+                ToolTipService.ToolTip="快捷菜单">
+                <FontIcon FontSize="14" Glyph="&#xE712;" />
+                <Button.Flyout>
+                    <MenuFlyout x:Name="QuickMenuFlyout" Opening="QuickMenuFlyout_Opening" />
+                </Button.Flyout>
+            </Button>
+        </StackPanel>
+    </Grid>
+</UserControl>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  exdir 主题资源
+  ================================================================
+  1) 紧凑密度：覆盖 WinUI 内建尺寸常量（必须在 XamlControlsResources 之后合并才能生效）
+  2) 应用自定义尺寸常量与画笔
+  注意：只覆盖“纯数值/颜色”型资源键，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ===================== 1. 紧凑密度覆盖 ===================== -->
+
+    <!-- 标题栏：默认 48/32，压缩到 36/30 -->
+    <x:Double x:Key="TitleBarExpandedHeight">36</x:Double>
+    <x:Double x:Key="TitleBarCompactHeight">30</x:Double>
+
+    <!-- 列表与树：默认 32/32，压缩到 24 -->
+    <x:Double x:Key="ListViewItemMinHeight">24</x:Double>
+    <x:Double x:Key="TreeViewItemMinHeight">24</x:Double>
+    <x:Double x:Key="MenuFlyoutItemMinHeight">28</x:Double>
+    <x:Double x:Key="MenuBarItemHeight">30</x:Double>
+
+    <!-- ===================== 2. 布局常量 ===================== -->
+
+    <x:Double x:Key="ExToolbarHeight">34</x:Double>
+    <x:Double x:Key="ExListHeaderHeight">26</x:Double>
+    <x:Double x:Key="ExRowHeight">24</x:Double>
+    <x:Double x:Key="ExSplitterWidth">6</x:Double>
+
+    <x:Double x:Key="ExSidebarDefaultWidth">232</x:Double>
+    <x:Double x:Key="ExSidebarMinWidth">150</x:Double>
+    <x:Double x:Key="ExSidebarMaxWidth">520</x:Double>
+
+    <x:Double x:Key="ExColumnNameMinWidth">160</x:Double>
+    <!-- 注意：ColumnDefinition.Width 是 GridLength，无法直接使用 Double 资源；
+         列宽统一定义在 Exdir.Helpers.ColumnLayout 中，通过 x:Bind 共享。 -->
+
+    <!-- 列表行左右内边距；列头必须使用相同值才能对齐 -->
+    <Thickness x:Key="ExRowPadding">6,0,6,0</Thickness>
+
+    <!-- 分隔条视觉宽度（真正的命中区域更宽，见 PaneSplitter） -->
+    <x:Double x:Key="ExSplitterVisualWidth">1</x:Double>
+
+</ResourceDictionary>

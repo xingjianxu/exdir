@@ -1,0 +1,24 @@
+namespace Exdir.Models;
+
+/// <summary>把一个文件系统条目（文件或目录）的元数据从 I/O 层传递到 UI 层。</summary>
+public sealed class FileSystemEntry
+{
+    public required string FullPath { get; init; }
+
+    public required string Name { get; init; }
+
+    public required bool IsDirectory { get; init; }
+
+    /// <summary>文件字节数；目录为 0。</summary>
+    public long Size { get; init; }
+
+    public DateTimeOffset LastWriteTime { get; init; }
+
+    public DateTimeOffset CreationTime { get; init; }
+
+    /// <summary>人类可读的类型名，例如“文件夹”“文本文档”。</summary>
+    public string TypeName { get; init; } = string.Empty;
+
+    /// <summary>是否隐藏或系统项。</summary>
+    public bool IsHidden { get; init; }
+}

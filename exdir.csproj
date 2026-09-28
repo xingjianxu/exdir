@@ -1,0 +1,105 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>Exdir</RootNamespace>
+    <AssemblyName>exdir</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x86;x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x86;win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <ApplicationIcon>Assets\exdir.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!--
+    ===========================================================================
+    非打包（unpackaged）部署模式
+    ===========================================================================
+    WindowsPackageType=None         -> 不生成 MSIX，直接产出可双击运行的 exe
+    WindowsAppSDKSelfContained=true -> 把 WindowsAppSDK 运行时随程序一起输出，
+                                       目标机器无需预装 Windows App Runtime
+  -->
+  <PropertyGroup>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!-- WinAppSDK 自包含需要 .NET 也自包含，否则运行时初始化器会去激活未注册的 WinRT 类 -->
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+  <!--
+    Publish 相关
+    ============
+    PublishTrimmed / PublishReadyToRun 必须关闭：
+      * 裁剪会让 XAML 反射查找控件类型失败；
+      * ReadyToRun 则会让生成的 XamlTypeInfo 在启动时抛 XamlParseException
+        （实测 Release 直接构建可用，但 publish 出 R2R 后无法启动）。
+  -->
+  <PropertyGroup>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
+  </PropertyGroup>
+
+  <!-- 非打包部署下资源文件需要显式复制到输出目录 -->
+  <ItemGroup>
+    <Content Include="Assets\exdir.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\SplashScreen.scale-200.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\LockScreenLogo.scale-200.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Square150x150Logo.scale-200.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Square44x44Logo.scale-200.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Square44x44Logo.targetsize-24_altform-unplated.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\StoreLogo.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Assets\Wide310x150Logo.scale-200.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <!--
+    ===========================================================================
+    为什么不用 dotnet publish
+    ===========================================================================
+    实测在本项目（WinUI 3 + 非打包）下 `dotnet publish` 会丢掉 XAML 编译器生成的
+    .xbf（编译后的 XAML）和应用资源索引 exdir.pri：它们只有 CopyToOutputDirectory，
+    没有被加入发布文件列表。缺了它们，发布版启动时
+    MainWindow.InitializeComponent() 会抛 XamlParseException（“XAML parsing failed”）。
+    尝试用自定义 target 手动补进 ResolvedFileToPublish 反而把整个发布目录写坏
+    （所有文件都被写成同一个 xbf 的内容），因此不用 publish。
+
+    正确的发布流程见 tools\publish.ps1：
+    先用 dotnet build 做 Release 构建（带 -r win-x64 与 self-contained 开关），
+    再把构建输出镜像到 dist\win-x64。构建输出里这些文件是齐全的，可直接双击运行。
+  -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+  </ItemGroup>
+
+</Project>

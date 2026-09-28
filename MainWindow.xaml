@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="Exdir.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Exdir.Controls"
+    xmlns:views="using:Exdir.Views"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="exdir">
+
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="Base" />
+    </Window.SystemBackdrop>
+
+    <Grid x:Name="RootGrid" Background="Transparent">
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="Left" Modifiers="Menu" Invoked="Accelerator_GoBack" />
+            <KeyboardAccelerator Key="Right" Modifiers="Menu" Invoked="Accelerator_GoForward" />
+            <KeyboardAccelerator Key="Up" Modifiers="Menu" Invoked="Accelerator_GoUp" />
+            <KeyboardAccelerator Key="F5" Invoked="Accelerator_Refresh" />
+            <KeyboardAccelerator Key="T" Modifiers="Control" Invoked="Accelerator_NewTab" />
+            <KeyboardAccelerator Key="W" Modifiers="Control" Invoked="Accelerator_CloseTab" />
+            <KeyboardAccelerator Key="H" Modifiers="Control" Invoked="Accelerator_ToggleHidden" />
+            <KeyboardAccelerator Key="B" Modifiers="Control" Invoked="Accelerator_ToggleSidebar" />
+            <KeyboardAccelerator Key="F6" Invoked="Accelerator_SwitchPane" />
+            <KeyboardAccelerator Key="F10" Invoked="Accelerator_ToggleDualPane" />
+        </Grid.KeyboardAccelerators>
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- =====================================================
+             顶部菜单栏：菜单 | 当前目录名 | 系统窗口按钮
+             ===================================================== -->
+        <TitleBar
+            x:Name="AppTitleBar"
+            Grid.Row="0"
+            Background="Transparent"
+            IsPaneToggleButtonVisible="True"
+            PaneToggleRequested="AppTitleBar_PaneToggleRequested">
+            <TitleBar.Resources>
+                <x:Double x:Key="TitleBarExpandedHeight">36</x:Double>
+                <x:Double x:Key="TitleBarCompactHeight">30</x:Double>
+            </TitleBar.Resources>
+
+            <TitleBar.IconSource>
+                <FontIconSource FontSize="14" Glyph="&#xE8B7;" />
+            </TitleBar.IconSource>
+
+            <TitleBar.LeftHeader>
+                <MenuBar
+                    x:Name="MainMenuBar"
+                    VerticalAlignment="Center"
+                    Background="Transparent">
+                    <MenuBarItem
+                        Height="30"
+                        Padding="10,0"
+                        MinHeight="0"
+                        Title="文件">
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.NewTabCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+T"
+                            Text="新建标签页" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.CloseActiveTabCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+W"
+                            Text="关闭当前标签页" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.OpenTerminalCommand}" Text="在此处打开终端" />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.OpenTerminalAsAdminCommand}" Text="以管理员身份打开终端" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.ExitCommand}" Text="退出" />
+                    </MenuBarItem>
+
+                    <MenuBarItem
+                        Height="30"
+                        Padding="10,0"
+                        MinHeight="0"
+                        Title="编辑">
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.CopyCurrentPathCommand}"
+                            Text="复制当前目录路径" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.PinCurrentFolderCommand}" Text="固定当前目录到标题栏" />
+                    </MenuBarItem>
+
+                    <MenuBarItem
+                        Height="30"
+                        Padding="10,0"
+                        MinHeight="0"
+                        Title="查看">
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.ToggleDualPaneCommand}"
+                            KeyboardAcceleratorTextOverride="F10"
+                            Text="双窗格" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.ToggleSidebarCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+B"
+                            Text="侧边栏" />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.ToggleToolbarCommand}" Text="工具条" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.ToggleHiddenFilesCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+H"
+                            Text="显示隐藏文件" />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.ToggleShowExtensionsCommand}" Text="显示文件扩展名" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.RefreshActivePaneCommand}"
+                            KeyboardAcceleratorTextOverride="F5"
+                            Text="刷新" />
+                    </MenuBarItem>
+
+                    <MenuBarItem
+                        x:Name="GoMenu"
+                        Height="30"
+                        Padding="10,0"
+                        MinHeight="0"
+                        Title="转到">
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.GoBackCommand}"
+                            KeyboardAcceleratorTextOverride="Alt+←"
+                            Text="后退" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.GoForwardCommand}"
+                            KeyboardAcceleratorTextOverride="Alt+→"
+                            Text="前进" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.GoUpCommand}"
+                            KeyboardAcceleratorTextOverride="Alt+↑"
+                            Text="上一级" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.SwitchActivePaneCommand}" KeyboardAcceleratorTextOverride="F6" Text="切换活动窗格" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutSubItem x:Name="LocationsSubItem" Text="所有位置" />
+                    </MenuBarItem>
+
+                    <MenuBarItem
+                        Height="30"
+                        Padding="10,0"
+                        MinHeight="0"
+                        Title="工具">
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.RevealInExplorerCommand}" Text="在资源管理器中显示" />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.RefreshDrivesCommand}" Text="重新扫描磁盘" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Command="{x:Bind ViewModel.OpenSettingsFolderCommand}" Text="打开配置文件夹" />
+                    </MenuBarItem>
+
+                    <MenuBarItem
+                        Height="30"
+                        Padding="10,0"
+                        MinHeight="0"
+                        Title="帮助">
+                        <MenuFlyoutItem Click="About_Click" Text="关于 exdir" />
+                    </MenuBarItem>
+                </MenuBar>
+            </TitleBar.LeftHeader>
+
+            <TitleBar.Content>
+                <TextBlock
+                    VerticalAlignment="Center"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Text="{x:Bind ViewModel.ActiveDirectoryName, Mode=OneWay}"
+                    TextTrimming="CharacterEllipsis"
+                    ToolTipService.ToolTip="{x:Bind ViewModel.ActiveDirectoryPath, Mode=OneWay}" />
+            </TitleBar.Content>
+        </TitleBar>
+
+        <!-- =====================================================
+             title 栏：磁盘 | 固定目录 + 快捷菜单
+             ===================================================== -->
+        <views:DriveBarView
+            x:Name="DriveBar"
+            Grid.Row="1"
+            ViewModel="{x:Bind ViewModel}" />
+
+        <!-- =====================================================
+             主体：侧边栏 | 分隔条 | 文件窗格（1 或 2 个）
+             ===================================================== -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="SidebarColumn" Width="232" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="240" />
+            </Grid.ColumnDefinitions>
+
+            <views:SidebarView
+                x:Name="Sidebar"
+                Grid.Column="0"
+                ViewModel="{x:Bind ViewModel.Sidebar}" />
+
+            <controls:PaneSplitter
+                x:Name="SidebarSplitter"
+                Grid.Column="1"
+                Width="{StaticResource ExSplitterWidth}"
+                DeltaChanged="SidebarSplitter_DeltaChanged"
+                LineBrush="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+            <Grid Grid.Column="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="PrimaryPaneColumn" Width="*" />
+                    <ColumnDefinition x:Name="PaneSplitterColumn" Width="0" />
+                    <ColumnDefinition x:Name="SecondaryPaneColumn" Width="0" />
+                </Grid.ColumnDefinitions>
+
+                <views:PaneView
+                    x:Name="PrimaryPane"
+                    Grid.Column="0"
+                    ViewModel="{x:Bind ViewModel.PrimaryPane}" />
+
+                <controls:PaneSplitter
+                    x:Name="PanesSplitter"
+                    Grid.Column="1"
+                    Width="{StaticResource ExSplitterWidth}"
+                    DeltaChanged="PanesSplitter_DeltaChanged"
+                    LineBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                    Visibility="Collapsed" />
+
+                <views:PaneView
+                    x:Name="SecondaryPane"
+                    Grid.Column="2"
+                    ViewModel="{x:Bind ViewModel.SecondaryPane}"
+                    Visibility="Collapsed" />
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

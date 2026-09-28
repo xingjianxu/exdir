@@ -1,0 +1,182 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using Windows.ApplicationModel.DataTransfer;
+
+namespace Exdir.Services;
+
+/// <inheritdoc cref="IShellService" />
+public sealed class ShellService : IShellService
+{
+    private static readonly string? WindowsTerminalPath = ProbeWindowsTerminal();
+
+    public void OpenWithDefaultApp(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception)
+        {
+            // 没有关联程序或权限不足：静默失败，后续可改为提示对话框
+        }
+    }
+
+    public void OpenAll(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            OpenWithDefaultApp(path);
+        }
+    }
+
+    public void RevealInFileExplorer(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{path}\"") { UseShellExecute = true });
+            }
+            else
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+            }
+        }
+        catch (Exception)
+        {
+            // 忽略
+        }
+    }
+
+    public void OpenTerminal(string directory, bool asAdministrator = false, bool preferWindowsTerminal = true)
+    {
+        var workingDirectory = Directory.Exists(directory) ? directory : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        try
+        {
+            if (asAdministrator)
+            {
+                // -WorkingDirectory 需要引号；runas 不接受 UseShellExecute=false
+                var arguments = $"-NoExit -WorkingDirectory \"{workingDirectory}\"";
+                Process.Start(new ProcessStartInfo(ResolvePowerShellPath(), arguments)
+                {
+                    UseShellExecute = true,
+                    Verb = "runas",
+                });
+                return;
+            }
+
+            if (preferWindowsTerminal && WindowsTerminalPath is not null)
+            {
+                Process.Start(new ProcessStartInfo(WindowsTerminalPath, $"-d \"{workingDirectory}\"") { UseShellExecute = true });
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo(ResolvePowerShellPath(), $"-NoExit -WorkingDirectory \"{workingDirectory}\"")
+            {
+                UseShellExecute = true,
+                WorkingDirectory = workingDirectory,
+            });
+        }
+        catch (Exception)
+        {
+            // 用户取消 UAC 或终端缺失
+        }
+    }
+
+    public void CopyTextToClipboard(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        try
+        {
+            var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            package.SetText(text);
+            Clipboard.SetContent(package);
+            Clipboard.Flush();
+        }
+        catch (Exception)
+        {
+            // 剪贴板被其它进程占用时忽略
+        }
+    }
+
+    public void RunCommand(string commandLine, string workingDirectory, bool asAdministrator = false)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return;
+        }
+
+        var cwd = Directory.Exists(workingDirectory)
+            ? workingDirectory
+            : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        try
+        {
+            var startInfo = new ProcessStartInfo("cmd.exe", $"/c {commandLine}")
+            {
+                UseShellExecute = true,
+                WorkingDirectory = cwd,
+            };
+
+            if (asAdministrator)
+            {
+                startInfo.Verb = "runas";
+            }
+
+            Process.Start(startInfo);
+        }
+        catch (Exception)
+        {
+            // 用户取消 UAC 或命令不存在
+        }
+    }
+
+    /// <summary>优先使用 PowerShell 7，回退到 Windows PowerShell。</summary>
+    private static string ResolvePowerShellPath()
+    {
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var pwsh = Path.Combine(programFiles, "PowerShell", "7", "pwsh.exe");
+        if (File.Exists(pwsh))
+        {
+            return pwsh;
+        }
+
+        var localPwsh = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Microsoft", "WindowsApps", "pwsh.exe");
+        if (File.Exists(localPwsh))
+        {
+            return localPwsh;
+        }
+
+        return "powershell.exe";
+    }
+
+    private static string? ProbeWindowsTerminal()
+    {
+        // Windows Terminal 以应用执行别名方式注册在 %LOCALAPPDATA%\Microsoft\WindowsApps 下
+        var alias = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Microsoft", "WindowsApps", "wt.exe");
+
+        return File.Exists(alias) ? alias : null;
+    }
+}
