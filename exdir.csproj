@@ -48,8 +48,7 @@
   </PropertyGroup>
 
   <!-- 非打包部署下资源文件需要显式复制到输出目录 -->
-  <ItemGroup>
-    <Content Include="Assets\exdir.ico">
+  <ItemGroup>    <Content Include="Assets\exdir.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Assets\SplashScreen.scale-200.png">
@@ -77,6 +76,20 @@
 
   <ItemGroup>
     <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <!--
+    dist\ 里也有 Assets\*.png（发布产物），而构建时会有 **\*.png 之类的默认通配把它们当作内容
+    复制到输出目录，于是 bin 里多出一份 dist，publish.ps1 再把它镜像回 dist\win-x64，
+    形成越发布越深的 dist\win-x64\dist\win-x64\... 自我嵌套。这里把产物目录排除掉。
+  -->
+  <ItemGroup>
+    <Content Remove="dist\**" />
+    <Content Remove=".artifacts\**" />
+    <None Remove="dist\**" />
+    <None Remove=".artifacts\**" />
+    <PRIResource Remove="dist\**" />
+    <EmbeddedResource Remove="dist\**" />
   </ItemGroup>
 
   <!--

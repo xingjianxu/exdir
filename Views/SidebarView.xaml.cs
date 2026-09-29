@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using Exdir.Diagnostics;
+using Exdir.Helpers;
 using Exdir.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -57,6 +60,28 @@ public sealed partial class SidebarView : UserControl
         {
             // 展开失败时保持节点折叠，不打断交互
         }
+    }
+
+    /// <summary>
+    /// 拖拽的起点：把选中的树节点（已加载的目录）作为拖放内容。
+    /// 分组标题节点（云存储 / 此电脑）没有路径，拖它们不产生任何数据，直接取消。
+    /// </summary>
+    private void FolderTree_DragItemsStarting(TreeView sender, TreeViewDragItemsStartingEventArgs args)
+    {
+        var paths = args.Items
+            .OfType<SidebarNodeViewModel>()
+            .Select(node => node.FullPath)
+            .Where(path => !string.IsNullOrEmpty(path))
+            .ToList();
+
+        if (paths.Count == 0)
+        {
+            args.Cancel = true;
+            return;
+        }
+
+        DragDropHelper.SetPaths(args.Data, paths);
+        Log.Write($"拖拽开始（侧边栏）：{paths.Count} 个目录");
     }
 
     /// <summary>尽力把树的选中项同步到某个路径（仅限已加载的节点）。</summary>

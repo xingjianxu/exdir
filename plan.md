@@ -38,6 +38,9 @@
   - 菜单栏「配置 → 文件列表」（2026-09）：过渡动画 / 显示隐藏文件 / 显示文件扩展名三个勾选项，
     反向同步到 `AppSettings.EnableListAnimations` 等字段并由窗口关闭时落盘；
     动画开关只清 `ListView` 的过渡集合，不重载目录（切换后已显示的行也不再有入场/重排动画）。
+  - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
+    松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
+    `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
   - 云文件夹的同步状态列（2026-09，S23）：云同步目录（OneDrive / WPS 云盘 / 其它 CFAPI 同步根）
     的列表最前面多出一列状态图标（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步），
     可点列头排序；非云目录整列隐藏。
@@ -141,7 +144,15 @@
   - 目标：窗格内/窗格间/与资源管理器互相拖放（`DataPackageOperation.Copy/Move/Link`），拖到目录行上悬停 1 秒进入该目录。
   - 涉及：`Views/DetailsView.xaml(.cs)`、`Views/PaneView.xaml(.cs)`、`Services/IFileOperationService.cs`。
   - 验收：从 exdir 拖到资源管理器能复制；从资源管理器拖进 exdir 能复制；窗格间拖动默认移动（同盘）/复制（跨盘）。
-  - 预估：~500 行，4 个文件。
+  - [x] **S7a 拖到工具条固定目录**（2026-09）：列表/侧边栏里的目录拖到工具条右侧的固定目录区即固定，
+    立即落盘；拖拽时有强调色高亮 + “固定到工具条”提示；右键固定目录按钮可取消固定；外部来源
+    （资源管理器，`StorageItems`）拖目录进来也能固定。
+    新增 `Helpers/DragDropHelper.cs`、`tools/test-pin-drag.ps1`；改 `Views/DetailsView.xaml(.cs)`、
+    `Views/SidebarView.xaml(.cs)`、`Views/DriveBarView.xaml(.cs)`、`ViewModels/MainViewModel.cs`、
+    `Models/AppSettings.cs`（结构版本 2→3）、`Services/SettingsService.cs`。
+    验收：`tools/test-pin-drag.ps1` 三个用例全通过（列表 `.cargo` → 固定、侧边栏“图片” → 固定、
+    右键 Desktop → 取消固定），并检查 `%LOCALAPPDATA%\exdir\settings.json` 的 `PinnedFolders` 真的变了。
+  - [ ] 其余（文件本身可拖出到资源管理器、拖到目录行上悬停进入目录）仍未做。
 
 ### Phase 3 — 交互增强
 
@@ -302,6 +313,9 @@
 | 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
 | 无文件系统监视 | 外部改动需手动 F5 | S18 |
 | 快捷菜单为空 | 按需求刻意留空，仅数据驱动 | S17 |
+| 提权运行后拖放失效 | Windows 不允许高完整性级别（管理员）进程参与拖放：`DragItemsStarting` 会触发，但永远收不到 `DragOver`/`Drop`；以普通权限运行则正常（见 AGENTS.md 第 6 节第 21 条） | 系统限制，无解；必要时在界面上提示 |
+| 拖放只做了“目录 → 工具条固定目录” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
+| 固定目录最多 12 个 | 工具条固定目录区不滚动，太多了会把左侧磁盘区挤没（`MainViewModel.MaxPinnedFolders`） | 需要时改成横向滚动 / 溢出菜单 |
 | 无右键菜单 | 需求未明确，需先确认路线 | S8 |
 | 侧边栏同步是“尽力而为” | 只在已加载节点里查找，深层目录不会自动展开定位 | S10（可加“展开到当前路径”） |
 | 单实例未处理 | 多次启动会有多个进程 | S19 |

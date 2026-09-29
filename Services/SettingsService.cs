@@ -90,6 +90,13 @@ public sealed class SettingsService : ISettingsService
             }
         }
 
+        if (settings.SchemaVersion < 3)
+        {
+            // v3 开始把“用户是否自己配过固定目录”单独记账：
+            // 老设置里只要有值就算已配置，否则（空列表）当成“从未配置”补默认值。
+            settings.PinnedFoldersInitialized = settings.PinnedFolders.Count > 0;
+        }
+
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }
 

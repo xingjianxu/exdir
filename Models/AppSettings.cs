@@ -5,7 +5,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%LOCALAPPDATA%\exdir\settings.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -57,6 +57,13 @@ public sealed class AppSettings
     // ---------- 收藏与快捷菜单 ----------
     /// <summary>title 栏上固定显示的常用目录。</summary>
     public List<string> PinnedFolders { get; set; } = new();
+
+    /// <summary>
+    /// 用户是否已经拥有自己的固定目录列表。
+    /// 为 false（从未配置过）时首次启动会填入默认值；用户把所有固定目录都删掉后
+    /// 这个标志仍为 true，下次启动就不会把默认值又塞回来。
+    /// </summary>
+    public bool PinnedFoldersInitialized { get; set; }
 
     /// <summary>快捷菜单中的自定义命令。</summary>
     public List<QuickCommand> QuickCommands { get; set; } = new();

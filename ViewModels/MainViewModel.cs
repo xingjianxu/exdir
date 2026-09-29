@@ -16,6 +16,12 @@ namespace Exdir.ViewModels;
 /// </summary>
 public sealed partial class MainViewModel : ObservableObject
 {
+    /// <summary>
+    /// 工具条上最多固定多少个目录。工具条的固定目录区不滚动，太多了会把左边的磁盘区挤没，
+    /// 所以拖放/菜单新增时统一卡在这个上限（已有的配置项不会被删除）。
+    /// </summary>
+    private const int MaxPinnedFolders = 12;
+
     private readonly ISettingsService _settings;
     private readonly IDriveService _driveService;
     private readonly IKnownFolderService _knownFolders;
@@ -324,19 +330,15 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void PinCurrentFolder()
     {
-        var path = ActivePane.ActiveTab?.CurrentPath;
-        if (string.IsNullOrWhiteSpace(path))
+        if (ActivePane.ActiveTab?.CurrentPath is not { } path)
         {
             return;
         }
 
-        if (PinnedFolders.Any(p => string.Equals(p.Path, path, StringComparison.OrdinalIgnoreCase)))
+        if (TryPinFolder(path))
         {
-            return;
+            PersistPinnedFolders(writeToDisk: true);
         }
-
-        PinnedFolders.Add(new PinnedFolderViewModel(path));
-        PersistPinnedFolders();
     }
 
     [RelayCommand]
@@ -348,7 +350,65 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         PinnedFolders.Remove(folder);
-        PersistPinnedFolders();
+        PersistPinnedFolders(writeToDisk: true);
+    }
+
+    /// <summary>
+    /// 把一批路径固定到工具条（文件列表 / 侧边栏拖到工具条固定目录区）。
+    /// 返回真正新增的条目数：文件、不存在的路径、已经固定的目录都会被跳过。
+    /// </summary>
+    public int PinFolders(IEnumerable<string>? paths)
+    {
+        if (paths is null)
+        {
+            return 0;
+        }
+
+        var added = 0;
+        foreach (var path in paths)
+        {
+            if (TryPinFolder(path))
+            {
+                added++;
+            }
+        }
+
+        if (added > 0)
+        {
+            PersistPinnedFolders(writeToDisk: true);
+        }
+
+        return added;
+    }
+
+    /// <summary>固定单个目录；不是已存在的目录、或已经固定过（或工具条已满）时返回 false。</summary>
+    public bool TryPinFolder(string? path)
+    {
+        // 先确认是目录：NormalizeDirectoryPath 对文件路径会返回它的上级目录，
+        // 直接用它会把“拖了个文件上来”变成“固定了文件所在的目录”
+        if (string.IsNullOrWhiteSpace(path) || !_fileSystem.DirectoryExists(path))
+        {
+            return false;
+        }
+
+        var normalized = _fileSystem.NormalizeDirectoryPath(path);
+        if (normalized is null)
+        {
+            return false;
+        }
+
+        if (PinnedFolders.Count >= MaxPinnedFolders)
+        {
+            return false;
+        }
+
+        if (PinnedFolders.Any(p => string.Equals(p.Path, normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        PinnedFolders.Add(new PinnedFolderViewModel(normalized));
+        return true;
     }
 
     /// <summary>执行快捷菜单命令。</summary>
@@ -460,11 +520,10 @@ public sealed partial class MainViewModel : ObservableObject
     {
         PinnedFolders.Clear();
 
-        var configured = _settings.Current.PinnedFolders;
-        if (configured.Count == 0)
-        {
-            configured = _knownFolders.GetDefaultPinnedFolders().ToList();
-        }
+        // 只在“从未配置过”时给默认值：用户把固定目录删光了，下次启动也不该又塞回来
+        var configured = _settings.Current.PinnedFoldersInitialized
+            ? _settings.Current.PinnedFolders
+            : _knownFolders.GetDefaultPinnedFolders().ToList();
 
         foreach (var path in configured)
         {
@@ -477,8 +536,21 @@ public sealed partial class MainViewModel : ObservableObject
         PersistPinnedFolders();
     }
 
-    private void PersistPinnedFolders()
-        => _settings.Current.PinnedFolders = PinnedFolders.Select(p => p.Path).ToList();
+    /// <summary>
+    /// 把固定目录写回设置。
+    /// <paramref name="writeToDisk" /> 为 true 时立即落盘（增删固定目录是用户的明确动作，
+    /// 不该等到退出时才保存——崩溃或强杀就丢了）。
+    /// </summary>
+    private void PersistPinnedFolders(bool writeToDisk = false)
+    {
+        _settings.Current.PinnedFolders = PinnedFolders.Select(p => p.Path).ToList();
+        _settings.Current.PinnedFoldersInitialized = true;
+
+        if (writeToDisk)
+        {
+            _settings.Save();
+        }
+    }
 
     private void LoadQuickCommands()
     {

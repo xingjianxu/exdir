@@ -56,6 +56,10 @@ pwsh -NoProfile -File tools\inspect-ui.ps1 -Click "快捷菜单"      # 真实�
 
 # 5) 重新生成应用图标（Assets\exdir.ico）
 pwsh -NoProfile -File tools\make-icon.ps1
+
+# 6) 拖放回归（文件列表 / 侧边栏 → 工具条固定目录，含右键取消固定）
+#    需要交互桌面；当前 shell 提权时会自动改用 explorer.exe 以普通权限启动 exdir（见第 6 节第 21 条）
+pwsh -NoProfile -File tools\test-pin-drag.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -126,11 +130,11 @@ exdir/
 ├─ Views/                     UserControl：SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper / SizeFormatter
+├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper / SizeFormatter / DragDropHelper(内部拖放格式)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
-└─ tools/                     capture / inspect-ui / publish / make-icon 脚本
+└─ tools/                     capture / inspect-ui / test-pin-drag / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -143,6 +147,7 @@ exdir/
 │                              中间: 当前目录名                     │  (AppWindow)  │
 ├─────────────────────────────────────────────────────────────────┤
 │ 行1 工具条:  左=磁盘/网络盘/可移动盘      右=固定目录 + 快捷菜单⋯  │
+│            （固定目录区是拖放区：把目录从列表/侧边栏拖上来即固定）      │
 ├────────────┬───┬────────────────────────────────────────────────┤
 │ 行2 侧边栏 │ ║ │ 窗格（1 或 2 个）：TabView，每个标签页内部自上而下为   │
 │ 文件夹树   │ ║ │ 导航条(← → ↑ ⟳ + 面包屑地址栏) + 详细信息列表        │
@@ -204,6 +209,19 @@ exdir/
   * 成本：每个条目要建一次属性存储（实测约 2~3 ms/项），所以只在云目录里做、并行读，
     并有 1500 ms 时间预算（超预算的条目保持无状态），超时会在 exdir.log 留一行 `云同步状态：…`；
     侧边栏只建目录树（`EnumerateSubDirectoriesAsync`），不读状态。
+* **工具条右侧的“固定目录”是一个拖放区**（`DriveBarView` 的 `PinnedDropZone`）：
+  * 拖源：文件列表（`DetailsView.EntryList`，`CanDragItems=True`）与侧边栏文件夹树（`SidebarView.FolderTree`），
+    两者在 `DragItemsStarting` 里用 `Helpers/DragDropHelper.SetPaths` 把**目录**路径写进
+    自定义格式 `exdir/paths`（换行分隔的纯文本）；拖到文件/分组标题（没有路径的节点）会直接 `Cancel` 掉拖拽；
+  * 落点：`PinnedDropZone`（`AllowDrop=True` + `Background="Transparent"`，两者缺一不可）+ 一个
+    平时 `Visibility=Collapsed` 的高亮层（画在按钮**下面**，只露出一圈强调色边框与淡底色），
+    `DragOver` 里设 `AcceptedOperation=Copy` 与 `DragUIOverride.Caption="固定到工具条"`；
+  * 落下来后走 `MainViewModel.PinFolders`（去重、只收已存在的目录、上限 `MaxPinnedFolders=12`）
+    并**立即** `_settings.Save()` 落盘（不等退出，崩溃/强杀也不丢）；
+  * 右键固定目录按钮 → 动态 `MenuFlyout` 的“取消固定”（`ContextRequested`，不要用 `ContextFlyout`：
+    模板里拿不到 `DataContext`）；
+  * 外部来源（资源管理器等）只有 `StandardDataFormats.StorageItems`，`DragOver` 里同步判断不了内容，
+    所以先接受、`Drop` 里再筛目录（`DragDropHelper.GetPathsAsync`）。
 * **导航条属于标签页，不属于窗格**：`Views/NavigationBarView` 是 `TabView.TabItemTemplate` 里
   `TabViewItem` 内容的第 0 行（第 1 行是 `DetailsView`），VM 类型是 `FolderTabViewModel`。
   因此每个标签页各自拥有后退/前进/上一级/刷新按钮与地址栏（历史和编辑态都跟着标签页走）。
@@ -229,6 +247,8 @@ exdir/
 | `F6` | 切换活动窗格 |
 | `F10` | 单窗格 / 双窗格切换 |
 | `Ctrl+L` / `Alt+D` | 编辑活动窗格的地址栏（等价于点地址栏空白处） |
+
+另外：`文件列表 / 侧边栏文件夹树` 里的**目录**可以直接拖到工具条右侧的“固定目录”区固定下来。
 
 ## 5. 必须遵守的编码约定
 
@@ -324,6 +344,22 @@ exdir/
     `FitTo` 里的 `total`/`others` 求和（当初就是漏了最后一项导致压缩量算少、列溢出窗格）、
     以及 `AppSettings.ColumnWidths` 的顺序（改了顺序就要像“状态列”那样提 `CurrentSchemaVersion`
     并在 `SettingsService.Migrate` 里补，否则用户拖过的列宽会整体错位）。
+21. **提权（高完整性级别）的进程根本不能参与拖放**：`DragItemsStarting` 会正常触发，但之后就再也没有
+    `DragOver`/`Drop`（甚至整窗口 `AllowDrop=True` 的根元素也收不到 `DragEnter`，`DragItemsCompleted` 也不触发），
+    看起来像“拖拽开始了但落点没反应”。`tools/test-pin-drag.ps1` 在检测到当前 shell 已提权时会改用
+    `explorer.exe` 启动 exdir，把完整性级别降下来（这是 Windows 的安全策略，不是应用代码的问题）。
+22. **拖放的 `DragEventArgs` 在 `await` 之后不能再碰**：在 `DragOver` 里 `await e.DataView.GetStorageItemsAsync()`
+    之后再设 `e.DragUIOverride.Caption` / `e.AcceptedOperation` 会抛一个没有消息的 `COMException`，
+    而且**之后所有拖放都失效**（[#9296](https://github.com/microsoft/microsoft-ui-xaml/issues/9296)、
+    [#8108](https://github.com/microsoft/microsoft-ui-xaml/issues/8108)：DataExchangeHost 已经失效）。
+    所以 `DragOver` 必须全程同步（只做 `Contains` 这类同步判断），要读内容留到 `Drop`；
+    `Drop` 里也要先把 `e.DataView` 取到局部变量再 `await`，`await` 之后只改自己的 UI 状态。
+23. **`AllowDrop` 的元素必须有 `Background`（哪怕是 `Transparent`）才有命中区**，
+    否则空白/无背景的区域收不到 `DragOver`/`Drop`。只挂在祖先上就够（子元素上的拖拽会往上冒泡），
+    不需要给每个子控件都写 `AllowDrop`（实测只写在外层 `Border` 上即可）。
+24. **`MenuFlyout` 等弹出菜单不在主窗口的 UIA 子树里**（Desktop 下它是另一个 XAML 岛/窗口）：
+    `inspect-ui.ps1` 那套 `root.FindAll(...)` 找不到菜单项，要从 `AutomationElement.RootElement` 往下找
+    （`tools/test-pin-drag.ps1` 的 `Find-Element -From` 就是这么用的）。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -360,6 +396,10 @@ exdir/
   关闭后 `DetailsView` 会清空 `ListView` 的 `ItemContainerTransitions`/`Transitions` 并同步已生成的行容器，
   换目录、插行、排序都直接到位）、显示隐藏文件、显示文件扩展名；
   三项都是 `ToggleMenuFlyoutItem` 双向绑定 ViewModel 属性，改动立即生效并随退出落盘；
+* **工具条“固定目录”支持拖放固定**（2026-09）：文件列表 / 侧边栏树里的目录可以直接拖到工具条右侧的
+  固定目录区（拖拽时强调色高亮 + “固定到工具条”提示，松手即写 `settings.json`），
+  右键固定目录按钮可“取消固定”；最多固定 12 个（`MainViewModel.MaxPinnedFolders`）；
+  验证脚本 `tools/test-pin-drag.ps1`（列表 → 固定、侧边栏 → 固定、右键 → 取消固定 三个用例）；
 * 快捷键、右键菜单尚未实现；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
 

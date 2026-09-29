@@ -5,6 +5,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
 using Exdir.Controls;
+using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.ViewModels;
 using Microsoft.UI.Xaml;
@@ -283,6 +284,29 @@ public sealed partial class DetailsView : UserControl
 
         _layout.ResetColumn(index);
         FitColumns();
+    }
+
+    /// <summary>
+    /// 拖拽的起点：把选中的目录作为拖放内容（工具条“固定目录”是接受方）。
+    /// 文件目前没有可拖拽的语义（复制/移动尚未实现），所以直接取消拖拽，
+    /// 免得拖出去后落到哪儿都没反应。
+    /// </summary>
+    private void EntryList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
+    {
+        var directories = e.Items
+            .OfType<FileItemViewModel>()
+            .Where(item => item.IsDirectory)
+            .Select(item => item.FullPath)
+            .ToList();
+
+        if (directories.Count == 0)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        DragDropHelper.SetPaths(e.Data, directories);
+        Log.Write($"拖拽开始（文件列表）：{directories.Count} 个目录");
     }
 
     /// <summary>列头固定高度也不变，这里只是为了把列头内容裁剪在窗格内（横向滚动时会平移出去）。</summary>
