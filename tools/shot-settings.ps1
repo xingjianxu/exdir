@@ -18,7 +18,7 @@ param(
     [string]$OutDir = "$PSScriptRoot\..\.artifacts",
     [int]$Width = 1440,
     [int]$Height = 900,
-    [string[]]$Categories = @('文件列表', '外观', '布局')
+    [string[]]$Categories = @('文件列表', '外观', '布局', '右键菜单')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -141,7 +141,9 @@ try {
         $item = Find-Visible -From $dialog -Name $name -Type ([System.Windows.Automation.ControlType]::ListItem)
         if ($null -eq $item) { Write-Warning "左侧导航里找不到「$name」，跳过"; continue }
         $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-        Start-Sleep -Milliseconds 700
+
+        # 「右键菜单」页的清单是切过去之后现枚举系统菜单填出来的，多等一会儿再截
+        if ($name -eq '右键菜单') { Start-Sleep -Seconds 3 } else { Start-Sleep -Milliseconds 700 }
         Save-Shot -Name $name
     }
 } finally {

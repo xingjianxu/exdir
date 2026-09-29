@@ -35,12 +35,14 @@
   - 地址栏（S9 主体完成，2026-09）：路径按目录切分成可点击的面包屑（chevron 分隔），
     点分段跳转、点当前段或右侧空白区切到可编辑输入框（回车前往、Esc/失焦取消），
     编辑入口也有 `Ctrl+L` / `Alt+D`；超长路径滚到最右并在左端提示省略。
-  - 菜单栏**「配置 → 设置…」= 统一设置对话框**（2026-09，S17a / S17b）：**左导航 + 右正文**两栏，
-    左侧三个分类（文件列表 / 外观 / 布局），右侧每项是“标题 + 说明 + 开关”，
-    共八项（过渡动画 / 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 列宽自适应 /
-    工具条 / 侧边栏 / 双窗格）；对话框是一个 `ContentDialog`（`Views/SettingsDialog`），
+  - 菜单栏**「配置 → 设置…」= 统一设置对话框**（2026-09，S17a / S17b / S8b）：**左导航 + 右正文**两栏，
+    左侧四个分类（文件列表 / 外观 / 布局 / 右键菜单），右侧每项是“标题 + 说明 + 开关”，
+    前三类共八项（过渡动画 / 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 列宽自适应 /
+    工具条 / 侧边栏 / 双窗格），「右键菜单」类是系统菜单项的逐项开关（默认全开，见 S8b）；
+    对话框是一个 `ContentDialog`（`Views/SettingsDialog`），
     底部「保存 / 取消」；点在快照上、点保存才应用并立即落盘（取消什么都不改）；
     回归脚本 `tools/test-settings.ps1`，布局截图 `tools/shot-settings.ps1`。
+  - 系统右键菜单（2026-09，S8a / S8b）：文件列表条目 / 空白处的真系统菜单 + 设置页逐项开关，见下面的 S8。
   - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
     松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
     `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
@@ -70,6 +72,9 @@
    建议先 A，后续需要再逐步替换成 B。
 3. **右键菜单**：直接弹**系统真实右键菜单**（`IContextMenu` + `SHBindToParent`，能拿到第三方 shell 扩展，但 UI 风格不统一、难以自动化测试）
    还是**自建菜单**（风格统一、可测试，但只能用自己实现的命令）？建议：自建为主 + “显示系统菜单”兜底项。
+   **已决定（2026-09）：直接弹系统真实菜单**（`Views/DetailsView` → `IShellContextMenuService`），
+   菜单项从系统读出来后在设置对话框「右键菜单」页里逐项开关（默认全开），
+   关掉的项在 `TrackPopupMenu` 之前从 HMENU 里删掉；自建菜单（打开 / 复制路径 / 压缩…）仍未做。
 4. **视图形态**：目前只有“详细信息列表”。后续要不要 图标/缩略图/紧凑 三种？优先级如何？
 5. **快捷菜单**首批要内置哪些命令（当前按需求留空，只保留了数据驱动的框架）。
 6. **是否需要单元测试工程**（`exdir.Tests`，xUnit）？如果要，建议在第 3 步之前建立，之后每步补测试。
@@ -176,13 +181,41 @@
 
 ### Phase 3 — 交互增强
 
-- [ ] **S8 右键上下文菜单**
+- [x] **S8 右键上下文菜单**
   - 目标：列表空白处 / 选中项 / 列头 / 侧边栏节点各自的菜单。
   - 涉及：新增 `Views/ContextMenus/`、`ViewModels/ContextMenuBuilder.cs`、`Services/IShellService.cs`（增加 `ShowShellContextMenu(paths, hwnd, point)`）。
   - 内容：自建菜单（打开、在新标签页打开、复制/剪切/粘贴、删除、重命名、属性、复制路径、在终端打开、压缩…）；
     末项“显示系统菜单”调用 `IContextMenu` 弹出资源管理器同款菜单（能带第三方扩展）。
-  - 验收：不同上下文菜单项正确启用/禁用；系统菜单能弹出（P/Invoke 需 DPI 正确）。
-  - 预估：~550 行，6 个文件。 
+  - [x] **S8a 系统右键菜单本体**（2026-09，~900 行，11 个文件）：
+    文件列表里行上右键 = 该（批）条目的系统菜单、空白处右键 = 当前目录的背景菜单，
+    菜单完全由外壳（`IContextMenu`）生成并执行（exdir 自己一个命令都不实现），
+    因此 7-Zip / Git / VS Code / WPS / “打开方式” / “发送到” 这些第三方项与子菜单全在。
+    新增 `Services/IShellContextMenuService` + `Services/ShellContextMenuService` +
+    `Services/Native/ShellContextMenuInterop`（IShellFolder / IContextMenu(2/3)、`SHBindToObject`、
+    `TrackPopupMenuEx`、`InvokeCommand`、`ShellMenuHost` 用 `SetWindowSubclass` 转发
+    `WM_INITMENUPOPUP` / `WM_DRAWITEM` / `WM_MEASUREITEM`）、`Models/ShellMenuItem`；
+    `AppSettings` 结构版本 3→4（`ShellMenuKnownItems` / `ShellMenuDisabledItems`）；
+    `DetailsView` 把 `RightTapped` / `ContextRequested` 挂在**最外层 Grid**（不是 ListView）；
+    `Helpers/DpiHelper.ToScreenPoint` 做 DIP → 屏幕物理像素（`ClientToScreen`）。
+    兼带修两个拦路的既有 bug：`TabView` 被 WinUI 默认样式压成 `VerticalAlignment=Top`
+    （文件列表只占“内容那么高”，空白处收不到任何事件）、窗口位置/尺寸存坏
+    （DIP 下限当物理像素夹、最小化时存 `-32000` 哨兵值）。
+    验收：`tools/test-context-menu.ps1` 12 条断言全过（真鼠标右键 + 截图 + exdir.log；
+    Win11 的外壳菜单是自绘的，UIA 里读不到菜单项），另跑了 test-status-bar / test-shell-icons /
+    test-settings / measure-row-align 全绿。
+  - [x] **S8b 设置页「右键菜单」分类**（2026-09，~180 行，6 个文件）：
+    设置对话框左侧多一个「右键菜单」分类，右侧列出系统右键菜单项（含第三方扩展，默认全部开启）
+    逐项开关；关掉的项存进 `ShellMenuDisabledItems`（key 优先用规范动词，例如 `verb:properties`），
+    弹出菜单前把这些项从 HMENU 里删掉（顺带清空子菜单、清理多余分隔符）。
+    清单来源 = 打开设置页时用样本目标现枚举（样本 .txt / 配置目录 / 配置目录背景）
+    ∪ 实际右键过的项（落盘在 `ShellMenuKnownItems`）。新增 `Models/SettingsCategory.ShellMenu`、
+    `ViewModels/ShellMenuItemViewModel`、`Views/SettingsDialog` 里一页 `ItemsControl`。
+    验收：`tools/test-settings.ps1` 扩成 5 个用例 47 条断言（含“系统菜单项默认全开”、
+    “关掉「属性」后落盘 verb:properties”、“重新打开仍为关”、“再拨回来就清空”），
+    截图 `tools/shot-settings.ps1`（.artifacts\settings-右键菜单.png）。
+  - [ ] 未做：自建菜单部分（打开 / 在新标签页打开 / 复制路径 / 在终端打开 / 压缩…）、
+    列头与侧边栏节点的菜单（侧边栏 / 固定目录 / 磁盘按钮现在都还没有右键菜单）。
+  - 预估：~550 行，6 个文件（实际 ~1080 行，17 个文件——系统菜单这一块比预想的细）。 
 
 - [~] **S9 地址面包屑**（2026-09 完成主体，仅“每段右侧下拉同级目录”未做）
   - 目标：导航条上的路径框旁边/替代品：可点击的路径分段，支持 `\\server\share`、`C:\`、WSL 路径。
@@ -391,7 +424,9 @@
 | 提权运行后拖放失效 | Windows 不允许高完整性级别（管理员）进程参与拖放：`DragItemsStarting` 会触发，但永远收不到 `DragOver`/`Drop`；以普通权限运行则正常（见 AGENTS.md 第 6 节第 21 条） | 系统限制，无解；必要时在界面上提示 |
 | 拖放只做了“目录 → 工具条固定目录”与“工具条固定目录之间排序” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
 | 固定目录最多 12 个 | 工具条固定目录区不滚动，太多了会把左侧磁盘区挤没（`MainViewModel.MaxPinnedFolders`） | 需要时改成横向滚动 / 溢出菜单 |
-| 无右键菜单 | 需求未明确，需先确认路线 | S8 |
+| 无右键菜单 | 需求未明确，需先确认路线 | S8（已解决 S8a/S8b：文件列表条目 + 空白处弹系统真菜单，设置页可逐项关闭；侧边栏/列头与自建命令项仍未做） |
+| 文件列表只有“内容那么高” | `TabView` 默认样式是 `VerticalAlignment=Top`，列上只有两三个文件时列表下面一大片空白既点不到也没有右键 | 已修（S8a 兼带：`PaneView` 的 TabView 显式 `Stretch`，见 AGENTS.md 第 6 节第 39 条） |
+| 窗口位置/尺寸可能存坏 | DIP 下限被当成物理像素夹（高分屏下窗口只有下限的一半宽）；最小化时存下 `-32000` 哨兵值 | 已修（S8a 兼带，见 AGENTS.md 第 6 节第 41 条） |
 | 侧边栏同步是“尽力而为” | 只在已加载节点里查找，深层目录不会自动展开定位 | S10（可加“展开到当前路径”） |
 | 单实例未处理 | 多次启动会有多个进程 | S19 |
 | 只有 x64 验证过 | x86/ARM64 未测试 | 需要时再验证 |

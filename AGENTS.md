@@ -63,7 +63,8 @@ pwsh -NoProfile -File tools\make-icon.ps1
 #    需要交互桌面；当前 shell 提权时会自动改用 explorer.exe 以普通权限启动 exdir（见第 6 节第 21 条）
 pwsh -NoProfile -File tools\test-pin-drag.ps1
 
-# 7) 设置对话框回归（左导航三个分类 / 每页只显示本分类的开关 / 取消不落盘 / 保存立即落盘并作用到列表 / 跨分类读回）
+# 7) 设置对话框回归（左导航四个分类 / 每页只显示本分类的开关 / 取消不落盘 / 保存立即落盘并作用到列表 /
+#    跨分类读回 / 「右键菜单」页的系统菜单项默认全开且能逐项关掉）
 #    需要交互桌面（真鼠标点击对话框按钮）
 pwsh -NoProfile -File tools\test-settings.ps1
 
@@ -82,6 +83,11 @@ pwsh -NoProfile -File tools\test-shell-icons.ps1
 # 10) 行内图标与文字是否垂直居中对齐（截图 + UIA 量“墨迹中心”，断言偏差在容差内）
 #     需要交互桌面；需要测“图标该不该再上下微调”时用这个，不要靠肉眼
 pwsh -NoProfile -File tools\measure-row-align.ps1
+
+# 11) 系统右键菜单回归（文件行 / 列表空白处各自弹出 #32768 系统菜单；
+#     菜单项记进清单；关掉 verb:properties 后菜单里不再有「属性」）
+#     需要交互桌面（真鼠标右键 + 截图）；跑完还原 settings.json
+pwsh -NoProfile -File tools\test-context-menu.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -132,7 +138,7 @@ exdir/
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
 ├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
-├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / IconBitmap / 枚举（含 SettingsCategory）
+├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / ShellMenuItem / IconBitmap / 枚举（含 SettingsCategory）
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
 │   ├─ IDriveService          DriveInfo 枚举
@@ -141,8 +147,10 @@ exdir/
 │   ├─ IShellIconService      系统外壳图标（SHGetFileInfo 提取 + 两级缓存，见第 4 节“名称列图标”）
 │   ├─ ISettingsService       settings.json 读写（含结构版本迁移）
 │   ├─ IShellService          默认程序打开 / 终端 / 剪贴板 / 命令行
+│   ├─ IShellContextMenuService  系统右键菜单（IContextMenu：弹出真菜单 + 枚举菜单项供设置页，见第 4 节“右键菜单”）
 │   └─ Native/                Win32 互操作（ShellPropertyStore：属性系统 + 占位符兼容模式；
-│                             ShellIconExtractor：图标提取 / HICON → BGRA 像素）
+│                             ShellIconExtractor：图标提取 / HICON → BGRA 像素；
+│                             ShellContextMenuInterop：IShellFolder / IContextMenu(2/3) + HMENU 操作）
 ├─ ViewModels/
 │   ├─ MainViewModel          磁盘、固定目录、快捷命令、侧边栏、两个窗格、全局命令
 │   ├─ PanelViewModel         一个窗格（标签页集合）
@@ -153,6 +161,7 @@ exdir/
 │   ├─ PinnedFolderViewModel  title 栏上的固定目录
 │   ├─ StatusBarViewModel     文件列表区底部状态栏（项数 / 选中摘要 + 合计大小 / 卷容量）
 │   ├─ SettingsCategoryViewModel  设置对话框左侧导航的一项（Key + Name）
+│   ├─ ShellMenuItemViewModel 设置对话框「右键菜单」页里的一行（包着 ShellMenuItem + 开关状态）
 │   └─ SettingsViewModel      设置对话框的编辑快照（点“保存”才写回 AppSettings）+ 分类与当前选中分类
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 │                             StatusBarView（文件列表区底部一行）
@@ -165,7 +174,7 @@ exdir/
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
-                              measure-row-align / publish / make-icon 脚本
+                              test-context-menu / measure-row-align / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -354,6 +363,37 @@ exdir/
   * 编辑态由 `FolderTabViewModel.IsPathEditing` 持有（不在视图里），回车 `NavigatePathCommand` 前往、
     `Esc` 或失焦 `CancelPathEdit()` 取消；**任何一次成功导航都会自动退出编辑态**；
   * 路径比地址栏宽时 `CrumbScroll` 滚到最右（当前目录永远可见），左端露省略号提示还有被裁掉的分段。
+* **右键菜单 = 系统真实菜单**（2026-09，S8a/S8b）：在文件列表里右键行 → 该（批）条目的菜单，
+  右键空白处 → 当前目录的背景菜单。菜单内容完全来自系统外壳（`IContextMenu`），
+  所以 7-Zip / Git / VS Code / WPS 这些第三方项、“发送到 / 打开方式”这类子菜单都在，
+  而且**默认全部开启**，只是可以在「配置 → 设置… → 右键菜单」里逐项关掉。
+  * 实现：`Services/ShellContextMenuService` + `Services/Native/ShellContextMenuInterop`。
+    选中项走 `IShellFolder.GetUIObjectOf`，目录背景走**目录自己**的
+    `IShellFolder.CreateViewObject`（不是它所在目录的，`SHBindToObject` 传 null 从桌面绑），
+    然后 `QueryContextMenu` 填 HMENU → `TrackPopupMenuEx(TPM_RETURNCMD)` 弹出 →
+    `InvokeCommand(偏移 = id − idCmdFirst)` 把选中的项交回外壳执行（exdir 自己一个命令都不实现）；
+  * **弹出期间要在宿主窗口上挂一个 `ShellMenuHost`**（`SetWindowSubclass`）：把
+    `WM_INITMENUPOPUP` / `WM_DRAWITEM` / `WM_MEASUREITEM` 转给 `IContextMenu2/3`，
+    否则“打开方式”这类子菜单是空的、owner-draw 菜单项会画成空白（见第 6 节第 43 条）；
+  * **菜单项的稳定标识 `ShellMenuItem.Key`**：优先用外壳给的规范动词
+    （`GetCommandString(GCS_VERBW)`，如 `open` / `7-Zip.Compress`），拿不到动词的退回
+    “上级菜单文本 + 菜单文本”。用动词才能让“打开”在文件 / 文件夹 / 背景三个上下文里共用同一个开关。
+    `AppSettings.ShellMenuDisabledItems` 存的就是这些 key（空 = 全部开启）；
+  * **清单从哪来**（设置页里那一串开关）：一头是打开设置页时用样本目标现枚举
+    （%TEMP% 下的样本 .txt、配置目录本身、配置目录的背景），
+    一头是每次真的弹菜单时顺手记住的（`AppSettings.ShellMenuKnownItems`，退出/保存时落盘），
+    两份合并去重。设置页里每一项的说明文字就是它的上下文（文件 / 文件夹 / 背景 + 子菜单路径）
+    和它在列表里的位置；同名的项会补上后缀，因为开关的 UIA 名字就是标题；
+  * 关掉的项在 **`TrackPopupMenu` 之前**从 HMENU 里按位置 `RemoveMenu` 删掉
+    （按位置删不会打乱其它项的 id），顺带把空掉的子菜单、重复/首尾分隔符清理掉；
+  * 右键事件挂在 `DetailsView` **最外层的 Grid** 上，不是挂在 ListView 上：
+    列表下面的空白处根本不会命中 ListView 内部的 ScrollViewer（它没背景、不参与命中测试），
+    事件会从外层 Grid 往上冒（见第 6 节第 39/40 条）；行上右键会先把该行选中再弹菜单；
+  * `Helpers.DpiHelper.ToScreenPoint` 负责 DIP → 屏幕物理像素（先 `TransformToVisual(null)`
+    拿客户区坐标，再 `ClientToScreen`；不要自己用窗口位置 + 缩放算，系统边框会让它对不上）。
+  * 回归：`tools/test-context-menu.ps1`（真鼠标右键 + 截图；因为 Win11 的外壳菜单是自绘的、
+    UIA 里读不到菜单项，“弹没弹出来”看进程里有没有 `#32768` 窗口、“有哪些项/关掉了哪些项”
+    看 `exdir.log` 里那行 `系统右键菜单：…`）。
 
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
@@ -376,18 +416,19 @@ exdir/
   **底部是「保存 / 取消」**（`PrimaryButtonText="保存"` + `CloseButtonText="取消"` +
   `DefaultButton="Primary"`，即回车 = 保存、Esc = 取消）。
 * **左导航 + 右正文**（2026-09 重构，原来是“一列分组勾选框”）：
-  左侧是配置大类列表（`ListView`）+ 右侧只显示当前分类那一页。当前三个分类：
+  左侧是配置大类列表（`ListView`）+ 右侧只显示当前分类那一页。当前四个分类：
 
   | 分类 | 配置项 |
   | --- | --- |
   | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 |
   | 外观 | 过渡动画 |
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
+  | 右键菜单 | 系统右键菜单项，逐项开关（动态清单，见第 4 节“右键菜单”） |
 
   * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`
     （列表顺序即导航顺序，`SelectedCategory` 直接绑 `ListView.SelectedItem`，TwoWay）；
-    右侧三页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible`
-    （`SelectedCategory` 的 setter 里一次性通知这三个，省得每页各写一个枚举转换器）。
+    右侧四页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible` /
+    `IsShellMenuPageVisible`（`SelectedCategory` 的 setter 里一次性通知这四个，省得每页各写一个枚举转换器）。
   * 非当前页是 `Visibility=Collapsed`，**UIA 树里根本没有它们**：所以回归脚本
     “切到某分类后只看得到该分类的开关”本身就是“切页真的生效”的验证。
   * 每一行是 `Views/SettingsToggleRow`（`Title` / `Description` / `IsOn` 三个 DP）：
@@ -402,6 +443,15 @@ exdir/
     所以在 `ContentDialog.Resources` 里覆盖成 `520 / 680`；同一个地方还要再关一次
     `ListViewItemSelectionIndicatorVisualEnabled`（见第 6 节第 38 条）。
   * 导航项**只有文字、没有图标**（为什么见第 6 节第 37 条）。
+  * **「右键菜单」页是动态清单**：一行行不是写死在 XAML 里的，而是绑
+    `SettingsViewModel.ShellMenuItems`（`ItemsControl` + `DataTemplate`，每行仍然是
+    `SettingsToggleRow`）。构造快照时先用已记下来的清单填一遍（不碰 COM），
+    对话框 `Loaded` 后再 `DispatcherQueue.TryEnqueue(RefreshShellMenuItems)` 现枚举一次补全，
+    所以打开对话框不会卡一下。重建清单时已有的项保留用户刚拨过的开关。
+    用 `ItemsControl` 而不是 `ListView`：后者会把没显示出来的行虚拟化掉，回归脚本数不全。
+    新增一项要同时改三处：`ShellMenuItemViewModel`（`Title`/`Description`/`IsEnabled`）、
+    `MainViewModel.ApplySettings`（写回 `ShellMenuDisabledItems` / `ShellMenuKnownItems`）、
+    `tools/test-settings.ps1` 的用例 5。
 * **编辑的是快照**（`ViewModels/SettingsViewModel`，构造时从 `AppSettings` 复制一份）：
   `ShowAsync()` 返回 `Primary` 才调 `MainViewModel.ApplySettings(snapshot)` 写回并**立即落盘**，
   返回 `Close`（取消）就什么都不做——不需要逐项回滚，也不会误写 `settings.json`。
@@ -416,7 +466,8 @@ exdir/
   `SettingsDialog.xaml` 里**对应分类页**加一行 `SettingsToggleRow` → `MainViewModel.ApplySettings` 应用 →
   `tools/test-settings.ps1` 的 `$KeyMap`（UIA 名字 → 字段名）与 `$CategoryMap`（分类 → 该页的项）→
   需要新分类时再往 `SettingsCategory` / `Categories` 里加一项。
-* 回归：`tools/test-settings.ps1`（4 个用例 26 条断言）；
+* 回归：`tools/test-settings.ps1`（5 个用例 47 条断言，含「右键菜单」页的系统菜单项默认全开、
+  关掉「属性」后落盘 `verb:properties`、重新打开仍为关、再拨回来就清空）；
   肉眼看布局用 `tools/shot-settings.ps1`（每个分类截图到 `.artifacts\settings-<分类名>.png`）。
 * 对话框比窗口还大时（窗口被缩到 606×408 DIP 以下）边缘会被裁掉：`ContentDialog`
   只会把对话框约束在窗口内，不会自己缩小；正常窗口尺寸（默认 1280×800 DIP）下离边很远。
@@ -633,6 +684,47 @@ exdir/
     还是画出了强调色竖条；把同一个键再写进该对话框的 `<ContentDialog.Resources>` 就消失了。
     所以“在某个弹层里发现某个主题资源像是没生效”时，先在**这个弹层自己的 `Resources` 里再覆写一遍**，
     而不是去怀疑 `ExdirTheme.xaml` 的合并顺序。
+39. **`TabView` 的默认样式把 `VerticalAlignment` 设成了 `Top`**：
+    这不是我们的 XAML 写的，是 WinUI 自带的。后果是**标签页内容只占“内容自己的高度”**：
+    列上只有两三个文件时，`DetailsView` 只有 74 DIP 高（表头 24 + 两行 48），
+    列表下面那一大片空白既点不到也收不到右键（它是 `PaneRoot` 而不是列表）。
+    排查方法：从出问题的控件往上逐级打 `ActualHeight / DesiredSize.Height / VerticalAlignment`
+    （见 `AGENTS.md` 第 4 节）——一行就能看出“某个祖先被压成了 DesiredSize”。
+    修法：在 `Views/PaneView.xaml` 的 `TabView` 上显式写
+    `VerticalAlignment="Stretch"`（顺便把 `Horizontal/VerticalContentAlignment` 也写成 Stretch）。
+40. **列表空白处收不到 `RightTapped` / `ContextRequested`，即使用 `handledEventsToo` 也收不到**：
+    空白处命中的不是列表，而是列表外面那个有背景的 Grid——`ListView` 内部的
+    `ScrollViewer` / `ScrollContentPresenter` 自己没背景，不参与命中测试，事件根本不会沿着
+    `EntryList` 这条路由上去。
+    所以右键菜单的监听要挂在 `DetailsView` **最外层那个有背景的 Grid** 上，
+    再在处理器里用 `OriginalSource` 反查“是不是在某一行的 DataContext 里”。
+    另：`UIElement.ContextRequested` 在有些控件上压根不冒泡（跟 `ContextFlyout` 有关），
+    `RightTapped` 更可靠；两个都挂上、拿时间戳防一下重复（菜单是模态弹出的，
+    第一个处理完用户关掉菜单后第二个才会被调用）。
+41. **窗口位置/尺寸存坏了会让整个界面“看起来没做出来”**：曾经 settings.json 里被写下
+    `WindowWidth=157 / WindowHeight=25 / WindowX=-16000 / WindowY=-16000`，
+    下次启动窗口就只有 360×240 DIP（侧边栏就占掉一大半），列表里几乎什么都点不到，
+    很容易误判成“右键菜单没生效 / 控件找不到”。两个原因都在 `MainWindow`：
+    * `RestoreWindowPlacement` 把 `720 / 480` 这个 **DIP 下限**写在了换算成物理像素之后，
+      200% 缩放下就只给了 720×480 物理像素（= 360×240 DIP）——下限要先夹再乘缩放；
+    * `SaveWindowPlacement` 在**窗口最小化时**会把 `(-32000,-32000)` 存下来
+      （`AppWindow.Position` 的哨兵值），下次启动就跑到屏幕外——要跳过最小化状态与哨兵值。
+    调试时如果界面尺寸明显不对，**第一件事是看 `exdir.log` 里那行 `恢复窗口位置: 设置=…`**。
+42. **Win11 的外壳右键菜单在 UIA 里读不到菜单项**：它是一张自绘的 Win32 弹出菜单，
+    `AutomationElement` 只能看到主窗口自己的菜单栏（文件 / 编辑 / …）和一团 `Pane`，
+    `MenuItem` 一个都找不到（按 `ProcessId` 从 `RootElement` 往下找也一样）。
+    所以自动化只能：① 用 `EnumWindows` 按进程找 `#32768` 窗口证明“菜单弹出来了”；
+    ② 让 exdir 自己把菜单项写进 `exdir.log`（`系统右键菜单：<上下文> 上下文共 N 项，已关闭 X`）。
+    想给“关掉的项真的不在菜单里”留证据，就只能截图（`.artifacts\context-menu-filtered.png`）。
+43. **宿主自己弹系统菜单时必须转发菜单消息，否则子菜单是空的**：
+    `IContextMenu` 的背后常常是 `IContextMenu3`（甚至 `IContextMenu2`），
+    壳扩展要靠 `WM_INITMENUPOPUP`（典型：“打开方式”）才知道该往子菜单里放什么，
+    owner-draw 的项要靠 `WM_DRAWITEM` / `WM_MEASUREITEM`。这些消息系统只会发给菜单的
+    宿主窗口，所以 `TrackPopupMenu` 期间要用 `SetWindowSubclass`（comctl32）挂一个钩子，
+    把这三条消息转给 `IContextMenu3::HandleMenuMsg2` / `IContextMenu2::HandleMenuMsg`，
+    弹完立刻 `RemoveWindowSubclass`。
+    另外“用 `ShowWindow` 把窗口最小化后再关”会让 `AppWindow.Position` 返回 `-32000` 级哨兵值，
+    `SaveWindowPlacement` 必须跳过最小化状态与舘兵值（否则下次启动窗口跑到屏幕外）。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -672,18 +764,28 @@ exdir/
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
 * **所有配置项集中在设置对话框**（2026-09，S17a / S17b）：菜单栏「配置 → 设置…」弹出
   `Views/SettingsDialog`（`ContentDialog`，底部「保存 / 取消」）。**左导航 + 右正文**两栏：
-  左侧三个分类（文件列表 / 外观 / 布局，都是纯文字项），右侧只显示当前分类那一页，
+  左侧四个分类（文件列表 / 外观 / 布局 / 右键菜单，都是纯文字项），右侧只显示当前分类那一页，
   每项是“标题 + 说明 + 右侧开关”（`Views/SettingsToggleRow`）；
-  共 8 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面）、
-  外观（过渡动画）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）。
+  前三个分类共 8 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面）、
+  外观（过渡动画）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）；
+  「右键菜单」页是动态清单（见下面那条与第 4 节）。
   编辑的是 `SettingsViewModel` 快照，**点“取消”什么都不改、点“保存”立即应用并落盘**（不再等退出才写），
-  应用入口是 `MainViewModel.ApplySettings`；新增配置项要同时改 `AppSettings`、`SettingsViewModel`、
+  应用入口是 `MainViewModel.ApplySettings`；新增固定配置项要同时改 `AppSettings`、`SettingsViewModel`、
   `SettingsDialog.xaml`、`ApplySettings` 与 `tools/test-settings.ps1` 的 `$KeyMap` / `$CategoryMap`（见第 4 节）。
-  回归：`tools/test-settings.ps1`（4 个用例 26 条断言：分类齐全 / 每页只显示本分类的开关 / 初始值一致 /
-  取消不落盘 / 保存立即落盘并作用到文件列表 / 跨分类读回），
+  回归：`tools/test-settings.ps1`（5 个用例 47 条断言：分类齐全 / 每页只显示本分类的开关 / 初始值一致 /
+  取消不落盘 / 保存立即落盘并作用到文件列表 / 跨分类读回 / 右键菜单项默认全开且能逐项关闭），
   布局截图：`tools/shot-settings.ps1`（.artifacts\settings-<分类名>.png）。
   原先的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）已移除，
   「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与对话框共享同一份设置）；
+* **系统右键菜单**（2026-09，S8a / S8b，见第 4 节“右键菜单”）：文件列表里右键行 → 该（批）条目的
+  资源管理器同款菜单（7-Zip / Git / VS Code / WPS / 打开方式 / 发送到 等第三方项与子菜单全在），
+  右键空白处 → 当前目录的背景菜单；菜单默认**全部开启**，可在设置对话框「右键菜单」页里逐项关掉
+  （关掉的项在弹出前从 HMENU 里删掉）。服务端是 `IShellContextMenuService` +
+  `Services/Native/ShellContextMenuInterop`（`IContextMenu` + `IContextMenu2/3` + `SetWindowSubclass`）；
+  清单 = 打开设置页时的样本枚举 ∪ 实际右键过的项（`AppSettings.ShellMenuKnownItems`）。
+  回归：`tools/test-context-menu.ps1`（12 条断言全过）；
+  顺带修掉两个拦路的既有 bug：`TabView` 被 WinUI 默认样式压成 `VerticalAlignment=Top`
+  （文件列表只占“内容那么高”）与窗口位置/尺寸存坏（见第 6 节第 39/41 条）；
 * **工具条“固定目录”支持拖放固定**（2026-09）：文件列表 / 侧边栏树里的目录可以直接拖到工具条右侧的
   固定目录区（拖拽时强调色高亮 + “固定到工具条”提示，松手即写 `settings.json`），
   右键固定目录按钮可“取消固定”；最多固定 12 个（`MainViewModel.MaxPinnedFolders`）；
@@ -713,7 +815,8 @@ exdir/
   见第 4 节“标签条紧凑”与第 6 节第 36 条；双窗格（含标签溢出时的 ◀ ▶）两边标签栏高度一致。
   验证：`tools/capture.ps1` 截图后量像素（标签条上边紧贴窗格上边框、总高 48 物理像素 @200%），
   `tools/inspect-ui.ps1 -Filter <标签名>`（`TabItem` 高 48 物理像素 = 24 DIP）。
-* 快捷键、右键菜单尚未实现；
+* 键盘导航（S2：`Ctrl+A` 全选、回车打开、type-ahead 等）尚未实现；右键菜单只做了文件列表
+  （条目 + 空白处），侧边栏 / 固定目录 / 磁盘按钮还没有；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
 
 **未实现的功能与后续步骤全部在 `plan.md`。**

@@ -141,6 +141,39 @@
                             IsOn="{x:Bind ViewModel.DualPane, Mode=TwoWay}" />
                     </StackPanel>
 
+                    <!-- 右键菜单 -->
+                    <StackPanel Visibility="{x:Bind ViewModel.IsShellMenuPageVisible, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock
+                            Margin="0,0,0,4"
+                            Style="{ThemeResource BodyStrongTextBlockStyle}"
+                            Text="右键菜单" />
+                        <TextBlock
+                            Margin="0,0,0,4"
+                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                            Style="{ThemeResource CaptionTextBlockStyle}"
+                            Text="这里列出系统右键菜单里的项（含第三方扩展），关掉的项不会再出现在文件列表的右键菜单里。"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            Margin="0,0,0,4"
+                            Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                            Style="{ThemeResource CaptionTextBlockStyle}"
+                            Text="正在读取系统右键菜单项…"
+                            Visibility="{x:Bind ViewModel.HasShellMenuItems, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}" />
+
+                        <!-- 用 ItemsControl 而不是 ListView：默认不虚拟化，所有行都在可视树 / UIA 树里，
+                             回归脚本能一次数完（ListView 把没显示出来的行虚拟化掉，就数不到了）。 -->
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.ShellMenuItems}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ShellMenuItemViewModel">
+                                    <views:SettingsToggleRow
+                                        Title="{x:Bind Title}"
+                                        Description="{x:Bind Description}"
+                                        IsOn="{x:Bind IsEnabled, Mode=TwoWay}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
                 </Grid>
             </ScrollViewer>
         </Border>

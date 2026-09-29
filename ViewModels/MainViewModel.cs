@@ -597,12 +597,21 @@ public sealed partial class MainViewModel : ObservableObject
         IsSidebarVisible = edited.ShowSidebar;
         IsDualPane = edited.DualPane;
 
+        // 右键菜单：清单本身也存回去（设置页里新枚举出来的项要留下，否则下次打开又得重新枚举），
+        // 被关掉的只存 Key，弹出菜单前据此把项从 HMENU 里删掉。
+        settings.ShellMenuKnownItems = edited.ShellMenuItems.Select(i => i.Item).ToList();
+        settings.ShellMenuDisabledItems = edited.ShellMenuItems
+            .Where(i => !i.IsEnabled)
+            .Select(i => i.Item.Key)
+            .ToList();
+
         _settings.Save();
 
         Log.Write(
             $"设置已保存：隐藏文件={edited.ShowHiddenFiles} 扩展名={edited.ShowExtensions} "
             + $"文件夹优先={edited.FoldersFirst} 动画={edited.EnableListAnimations} 列宽自适应={edited.ColumnAutoFit} "
-            + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane}");
+            + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane} "
+            + $"右键菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
     }
 
     /// <summary>磁盘热插拔后刷新磁盘条与侧边栏。</summary>

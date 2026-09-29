@@ -1,4 +1,5 @@
 using Exdir.ViewModels;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Exdir.Views;
@@ -16,7 +17,17 @@ public sealed partial class SettingsDialog : ContentDialog
         ViewModel = viewModel;
 
         InitializeComponent();
+
+        // 「右键菜单」页的系统菜单项要现枚举（建 COM 对象、QueryContextMenu），几十到几百毫秒：
+        // 先让对话框画出来（显示已记下来的那份清单），再放到下一轮消息循环里补全
+        Loaded += OnLoaded;
     }
 
     public SettingsViewModel ViewModel { get; }
+
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        Loaded -= OnLoaded;
+        DispatcherQueue.TryEnqueue(ViewModel.RefreshShellMenuItems);
+    }
 }

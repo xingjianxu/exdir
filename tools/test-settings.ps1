@@ -4,12 +4,14 @@
 #   pwsh -NoProfile -File tools\test-settings.ps1
 #   pwsh -NoProfile -File tools\test-settings.ps1 -Exe dist\win-x64\exdir.exe
 #
-# 四个用例（每次都真的启动 exdir、用真鼠标点菜单，再点对话框按钮）：
-#   1. 对话框结构：左侧 3 个分类（文件列表 / 外观 / 布局）、默认停在「文件列表」，
+# 五个用例（每次都真的启动 exdir、用真鼠标点菜单，再点对话框按钮）：
+#   1. 对话框结构：左侧 4 个分类（文件列表 / 外观 / 布局 / 右键菜单）、默认停在「文件列表」，
 #      右侧只有当前分类的开关（切分类真的换页），初始值与 settings.json 一致；
 #   2. 改一项后点「取消」→ settings.json 不变；
 #   3. 改一项后点「保存」→ 立即落盘，并且真的作用到文件列表（关掉扩展名后行名里的 ".xxx" 消失）；
 #   4. 跨分类读取：在「布局」页改双窗格，重新打开对话框读到的是刚落盘的值。
+#   5. 「右键菜单」页：列出系统右键菜单项（默认全开），关掉「属性」保存后
+#      ShellMenuDisabledItems 里有 verb:properties，重新打开时它仍是关的，再拨回来就清空。
 #
 # 说明：配置项现在是 SettingsToggleRow 里的 ToggleSwitch，UIA 里的类型是 Button（不是 CheckBox），
 #       所以要靠 TogglePattern 认它；而且非当前分类的开关是 Visibility=Collapsed 的，
@@ -68,11 +70,13 @@ $KeyMap = [ordered]@{
     '双窗格模式'             = 'dualPane'
 }
 
-# 左侧分类 → 该分类下应有的配置项（顺序即导航顺序）。必须和 SettingsViewModel 里的一致。
+# 左侧分类 → 该分类下应有的固定配置项（顺序即导航顺序）。必须和 SettingsViewModel 里的一致。
+# 「右键菜单」页是动态清单（系统里装了什么就有什么），所以这里给 $null，单独在用例 5 里断言。
 $CategoryMap = [ordered]@{
     '文件列表' = @('hidden', 'extension', 'foldersFirst')
     '外观'     = @('animations')
     '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
+    '右键菜单' = $null
 }
 
 $NameOfKey = @{}
@@ -88,7 +92,10 @@ function Get-Setting {
 function Set-Setting {
     param([string]$Name, $Value)
     $json = Get-Content $script:settingsPath -Raw | ConvertFrom-Json
-    $json.$Name = $Value
+
+    # 老版本的 settings.json 里可能还没有这个字段（例如刚加的 ShellMenuDisabledItems），
+    # 直接 $json.$Name = $Value 会报“找不到属性”，所以用 Add-Member -Force
+    $json | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
     $json | ConvertTo-Json -Depth 10 | Set-Content $script:settingsPath -Encoding utf8
 }
 
@@ -237,6 +244,18 @@ function Get-ToggleStateByKey {
     return Get-ToggleState -Element $el
 }
 
+# 「右键菜单」页的清单要现枚举系统菜单，慢的话要等一会儿；等不到就先返回已经有的
+function Wait-ShellToggles {
+    param($Dialog)
+    $toggles = @{}
+    for ($i = 0; $i -lt 30; $i++) {
+        $toggles = Get-VisibleToggles -Dialog $Dialog
+        if ($toggles.Count -ge 10) { return $toggles }
+        Start-Sleep -Milliseconds 500
+    }
+    return $toggles
+}
+
 # 切到某个分类，拨一下该分类下的某个开关
 function Invoke-ToggleByKey {
     param($Dialog, [string]$Category, [string]$Key)
@@ -322,6 +341,8 @@ Write-Host '--- 用例 1：对话框结构（左导航 / 右正文）与初始�
 Set-Setting 'EnableListAnimations' $true
 Set-Setting 'ShowExtensions' $true
 Set-Setting 'IsDualPane' $false
+# 右键菜单默认全部开启：不先清空的话，用例 5 的“关掉某项”断言会被历史值干扰
+Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
 
 $session = Start-Session
 $dialog = Open-SettingsDialog -Session $session
@@ -336,9 +357,11 @@ Assert ($null -ne $dialog.Cancel) '底部有「取消」按钮'
 
 # 每个分类下只应能看到该分类自己的开关（其余分类是 Collapsed，UIA 里读不到）
 foreach ($category in $CategoryMap.Keys) {
+    $expected = $CategoryMap[$category]
+    if ($null -eq $expected) { continue }   # 「右键菜单」是动态清单，见用例 5
+
     Select-Category -Dialog $dialog -Name $category
     $toggles = Get-VisibleToggles -Dialog $dialog
-    $expected = $CategoryMap[$category]
     $foundKeys = @($toggles.Keys | ForEach-Object { $KeyMap[$_] } | Where-Object { $_ })
     Assert ($toggles.Count -eq $expected.Count) "「$category」页显示 $($expected.Count) 个开关（实际 $($toggles.Count)）"
     Assert (((($foundKeys | Sort-Object) -join ',') -eq (($expected | Sort-Object) -join ','))) "「$category」页的开关正是: $($expected -join ' / ')"
@@ -348,6 +371,7 @@ foreach ($category in $CategoryMap.Keys) {
 $states = [ordered]@{}
 foreach ($pair in $CategoryMap.GetEnumerator()) {
     $category = $pair.Key
+    if ($null -eq $pair.Value) { continue }   # 「右键菜单」的动态清单不在这一步断言
     foreach ($key in $pair.Value) {
         $states[$key] = Get-ToggleStateByKey -Dialog $dialog -Category $category -Key $key
     }
@@ -420,6 +444,40 @@ Click-Element -Session $session -Element $dialog.Save
 Start-Sleep -Seconds 3
 Assert ((Get-Setting 'IsDualPane') -eq $false) '再关掉「双窗格模式」也立即落盘'
 Assert ((Get-Rows -Session $session).Count -eq $singlePaneRows) '关掉双窗格后回到单个窗格'
+
+# ================================================================== 用例 5：「右键菜单」页
+
+Write-Host '--- 用例 5：「右键菜单」页 —— 系统菜单项清单 + 关掉某项 ---'
+$dialog = Open-SettingsDialog -Session $session
+Select-Category -Dialog $dialog -Name '右键菜单'
+$shellToggles = Wait-ShellToggles -Dialog $dialog
+Write-Host ("  系统菜单项 {0} 个，前几个：{1}" -f $shellToggles.Count, (($shellToggles.Keys | Select-Object -First 8) -join ' / '))
+Assert ($shellToggles.Count -ge 10) "「右键菜单」页列出了系统菜单项（实际 $($shellToggles.Count) 个）"
+Assert ($shellToggles.ContainsKey('打开')) '清单里有「打开」'
+Assert ($shellToggles.ContainsKey('属性')) '清单里有「属性」'
+Assert ((Get-ToggleState -Element $shellToggles['打开']) -eq 'On') '系统菜单项默认全部开启（「打开」= On）'
+
+Toggle-Element -Element $shellToggles['属性']
+Click-Element -Session $session -Element $dialog.Save
+Start-Sleep -Seconds 2
+
+Assert ((@(Get-Setting 'ShellMenuDisabledItems') -contains 'verb:properties')) '关掉「属性」后立即落盘（ShellMenuDisabledItems 里有 verb:properties）'
+$known = @(Get-Setting 'ShellMenuKnownItems')
+Write-Host ("  ShellMenuKnownItems 落了 {0} 项" -f $known.Count)
+Assert ($known.Count -ge 10) '保存时把菜单项清单也落盘了（ShellMenuKnownItems）'
+
+# 重新打开：被关掉的项应该还是关着的（关掉的状态真的读回来了）
+$dialog = Open-SettingsDialog -Session $session
+Select-Category -Dialog $dialog -Name '右键菜单'
+$shellToggles = Wait-ShellToggles -Dialog $dialog
+Assert ((Get-ToggleState -Element $shellToggles['属性']) -eq 'Off') '重新打开对话框时「属性」仍是关着的'
+
+# 刷回来并保存（顺便验证清空被关列表）
+Toggle-Element -Element $shellToggles['属性']
+Click-Element -Session $session -Element $dialog.Save
+Start-Sleep -Seconds 2
+Assert (@(Get-Setting 'ShellMenuDisabledItems').Count -eq 0) '再拨回来并保存后被关掉的项清空了（回到默认全开）'
+
 Stop-Session -Session $session
 
 # ------------------------------------------------------------------ 还原设置文件

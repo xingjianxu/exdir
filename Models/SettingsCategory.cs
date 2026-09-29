@@ -16,4 +16,7 @@ public enum SettingsCategory
 
     /// <summary>布局：工具条 / 侧边栏 / 双窗格 / 列宽。</summary>
     Layout,
+
+    /// <summary>右键菜单：逐项开关系统（含第三方扩展）的右键菜单项。</summary>
+    ShellMenu,
 }
