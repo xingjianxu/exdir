@@ -196,6 +196,17 @@ exdir/
   `TitleBarExpandedHeight=36`、`ListViewItemMinHeight=24`、`TreeViewItemMinHeight=24`。
   **只覆盖数值/颜色类资源键**，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
   同一处还关掉了选中行的左侧蓝色竖条：`ListViewItemSelectionIndicatorVisualEnabled=False`（只看整行底色）。
+* **标签条紧凑、且顶到窗格顶部齐平**（`TabView`，2026-09）：WinUI 默认一条标签栏高 32 DIP，
+  上面还压着 8 DIP 空白（`TabViewHeaderPadding`，它被模板传给列表与 `ItemsPresenter`），
+  窗格顶部到标签标题之间一共空了 17.5 DIP。现在标签条 24 DIP（≈ `ExRowHeight`）、
+  圆角顶边直接贴住窗格的上边框，标题上方只剩 5 DIP（标签自身 `Padding` + 文字气泡的居中留白）。
+  改的全在 `Themes/ExdirTheme.xaml`：`TabViewHeaderPadding=0`、`TabViewItemMinHeight=24`、
+  `TabViewItemHeaderCloseButtonHeight=16`（**标签高度的真正决定项**，见第 6 节第 36 条）、
+  `TabViewItemAddButtonContainerPadding` 与左右滚动按钮容器内边距去掉下边距（否则“+ / ◀ ▶”
+  会把标签栏撑到 27 DIP）、`TabViewItemSeparatorMargin=0,4,0,4`（分隔竖线默认上下各缩进 8，
+  在 24 高的标签里只剩 8 DIP 长，改成 4 后是 16 DIP）。
+  标签内的文字/图标仍是 16 DIP，上下各留 4 DIP；关闭按钮变成 32×16（宽度不动，点得中）。
+  新增“标签条上的东西”时请沿用这组尺寸，不要往回调。
 * **扁平控件的悬停/按下/选中底色全部是强调色**（`Themes/ExdirTheme.xaml`）：
   WinUI 默认都是“灰底上叠 8% 白”（`ButtonBackgroundPointerOver`、`MenuBarItemBackgroundPointerOver`、
   `ListViewItemBackgroundPointerOver`…），几乎看不出鼠标停在哪里。现在统一换成强调色，
@@ -553,6 +564,20 @@ exdir/
     平均约 2.0（200% 缩放）；去掉那 1 DIP 会恶化到 4.5 / 4.0，断言会失败。
     另：下推只能用 `RenderTransform` —— 给 16 DIP 高的元素加 `Margin` 会同时把布局盒变成 17，
     实际只向下移 0.5 DIP，而且非整数偏移会把位图重采样、图标发虚。
+36. **`TabView` 的标签高度不是 `TabViewItemMinHeight` 说了算，而是被“关闭”按钮撑出来的**：
+    `TabViewItem` 隐式样式里虽然有 `MinHeight={ThemeResource TabViewItemMinHeight}`（默认 32），
+    但就算把资源改小、或直接在 `TabViewItem` 上写 `MinHeight="24"`，标签实测仍是 32 DIP ——
+    模板里 `TabContainer` 的 `Padding` 是 `8,3,4,3`，而 `TabViewCloseButtonStyle` 把关闭按钮设成
+    `TabViewItemHeaderCloseButtonWidth × TabViewItemHeaderCloseButtonHeight = 32 × 24`，
+    `3 + 24 + 4（选中态的下内边距） + 1（选中态的下外边距）` 正好 32，顶在 MinHeight 之上。
+    想让标签变矮就必须同时把 `TabViewItemHeaderCloseButtonHeight` 调小（16 与图标/文字同高，
+    宽度留 32 保证点得中），标签才会落到 `MinHeight` 上。
+    排查手段：临时在 `PaneView` 的 `LayoutUpdated` 里把 `Tabs` 的视觉树连
+    `ActualHeight/MinHeight/Padding/Margin` 一起打到 `%LOCALAPPDATA%\exdir\tabtree.txt`
+    （只盯 `ActualHeight` 容易误判成“MinHeight 没生效”）。
+    另：标签条装不下时出现的 ◀ ▶ 按钮容器默认带 3 DIP 下内边距
+    （`TabViewItemLeft/RightScrollButtonContainerPadding`），会把**只有溢出窗格**的标签栏撑到 27 DIP ——
+    双窗格左右两条标签栏高度不一致就是这么来的。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -622,7 +647,14 @@ exdir/
   横跨 1~2 个窗格（侧边栏保持全高），窗格占满其余高度；左边 `N 项`，
   中间是选中摘要 + 合计大小（只统计文件），右边是当前卷的可用 / 总容量；
   跟随**活动窗格**（F6 切换、切标签页、换目录、改选中都会刷新）。
-  回归：`tools/test-status-bar.ps1`（16 条断言全过）。
+  回归：`tools/test-status-bar.ps1`（16 条断言全过）。注意第 4 个用例是拿 `Get-ChildItem $env:TEMP`
+  的数量去比对状态栏的“N 项”，而 %TEMP% 里的东西随时在变（构建产物、XAML 编译器临时目录、
+  系统临时文件……），偶发差 1 项就 FAIL —— 用 `git stash` 在改动前复现过同样的失败，属脚本自身的
+  时序问题，与产品代码无关，重跑即可（要根治得改用自己造的固定目录）。
+* **标签条紧凑化**（2026-09）：标签栏高 24 DIP（含底部 1 DIP 的标签条分隔线）、顶到窗格顶部齐平，
+  见第 4 节“标签条紧凑”与第 6 节第 36 条；双窗格（含标签溢出时的 ◀ ▶）两边标签栏高度一致。
+  验证：`tools/capture.ps1` 截图后量像素（标签条上边紧贴窗格上边框、总高 48 物理像素 @200%），
+  `tools/inspect-ui.ps1 -Filter <标签名>`（`TabItem` 高 48 物理像素 = 24 DIP）。
 * 快捷键、右键菜单尚未实现；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
 

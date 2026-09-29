@@ -29,6 +29,31 @@
     <x:Double x:Key="MenuFlyoutItemMinHeight">28</x:Double>
     <x:Double x:Key="MenuBarItemHeight">30</x:Double>
 
+    <!--
+        TabView 标签条（紧凑化）。默认值会在标签上方留出一大截空白，标签条压不到窗格顶部：
+        * TabViewHeaderPadding 默认 0,8,0,0 —— 它是 TabView 自身的 Padding，又被模板传给
+          TabViewListView 与 ItemsPresenter，所以就是标签条上方那 8 DIP 空白；归零后标签的圆角顶边
+          与窗格顶部齐平（窗格自己还留着 1 DIP 的活动边框）。
+        * TabViewItemHeaderCloseButtonHeight 默认 24 —— 这才是标签实际高度的决定项（见第 6 节）：
+          “关闭”按钮撑到 24 高后，加上标签自己的上下内边距就顶出了 32 DIP，把 MinHeight 压到 24 也没用。
+          压成 16（与图标/文字同高）后标签自然高度 = 3+16+4=23 < 24，MinHeight 才真正生效。
+          宽度保留 32 不动（鼠标能点中的面积不变）。
+        * TabViewItemMinHeight 默认 32，压到 24（与 ListViewItemMinHeight / ExRowHeight 同一密度）。
+        * “+” 按钮容器默认下内边距 3（按钮本身 24 高 → 容器 27 高）：不压掉的话整条标签栏会被撑到
+          27 高、按钮底边还比标签底边低 3 DIP；去掉后两者都是 24 高、底边对齐。
+        * 标签之间的分隔竖线默认上下各缩进 8 DIP，在 24 高的标签里只剩 8 DIP 长，改成 4（剩 16）。
+        * 标签条容不下时出现的 ◀ ▶ 滚动按钮：默认容器下内边距也是 3（按钮 24 高 → 容器 27 高），
+          会把整条标签栏撑到 27 DIP，同一次运行里两个窗格（一个溢出、一个不溢出）高度还不一样；
+          去掉后始终是 24。
+    -->
+    <Thickness x:Key="TabViewHeaderPadding">0,0,0,0</Thickness>
+    <x:Double x:Key="TabViewItemMinHeight">24</x:Double>
+    <x:Double x:Key="TabViewItemHeaderCloseButtonHeight">16</x:Double>
+    <Thickness x:Key="TabViewItemAddButtonContainerPadding">3,0,0,0</Thickness>
+    <Thickness x:Key="TabViewItemSeparatorMargin">0,4,0,4</Thickness>
+    <Thickness x:Key="TabViewItemLeftScrollButtonContainerPadding">8,0,3,0</Thickness>
+    <Thickness x:Key="TabViewItemRightScrollButtonContainerPadding">3,0,8,0</Thickness>
+
     <!-- ===================== 2. 布局常量 ===================== -->
 
     <x:Double x:Key="ExToolbarHeight">34</x:Double>
