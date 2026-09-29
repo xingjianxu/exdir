@@ -35,11 +35,12 @@
   - 地址栏（S9 主体完成，2026-09）：路径按目录切分成可点击的面包屑（chevron 分隔），
     点分段跳转、点当前段或右侧空白区切到可编辑输入框（回车前往、Esc/失焦取消），
     编辑入口也有 `Ctrl+L` / `Alt+D`；超长路径滚到最右并在左端提示省略。
-  - 菜单栏**「配置 → 设置…」= 统一设置对话框**（2026-09，S17a）：过渡动画 / 显示隐藏文件 /
-    显示文件扩展名 / 文件夹排在文件前面 / 列宽自适应 / 工具条 / 侧边栏 / 双窗格
-    八项集中在一个 `ContentDialog`（`Views/SettingsDialog`）里，底部「保存 / 取消」；
-    点在快照上、点保存才应用并立即落盘（取消什么都不改）；
-    回归脚本 `tools/test-settings.ps1`。
+  - 菜单栏**「配置 → 设置…」= 统一设置对话框**（2026-09，S17a / S17b）：**左导航 + 右正文**两栏，
+    左侧三个分类（文件列表 / 外观 / 布局），右侧每项是“标题 + 说明 + 开关”，
+    共八项（过渡动画 / 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 列宽自适应 /
+    工具条 / 侧边栏 / 双窗格）；对话框是一个 `ContentDialog`（`Views/SettingsDialog`），
+    底部「保存 / 取消」；点在快照上、点保存才应用并立即落盘（取消什么都不改）；
+    回归脚本 `tools/test-settings.ps1`，布局截图 `tools/shot-settings.ps1`。
   - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
     松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
     `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
@@ -285,6 +286,25 @@
       取消不落盘、保存立即落盘、关掉“显示文件扩展名”后列表行名里的 `.xxx` 从 13 行降到 5 行，
       再打开后恢复原样）；跑完自动还原 `settings.json`。
     - 未做（留给 S17 其余部分）：外观（紧凑度/主题）、固定目录管理、快捷命令编辑器。
+  - [x] **S17b 设置对话框改成「左导航 + 右正文」**（2026-09，改 4 个文件 / 新增 5 个，~400 行）
+    - 内容：改成常见配置对话框的两栏结构——左侧是配置大类列表，右侧只显示当前那一页；
+      分类收敛为三个：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面）、
+      外观（过渡动画）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）。
+      每一行从“裸 CheckBox”改成“标题 + 灰色说明 + 右侧 ToggleSwitch”。
+    - 做法：新增 `Models/SettingsCategory.cs`（枚举）、`ViewModels/SettingsCategoryViewModel.cs`、
+      `Views/SettingsToggleRow.xaml(.cs)`（Title/Description/IsOn 三个 DP）；
+      `SettingsViewModel` 加 `Categories` / `SelectedCategory` / 三个 `IsXxxPageVisible`；
+      `SettingsDialog.xaml` 左侧 `ListView` 绑 `Categories` + `SelectedCategory`（TwoWay），
+      右侧三页用 `Visibility` 切；对话框尺寸写死（实测 606×408 DIP：两列都用固定宽度 +
+      根 `Grid` 的 `MinHeight` 兜住最矮的页），在 `ContentDialog.Resources` 里覆盖
+      `ContentDialogMinWidth/MaxWidth`，并再关一次 `ListViewItemSelectionIndicatorVisualEnabled`。
+    - 踩坑（已记入 `AGENTS.md` 第 6 节第 37/38 条）：`ContentDialog` 里的 `FontIcon` 会被算成 ~0 宽
+      （字形只画出一条）→ 导航项改成纯文字；负 `Margin` 想“通到对话框边缘”会把左侧内容裁掉；
+      这种场景下 UIA 的 `BoundingRectangle` 会给出 `x≈-1118` 这种假坐标，量渲染几何只能扫像素。
+    - 验收：`tools/test-settings.ps1` 重写为 4 个用例 26 条断言全绿（三个分类齐全且顺序一致 /
+      默认停在「文件列表」/ 每页只看得到本分类的开关 / 初始值与 settings.json 一致 / 取消不落盘 /
+      保存立即落盘并作用到文件列表 / 跨分类改「布局」后重新打开能读回）；
+      新增 `tools/shot-settings.ps1` 给每个分类截一张图（`.artifacts\settings-<分类名>.png`）。
 
 - [ ] **S18 文件系统监视自动刷新**
   - 目标：`FileSystemWatcher` 监视当前目录，外部变动时增量刷新（去抖），保持选中与滚动位置。
@@ -367,7 +387,7 @@
 | 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
 | 无文件系统监视 | 外部改动需手动 F5 | S18 |
 | 快捷菜单为空 | 按需求刻意留空，仅数据驱动 | S17 |
-| 设置对话框内容在极矮的窗口（≤ ~500 DIP）里要滚动 | 8 项内容约 430 DIP，`ContentDialog` 的标题+按钮区又占 ~200 DIP；已做 `ScrollViewer`（按钮永远可见），本机屏幕只有 450 DIP 所以看得见滚动条 | 需要时改双列/紧凑行高 |
+| 设置对话框尺寸写死（606×408 DIP），窗口比它小时边缘会被裁 | 两列固定宽度 + 根 `Grid` 的 `MinHeight`；`ContentDialog` 只会把对话框约束在窗口内，不会自己缩（右侧正文仍有 `ScrollViewer`） | 需要时改成按窗口尺寸自适应 |
 | 提权运行后拖放失效 | Windows 不允许高完整性级别（管理员）进程参与拖放：`DragItemsStarting` 会触发，但永远收不到 `DragOver`/`Drop`；以普通权限运行则正常（见 AGENTS.md 第 6 节第 21 条） | 系统限制，无解；必要时在界面上提示 |
 | 拖放只做了“目录 → 工具条固定目录”与“工具条固定目录之间排序” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
 | 固定目录最多 12 个 | 工具条固定目录区不滚动，太多了会把左侧磁盘区挤没（`MainViewModel.MaxPinnedFolders`） | 需要时改成横向滚动 / 溢出菜单 |

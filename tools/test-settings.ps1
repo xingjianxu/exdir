@@ -4,10 +4,16 @@
 #   pwsh -NoProfile -File tools\test-settings.ps1
 #   pwsh -NoProfile -File tools\test-settings.ps1 -Exe dist\win-x64\exdir.exe
 #
-# 三个用例（每次都真的启动 exdir、用真鼠标点菜单，再点对话框按钮）：
-#   1. 对话框内容齐全（8 个勾选项 + 保存/取消），且读到的值与 settings.json 一致；
+# 四个用例（每次都真的启动 exdir、用真鼠标点菜单，再点对话框按钮）：
+#   1. 对话框结构：左侧 3 个分类（文件列表 / 外观 / 布局）、默认停在「文件列表」，
+#      右侧只有当前分类的开关（切分类真的换页），初始值与 settings.json 一致；
 #   2. 改一项后点「取消」→ settings.json 不变；
-#   3. 改一项后点「保存」→ 立即落盘，并且真的作用到文件列表（关掉扩展名后行名里的 ".xxx" 消失）。
+#   3. 改一项后点「保存」→ 立即落盘，并且真的作用到文件列表（关掉扩展名后行名里的 ".xxx" 消失）；
+#   4. 跨分类读取：在「布局」页改双窗格，重新打开对话框读到的是刚落盘的值。
+#
+# 说明：配置项现在是 SettingsToggleRow 里的 ToggleSwitch，UIA 里的类型是 Button（不是 CheckBox），
+#       所以要靠 TogglePattern 认它；而且非当前分类的开关是 Visibility=Collapsed 的，
+#       UIA 树里根本没有 —— 断言“某分类下能读到哪几个开关”本身就是“切分类有效”的验证。
 #
 # 脚本要求有交互桌面（真实鼠标点击 + 截图）；无桌面时请改用 tools\inspect-ui.ps1。
 # 跑完会还原 settings.json 的原始内容。
@@ -49,6 +55,8 @@ function Assert {
     else { Write-Host "FAIL $Message"; $script:failures++ }
 }
 
+# 配置项：UIA 名字（= SettingsToggleRow 的 Title）→ settings.json 里的字段名。
+# 名字必须和 Views/SettingsDialog.xaml 里的 Title 一模一样。
 $KeyMap = [ordered]@{
     '显示隐藏文件'           = 'hidden'
     '显示文件扩展名'         = 'extension'
@@ -59,6 +67,16 @@ $KeyMap = [ordered]@{
     '显示侧边栏'             = 'sidebar'
     '双窗格模式'             = 'dualPane'
 }
+
+# 左侧分类 → 该分类下应有的配置项（顺序即导航顺序）。必须和 SettingsViewModel 里的一致。
+$CategoryMap = [ordered]@{
+    '文件列表' = @('hidden', 'extension', 'foldersFirst')
+    '外观'     = @('animations')
+    '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
+}
+
+$NameOfKey = @{}
+foreach ($pair in $KeyMap.GetEnumerator()) { $NameOfKey[$pair.Value] = $pair.Key }
 
 # ------------------------------------------------------------------ settings.json 读写
 
@@ -159,20 +177,73 @@ function Toggle-Element {
     Start-Sleep -Milliseconds 600
 }
 
-function Get-Rows {
-    param($Session)
+# 对话框里当前可见的开关：名字 → 元素。
+# ToggleSwitch 在 UIA 里是 Button 类型（不是 CheckBox），认它的依据是支持 TogglePattern。
+function Get-VisibleToggles {
+    param($Dialog)
+    $toggles = @{}
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    foreach ($el in $Dialog.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+        $pattern = $null
+        if (-not $el.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) { continue }
+        $toggles[$el.Current.Name] = $el
+    }
+    return $toggles
+}
+
+# 左侧导航点某个分类（用 SelectionItemPattern，不受弹层入场动画影响）
+function Select-Category {
+    param($Dialog, [string]$Name)
+    $item = Find-VisibleFirst -From $Dialog.Window -Name $Name -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+    if ($null -eq $item) { throw "左侧导航里找不到分类「$Name」" }
+    $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    Start-Sleep -Milliseconds 700
+}
+
+function Get-NavNames {
+    param($Dialog)
+    $names = @()
     $cond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
-    $names = @()
-    foreach ($el in $Session.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+    foreach ($el in $Dialog.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
         $names += $el.Current.Name
     }
     return $names
 }
 
-function Get-DotRowCount {
-    param($Session)
-    return @((Get-Rows -Session $Session) | Where-Object { $_ -match '\.' }).Count
+function Get-CurrentCategoryKey {
+    param($Dialog)
+    foreach ($name in $CategoryMap.Keys) {
+        $item = Find-VisibleFirst -From $Dialog.Window -Name $name -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+        if ($null -eq $item) { continue }
+        $pattern = $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+        if ($pattern.Current.IsSelected) { return $name }
+    }
+    return $null
+}
+
+function Find-Toggle {
+    param($Dialog, [string]$Key)
+    return (Get-VisibleToggles -Dialog $Dialog)[$NameOfKey[$Key]]
+}
+
+# 切到某个分类，读该分类下某个开关的状态
+function Get-ToggleStateByKey {
+    param($Dialog, [string]$Category, [string]$Key)
+    Select-Category -Dialog $Dialog -Name $Category
+    $el = Find-Toggle -Dialog $Dialog -Key $Key
+    if ($null -eq $el) { return 'MISSING' }
+    return Get-ToggleState -Element $el
+}
+
+# 切到某个分类，拨一下该分类下的某个开关
+function Invoke-ToggleByKey {
+    param($Dialog, [string]$Category, [string]$Key)
+    Select-Category -Dialog $Dialog -Name $Category
+    $el = Find-Toggle -Dialog $Dialog -Key $Key
+    if ($null -eq $el) { Assert $false "分类「$Category」下找不到开关 $($NameOfKey[$Key])"; return }
+    Toggle-Element -Element $el
 }
 
 # 打开「配置 → 设置…」。
@@ -214,20 +285,10 @@ function Open-SettingsDialog {
 
     Start-Sleep -Milliseconds 500
 
-    # 对话框内容超出可视区时，屏幕外的勾选项 IsOffscreen=true 但仍在 UIA 树里，
-    # 所以这里按“是不是对话框窗口的后代”筛选，而不是按可见性
-    $checkBoxes = @{}
-    $cond = New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::CheckBox)
-    foreach ($el in $dialogWindow.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
-        if ($KeyMap.Contains($el.Current.Name)) { $checkBoxes[$KeyMap[$el.Current.Name]] = $el }
-    }
-
     return [pscustomobject]@{
-        Window     = $dialogWindow
-        CheckBoxes = $checkBoxes
-        Save       = Find-First -From $dialogWindow -Name '保存' -ControlType ([System.Windows.Automation.ControlType]::Button)
-        Cancel     = Find-First -From $dialogWindow -Name '取消' -ControlType ([System.Windows.Automation.ControlType]::Button)
+        Window = $dialogWindow
+        Save   = Find-First -From $dialogWindow -Name '保存' -ControlType ([System.Windows.Automation.ControlType]::Button)
+        Cancel = Find-First -From $dialogWindow -Name '取消' -ControlType ([System.Windows.Automation.ControlType]::Button)
     }
 }
 
@@ -236,42 +297,70 @@ function Test-DialogClosed {
     return $null -eq (Find-DialogWindow -Session $Session)
 }
 
-function Invoke-CheckBoxToggle {
-    param($Dialog, [string]$Key)
-    if (-not $Dialog.CheckBoxes.ContainsKey($Key)) {
-        Assert $false "对话框里找不到勾选项 $Key"
-        return
+# 取行名里带扩展名的行数（用来验证「显示文件扩展名」真的作用到了列表）
+function Get-Rows {
+    param($Session)
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
+    $names = @()
+    foreach ($el in $Session.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+        $names += $el.Current.Name
     }
-
-    Toggle-Element -Element $Dialog.CheckBoxes[$Key]
+    return $names
 }
 
-# ================================================================== 用例 1：内容齐全 + 状态与 settings.json 一致
+function Get-DotRowCount {
+    param($Session)
+    return @((Get-Rows -Session $Session) | Where-Object { $_ -match '\.' }).Count
+}
 
-Write-Host '--- 用例 1：对话框内容与初始状态 ---'
+# ================================================================== 用例 1：结构 + 初始状态
+
+Write-Host '--- 用例 1：对话框结构（左导航 / 右正文）与初始状态 ---'
+# 除了两个用来验证“初始值一致”的项，双窗格也要先归零：
+# 用例 4 会按“现在单窗格 → 拨开 → 断言双窗格”推，而 settings.json 里上次退出时的值是不确定的。
 Set-Setting 'EnableListAnimations' $true
 Set-Setting 'ShowExtensions' $true
+Set-Setting 'IsDualPane' $false
 
 $session = Start-Session
 $dialog = Open-SettingsDialog -Session $session
 
-Assert ($dialog.CheckBoxes.Count -eq $KeyMap.Count) "对话框里有 $($KeyMap.Count) 个配置项（实际 $($dialog.CheckBoxes.Count)）"
+$navNames = Get-NavNames -Dialog $dialog
+Write-Host ("  左侧导航: {0}" -f ($navNames -join ' / '))
+Assert ($navNames.Count -eq $CategoryMap.Count) "左侧有 $($CategoryMap.Count) 个分类（实际 $($navNames.Count)）"
+Assert (($navNames -join '/') -eq (($CategoryMap.Keys) -join '/')) '左侧分类就是「文件列表 / 外观 / 布局」且顺序一致'
+Assert ((Get-CurrentCategoryKey -Dialog $dialog) -eq '文件列表') '默认选中的是第一个分类「文件列表」'
 Assert ($null -ne $dialog.Save) '底部有「保存」按钮'
 Assert ($null -ne $dialog.Cancel) '底部有「取消」按钮'
 
-$states = @{}
-foreach ($key in $KeyMap.Values) {
-    $states[$key] = if ($dialog.CheckBoxes.ContainsKey($key)) { Get-ToggleState -Element $dialog.CheckBoxes[$key] } else { 'MISSING' }
-    Write-Host ("  {0,-14} = {1}" -f $key, $states[$key])
+# 每个分类下只应能看到该分类自己的开关（其余分类是 Collapsed，UIA 里读不到）
+foreach ($category in $CategoryMap.Keys) {
+    Select-Category -Dialog $dialog -Name $category
+    $toggles = Get-VisibleToggles -Dialog $dialog
+    $expected = $CategoryMap[$category]
+    $foundKeys = @($toggles.Keys | ForEach-Object { $KeyMap[$_] } | Where-Object { $_ })
+    Assert ($toggles.Count -eq $expected.Count) "「$category」页显示 $($expected.Count) 个开关（实际 $($toggles.Count)）"
+    Assert (((($foundKeys | Sort-Object) -join ',') -eq (($expected | Sort-Object) -join ','))) "「$category」页的开关正是: $($expected -join ' / ')"
 }
+
+# 初始值应与 settings.json 一致
+$states = [ordered]@{}
+foreach ($pair in $CategoryMap.GetEnumerator()) {
+    $category = $pair.Key
+    foreach ($key in $pair.Value) {
+        $states[$key] = Get-ToggleStateByKey -Dialog $dialog -Category $category -Key $key
+    }
+}
+foreach ($key in $KeyMap.Values) { Write-Host ("  {0,-14} = {1}" -f $key, $states[$key]) }
 Assert ($states['animations'] -eq 'On') '对话框读到的「过渡动画」与 settings.json（true）一致'
 Assert ($states['extension'] -eq 'On') '对话框读到的「显示文件扩展名」与 settings.json（true）一致'
 
 # ================================================================== 用例 2：取消不落盘
 
 Write-Host '--- 用例 2：取消不落盘 ---'
-Invoke-CheckBoxToggle -Dialog $dialog -Key 'animations'
-Assert ((Get-ToggleState -Element $dialog.CheckBoxes['animations']) -eq 'Off') '勾选状态可以切换（改的是快照，不是设置本身）'
+Invoke-ToggleByKey -Dialog $dialog -Category '外观' -Key 'animations'
+Assert ((Get-ToggleStateByKey -Dialog $dialog -Category '外观' -Key 'animations') -eq 'Off') '勾选状态可以切换（改的是快照，不是设置本身）'
 
 Click-Element -Session $session -Element $dialog.Cancel
 Start-Sleep -Seconds 1
@@ -293,7 +382,7 @@ Assert (@($rowsBefore | Where-Object { $_ -match 'AGENTS' }).Count -gt 0) '会�
 $dotsBefore = Get-DotRowCount -Session $session
 
 $dialog = Open-SettingsDialog -Session $session
-Invoke-CheckBoxToggle -Dialog $dialog -Key 'extension'
+Invoke-ToggleByKey -Dialog $dialog -Category '文件列表' -Key 'extension'
 Click-Element -Session $session -Element $dialog.Save
 Start-Sleep -Seconds 1
 
@@ -307,24 +396,26 @@ Assert ($dotsAfter -lt $dotsBefore) '关掉「显示文件扩展名」后文件�
 
 # 改回来（这次也顺便验证「保存」能把设置改回去）
 $dialog = Open-SettingsDialog -Session $session
-Invoke-CheckBoxToggle -Dialog $dialog -Key 'extension'
+Invoke-ToggleByKey -Dialog $dialog -Category '文件列表' -Key 'extension'
 Click-Element -Session $session -Element $dialog.Save
 Start-Sleep -Seconds 2
 Assert ((Get-Setting 'ShowExtensions') -eq $true) '再点一次「保存」把设置改回来'
 Assert ((Get-DotRowCount -Session $session) -eq $dotsBefore) '重新打开扩展名后行名恢复原样'
 
-# 双窗格：走的是另一条代码路径（要真的把第二个窗格建出来并应用设置）
+# ================================================================== 用例 4：跨分类改「布局」并读回
+
+Write-Host '--- 用例 4：在「布局」页改设置、保存、重新打开读回 ---'
 $singlePaneRows = (Get-Rows -Session $session).Count
 $dialog = Open-SettingsDialog -Session $session
-Invoke-CheckBoxToggle -Dialog $dialog -Key 'dualPane'
+Invoke-ToggleByKey -Dialog $dialog -Category '布局' -Key 'dualPane'
 Click-Element -Session $session -Element $dialog.Save
 Start-Sleep -Seconds 3
 Assert ((Get-Setting 'IsDualPane') -eq $true) '打开「双窗格模式」后落盘 IsDualPane=true'
 Assert ((Get-Rows -Session $session).Count -ge ($singlePaneRows * 2)) '双窗格打开后列表行数明显变多（第二个窗格也开了同一个目录）'
-
 $dialog = Open-SettingsDialog -Session $session
-Assert ((Get-ToggleState -Element $dialog.CheckBoxes['dualPane']) -eq 'On') '重新打开对话框时读到的就是刚落盘的值'
-Invoke-CheckBoxToggle -Dialog $dialog -Key 'dualPane'
+Assert ((Get-CurrentCategoryKey -Dialog $dialog) -eq '文件列表') '重新打开对话框时仍默认停在「文件列表」'
+Assert ((Get-ToggleStateByKey -Dialog $dialog -Category '布局' -Key 'dualPane') -eq 'On') '切到「布局」页读到的就是刚落盘的值'
+Invoke-ToggleByKey -Dialog $dialog -Category '布局' -Key 'dualPane'
 Click-Element -Session $session -Element $dialog.Save
 Start-Sleep -Seconds 3
 Assert ((Get-Setting 'IsDualPane') -eq $false) '再关掉「双窗格模式」也立即落盘'

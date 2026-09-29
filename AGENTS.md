@@ -63,9 +63,13 @@ pwsh -NoProfile -File tools\make-icon.ps1
 #    需要交互桌面；当前 shell 提权时会自动改用 explorer.exe 以普通权限启动 exdir（见第 6 节第 21 条）
 pwsh -NoProfile -File tools\test-pin-drag.ps1
 
-# 7) 设置对话框回归（内容 / 取消不落盘 / 保存立即落盘并作用到列表）
+# 7) 设置对话框回归（左导航三个分类 / 每页只显示本分类的开关 / 取消不落盘 / 保存立即落盘并作用到列表 / 跨分类读回）
 #    需要交互桌面（真鼠标点击对话框按钮）
 pwsh -NoProfile -File tools\test-settings.ps1
+
+# 7b) 设置对话框截图（左侧每个分类各一张，肉眼验证“左导航 + 右正文”的布局）
+#     需要交互桌面；输出 .artifacts\settings-<分类名>.png
+pwsh -NoProfile -File tools\shot-settings.ps1
 
 # 8) 状态栏回归（只有一条 / 一行高 / 贴底 / 项数 / 选中摘要 + 合计大小 / 磁盘可用空间 / 跟随活动窗格）
 #    需要交互桌面；脚本会把 exdir 置顶（终端铺满屏幕时才拍得到 exdir）
@@ -128,7 +132,7 @@ exdir/
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
 ├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
-├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / IconBitmap / 枚举
+├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / IconBitmap / 枚举（含 SettingsCategory）
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
 │   ├─ IDriveService          DriveInfo 枚举
@@ -148,17 +152,19 @@ exdir/
 │   ├─ FileItemViewModel      列表一行（带 Depth/IsExpanded/Children，可展开）
 │   ├─ PinnedFolderViewModel  title 栏上的固定目录
 │   ├─ StatusBarViewModel     文件列表区底部状态栏（项数 / 选中摘要 + 合计大小 / 卷容量）
-│   └─ SettingsViewModel      设置对话框的编辑快照（点“保存”才写回 AppSettings）
+│   ├─ SettingsCategoryViewModel  设置对话框左侧导航的一项（Key + Name）
+│   └─ SettingsViewModel      设置对话框的编辑快照（点“保存”才写回 AppSettings）+ 分类与当前选中分类
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 │                             StatusBarView（文件列表区底部一行）
-│                             SettingsDialog（ContentDialog：所有配置项 + 底部保存/取消）
+│                             SettingsDialog（ContentDialog：左分类导航 + 右正文 + 底部保存/取消）
+│                             SettingsToggleRow（设置对话框里的一行开关：标题 + 说明 + ToggleSwitch）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
 ├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
-└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
+└─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
                               measure-row-align / publish / make-icon 脚本
 ```
 
@@ -366,11 +372,36 @@ exdir/
 
 ### 设置对话框（所有配置项的唯一入口）
 
-* 菜单栏**「配置 → 设置…」**弹出 `Views/SettingsDialog`（一个 `ContentDialog`）：
+* 菜单栏**「配置 → 设置…」**弹出 `Views/SettingsDialog`（一个 `ContentDialog`），
   **底部是「保存 / 取消」**（`PrimaryButtonText="保存"` + `CloseButtonText="取消"` +
-  `DefaultButton="Primary"`，即回车 = 保存、Esc = 取消），内容按“文件列表 / 界面”分两组：
-  显示隐藏文件、显示文件扩展名、文件夹排在文件前面、过渡动画、列宽自动适应窗格宽度、
-  显示工具条、显示侧边栏、双窗格模式。新增配置项**一律加到这里**，不要再往菜单里挂勾选项。
+  `DefaultButton="Primary"`，即回车 = 保存、Esc = 取消）。
+* **左导航 + 右正文**（2026-09 重构，原来是“一列分组勾选框”）：
+  左侧是配置大类列表（`ListView`）+ 右侧只显示当前分类那一页。当前三个分类：
+
+  | 分类 | 配置项 |
+  | --- | --- |
+  | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 |
+  | 外观 | 过渡动画 |
+  | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
+
+  * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`
+    （列表顺序即导航顺序，`SelectedCategory` 直接绑 `ListView.SelectedItem`，TwoWay）；
+    右侧三页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible`
+    （`SelectedCategory` 的 setter 里一次性通知这三个，省得每页各写一个枚举转换器）。
+  * 非当前页是 `Visibility=Collapsed`，**UIA 树里根本没有它们**：所以回归脚本
+    “切到某分类后只看得到该分类的开关”本身就是“切页真的生效”的验证。
+  * 每一行是 `Views/SettingsToggleRow`（`Title` / `Description` / `IsOn` 三个 DP）：
+    左边“标题 + 灰色说明”，右边一个 `ToggleSwitch`（`OnContent`/`OffContent` 留空，
+    否则默认的“开 / 关”文字会把开关推歪）。开关的 UIA 名字就是 `Title`（脚本按名字找它）。
+    `IsOn` 由对话框 `{x:Bind ViewModel.Xxx, Mode=TwoWay}` 绑到快照上。
+  * **对话框尺寸是定死的**（实测约 606×408 DIP，三页完全一致，切分类不跳）：
+    两列都用固定 `GridLength`（`156` / `400`）——星号列不参与 DesiredSize 计算，
+    不写死的话最长的说明文字会把对话框撑成三种宽度；根 `Grid` 用 `MinHeight`（不是 `Height`）
+    兜住最矮的「外观」页，窗口太矮时右侧 `ScrollViewer` 自己出滚动条。
+  * `ContentDialog` 默认最宽只有 548 DIP（`ContentDialogMaxWidth`），装不下两栏，
+    所以在 `ContentDialog.Resources` 里覆盖成 `520 / 680`；同一个地方还要再关一次
+    `ListViewItemSelectionIndicatorVisualEnabled`（见第 6 节第 38 条）。
+  * 导航项**只有文字、没有图标**（为什么见第 6 节第 37 条）。
 * **编辑的是快照**（`ViewModels/SettingsViewModel`，构造时从 `AppSettings` 复制一份）：
   `ShowAsync()` 返回 `Primary` 才调 `MainViewModel.ApplySettings(snapshot)` 写回并**立即落盘**，
   返回 `Close`（取消）就什么都不做——不需要逐项回滚，也不会误写 `settings.json`。
@@ -381,9 +412,14 @@ exdir/
   （`MenuFlyoutItem` + `ToggleXxxCommand`，本来就不显示勾选标记），和对话框切的是同一份设置，
   两边不会各说各话（`ApplySettings` 会 `OnPropertyChanged(ShowHiddenFiles/ShowExtensions/…)`，
   对话框里改完再点菜单项，切的就是新状态）。
-* 设置对话框的内容比窗口还高时自己滚动（`ScrollViewer` + `MaxHeight`）：
-  `ContentDialog` 会把整个对话框约束在窗口内，按钮区永远留在底部。
-  （本机屏幕只有 720×450 DIP，8 项就会要滚；正常窗口高度下一屏放得下。）
+* **新增配置项要动六个地方**：`AppSettings` 字段 → `SettingsViewModel` 属性（放进对应分类的注释段）→
+  `SettingsDialog.xaml` 里**对应分类页**加一行 `SettingsToggleRow` → `MainViewModel.ApplySettings` 应用 →
+  `tools/test-settings.ps1` 的 `$KeyMap`（UIA 名字 → 字段名）与 `$CategoryMap`（分类 → 该页的项）→
+  需要新分类时再往 `SettingsCategory` / `Categories` 里加一项。
+* 回归：`tools/test-settings.ps1`（4 个用例 26 条断言）；
+  肉眼看布局用 `tools/shot-settings.ps1`（每个分类截图到 `.artifacts\settings-<分类名>.png`）。
+* 对话框比窗口还大时（窗口被缩到 606×408 DIP 以下）边缘会被裁掉：`ContentDialog`
+  只会把对话框约束在窗口内，不会自己缩小；正常窗口尺寸（默认 1280×800 DIP）下离边很远。
 
 ## 5. 必须遵守的编码约定
 
@@ -397,8 +433,9 @@ exdir/
 * **主窗口的 ViewModel 用普通只读属性，且必须在 `InitializeComponent()` 之前赋值**，
   因为 `x:Bind` 在 `InitializeComponent` 期间求值。
   `SettingsDialog`（`ContentDialog` 子类）同理：`ViewModel` 属性在构造函数里先赋值再 `InitializeComponent()`。
-* **新增配置项要动五个地方**：`AppSettings` 字段 → `SettingsViewModel` 属性 →
-  `SettingsDialog.xaml` 勾选项 → `MainViewModel.ApplySettings` 应用 → `tools/test-settings.ps1` 的 `$KeyMap`。
+* **新增配置项要动六个地方**（详见第 4 节“设置对话框”）：`AppSettings` 字段 → `SettingsViewModel` 属性 →
+  `SettingsDialog.xaml` 对应分类页里的 `SettingsToggleRow` → `MainViewModel.ApplySettings` 应用 →
+  `tools/test-settings.ps1` 的 `$KeyMap` 与 `$CategoryMap` → 需要时再往 `SettingsCategory` 加分类。
   对话框只负责编辑快照，落盘与应用只在 `MainViewModel.ApplySettings` 一处发生。
 * **数据集合整体替换而非增量 Add**：`FolderTabViewModel.Items` 每次导航/排序都新建
   `ObservableCollection` 再赋值，避免逐条 Add 造成 O(n²) 的 UI 开销。
@@ -578,6 +615,24 @@ exdir/
     另：标签条装不下时出现的 ◀ ▶ 按钮容器默认带 3 DIP 下内边距
     （`TabViewItemLeft/RightScrollButtonContainerPadding`），会把**只有溢出窗格**的标签栏撑到 27 DIP ——
     双窗格左右两条标签栏高度不一致就是这么来的。
+37. **`ContentDialog` 里的 `FontIcon` 渲染发献（尺寸被算成接近 0）、里面的 `Margin` 负值会被裁切**：
+    2026-09 重构设置对话框时，左侧导航项原本想放一个 Segoe 字形图标（`FontIcon` + `Glyph`，
+    写法与 `SidebarView` 里的完全一样），结果在对话框里字形只画出左边约 4 DIP 的一小条，
+    而且它后面的 `TextBlock` 也挤了上来（相当于 `FontIcon` 的 DesiredSize 几乎是 0）。
+    换掉横向 `StackPanel`、改成 `Grid(Auto,*)`、甚至给 `FontIcon` 显式写 `Width="16"` 都没用；
+    同一个写法在主窗口的侧边栏树里一切正常，只有 `ContentDialog` 里不行。
+    同一个对话框里用 `Margin="-24,0,-24,-24"` 想“两栏通到对话框边缘”时，左侧内容也会被裁掉一截
+    （截在对话框左边界上，导航文字只剩右半边）。
+    排查手段：截图后用 `GetPixel` 扫一行/一列的颜色分段（UIA 的 `BoundingRectangle` 在这种场景下
+    **也不能信**：同一份布局里 `ToggleSwitch` 报的是 `x≈-1118`，而实际画在对话框右侧）。
+    结论/做法：设置对话框的左侧导航**只放文字、不放图标**；也不要靠负 `Margin` 去消除
+    `ContentDialogPadding`（想要“通到底”的观感，宁可接受 24 DIP 的卡片式留白）。
+38. **同一个主题资源键，在 `ContentDialog` 里可能读不到 App 级的值**：
+    `Themes/ExdirTheme.xaml` 里已经把 `ListViewItemSelectionIndicatorVisualEnabled` 设成 `False`
+    （主窗口的文件列表确实没有那条左侧竖条，见第 4 节），但设置对话框里的 `ListView`
+    还是画出了强调色竖条；把同一个键再写进该对话框的 `<ContentDialog.Resources>` 就消失了。
+    所以“在某个弹层里发现某个主题资源像是没生效”时，先在**这个弹层自己的 `Resources` 里再覆写一遍**，
+    而不是去怀疑 `ExdirTheme.xaml` 的合并顺序。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -615,15 +670,18 @@ exdir/
   路径按目录分段显示（chevron 分隔）、点分段跳转、点当前目录段或右侧空白区就地编辑，回车跳转、Esc 取消；
   超长路径自动滚到最右（当前目录永远可见）并在左端提示省略，编辑入口也有 `Ctrl+L` / `Alt+D`；
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
-* **所有配置项集中在设置对话框**（2026-09，S17a）：菜单栏「配置 → 设置…」弹出
-  `Views/SettingsDialog`（`ContentDialog`，底部「保存 / 取消」），里面是 8 个勾选项
-  （文件列表：显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 过渡动画 /
-  列宽自动适应窗格宽度；界面：显示工具条 / 显示侧边栏 / 双窗格模式），
-  分「文件列表 / 界面」两组；编辑的是 `SettingsViewModel` 快照，
-  **点“取消”什么都不改、点“保存”立即应用并落盘**（不再等退出才写），
+* **所有配置项集中在设置对话框**（2026-09，S17a / S17b）：菜单栏「配置 → 设置…」弹出
+  `Views/SettingsDialog`（`ContentDialog`，底部「保存 / 取消」）。**左导航 + 右正文**两栏：
+  左侧三个分类（文件列表 / 外观 / 布局，都是纯文字项），右侧只显示当前分类那一页，
+  每项是“标题 + 说明 + 右侧开关”（`Views/SettingsToggleRow`）；
+  共 8 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面）、
+  外观（过渡动画）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）。
+  编辑的是 `SettingsViewModel` 快照，**点“取消”什么都不改、点“保存”立即应用并落盘**（不再等退出才写），
   应用入口是 `MainViewModel.ApplySettings`；新增配置项要同时改 `AppSettings`、`SettingsViewModel`、
-  `SettingsDialog.xaml`、`ApplySettings` 与 `tools/test-settings.ps1` 的 `$KeyMap`（见第 4 节）。
-  回归：`tools/test-settings.ps1`（对话框内容与初始值 / 取消不落盘 / 保存立即落盘并作用到文件列表）。
+  `SettingsDialog.xaml`、`ApplySettings` 与 `tools/test-settings.ps1` 的 `$KeyMap` / `$CategoryMap`（见第 4 节）。
+  回归：`tools/test-settings.ps1`（4 个用例 26 条断言：分类齐全 / 每页只显示本分类的开关 / 初始值一致 /
+  取消不落盘 / 保存立即落盘并作用到文件列表 / 跨分类读回），
+  布局截图：`tools/shot-settings.ps1`（.artifacts\settings-<分类名>.png）。
   原先的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）已移除，
   「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与对话框共享同一份设置）；
 * **工具条“固定目录”支持拖放固定**（2026-09）：文件列表 / 侧边栏树里的目录可以直接拖到工具条右侧的
