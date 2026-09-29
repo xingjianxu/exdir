@@ -43,6 +43,11 @@ public partial class App : Application
             ShellPropertyStore.EnsurePlaceholdersExposed();
 
             MainWindow = Services.GetRequiredService<MainWindow>();
+
+            // 系统右键菜单需要一个宿主窗口句柄（TrackPopupMenu / GetUIObjectOf 都要用）
+            Services.GetRequiredService<IShellContextMenuService>().OwnerWindow =
+                WinRT.Interop.WindowNative.GetWindowHandle(MainWindow);
+
             MainWindow.Activate();
 
             Log.Write("应用已启动");
@@ -73,6 +78,7 @@ public partial class App : Application
         services.AddSingleton<IDriveService, DriveService>();
         services.AddSingleton<IShellService, ShellService>();
         services.AddSingleton<IShellIconService, ShellIconService>();
+        services.AddSingleton<IShellContextMenuService, ShellContextMenuService>();
 
         // ViewModel
         services.AddSingleton<MainViewModel>();

@@ -97,6 +97,9 @@ public sealed class SettingsService : ISettingsService
             settings.PinnedFoldersInitialized = settings.PinnedFolders.Count > 0;
         }
 
+        // v4 新增“系统右键菜单”的两份清单（已知项 / 被关掉的项），默认都是空：
+        // 空 = 全部开启，打开设置页时会用样本目标把清单填满，不需要迁移旧数据。
+
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }
 

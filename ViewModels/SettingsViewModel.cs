@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Exdir.Models;
+using Exdir.Services;
 
 namespace Exdir.ViewModels;
 
@@ -14,6 +15,8 @@ namespace Exdir.ViewModels;
 /// </summary>
 public sealed class SettingsViewModel : ObservableObject
 {
+    private readonly IShellContextMenuService _contextMenu;
+
     private SettingsCategoryViewModel _selectedCategory;
     private bool _showHiddenFiles;
     private bool _showExtensions;
@@ -25,8 +28,9 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _dualPane;
 
     /// <summary>按当前设置生成一份快照。</summary>
-    public SettingsViewModel(AppSettings settings)
+    public SettingsViewModel(AppSettings settings, IShellContextMenuService contextMenu)
     {
+        _contextMenu = contextMenu;
         // 顺序即左侧导航的显示顺序
         Categories = new List<SettingsCategoryViewModel>
         {

@@ -23,16 +23,21 @@
             CanDragTabs="False"
             CanReorderTabs="True"
             CloseButtonOverlayMode="OnPointerOver"
+            HorizontalContentAlignment="Stretch"
             IsAddTabButtonVisible="True"
             SelectedItem="{x:Bind ViewModel.ActiveTab, Mode=TwoWay}"
             TabCloseRequested="Tabs_TabCloseRequested"
             TabItemsSource="{x:Bind ViewModel.Tabs, Mode=OneWay}"
-            TabWidthMode="SizeToContent">
+            TabWidthMode="SizeToContent"
+            VerticalAlignment="Stretch"
+            VerticalContentAlignment="Stretch">
             <TabView.TabItemTemplate>
                 <DataTemplate x:DataType="vm:FolderTabViewModel">
                     <TabViewItem
                         Header="{x:Bind TabHeader, Mode=OneWay}"
-                        ToolTipService.ToolTip="{x:Bind TooltipText, Mode=OneWay}">
+                        HorizontalContentAlignment="Stretch"
+                        ToolTipService.ToolTip="{x:Bind TooltipText, Mode=OneWay}"
+                        VerticalContentAlignment="Stretch">
                         <TabViewItem.IconSource>
                             <FontIconSource FontSize="13" Glyph="&#xE8B7;" />
                         </TabViewItem.IconSource>

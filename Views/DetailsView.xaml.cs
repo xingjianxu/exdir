@@ -14,7 +14,9 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Windows.Foundation;
 using Windows.System;
+using WinRT.Interop;
 
 namespace Exdir.Views;
 
@@ -43,6 +45,14 @@ public sealed partial class DetailsView : UserControl
         // 方向键用 PreviewKeyDown（隧道）而不是 KeyDown：
         // ListView 内部的 ScrollViewer 会先吃掉左右键做横向滚动，必须在它之前拦住。
         EntryList.PreviewKeyDown += EntryList_PreviewKeyDown;
+
+        // 右键菜单挂在最外层 Grid 上，而不是挂在 ListView 上：
+        // 列表下面的空白处（没生成行的地方）根本不会命中 ListView 内部的 ScrollViewer（它没有背景，
+        // 不参与命中测试），事件会从外层 Grid 直接往上冒，挂在 ListView 上就永远收不到。
+        // handledEventsToo：行里的图标 / 文字可能把事件标成 Handled。
+        // RightTapped 负责鼠标右键，ContextRequested 负责键盘菜单键；两者不会同时触发，用时间戳防重复。
+        DetailsRoot.AddHandler(UIElement.RightTappedEvent, new RightTappedEventHandler(DetailsRoot_RightTapped), true);
+        DetailsRoot.AddHandler(UIElement.ContextRequestedEvent, new TypedEventHandler<UIElement, ContextRequestedEventArgs>(DetailsRoot_ContextRequested), true);
     }
 
     public static readonly DependencyProperty ViewModelProperty = DependencyProperty.Register(
@@ -437,6 +447,113 @@ public sealed partial class DetailsView : UserControl
 
     private void EntryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         => ViewModel?.SetSelection(EntryList.SelectedItems.OfType<FileItemViewModel>());
+
+    // ------------------------------------------------------------------ 系统右键菜单
+
+    /// <summary>
+    /// 右键 / 菜单键：点在行上 → 该（批）条目的系统菜单；点在空白处 → 当前目录的背景菜单。
+    /// 菜单项完全交给系统外壳（含第三方扩展），exdir 只管定位与被关掉的项。
+    /// </summary>
+    private void DetailsRoot_ContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        if (ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        var position = args.TryGetPosition(DetailsRoot, out var local) ? local : default;
+        ShowShellContextMenu(viewModel, args.OriginalSource, position);
+        args.Handled = true;
+    }
+
+    /// <summary>鼠标右键：<c>RightTapped</c> 比 <c>ContextRequested</c> 更可靠（后者在有些控件上不冒泡）。</summary>
+    private void DetailsRoot_RightTapped(object sender, RightTappedRoutedEventArgs args)
+    {
+        if (ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        ShowShellContextMenu(viewModel, args.OriginalSource, args.GetPosition(DetailsRoot));
+        args.Handled = true;
+    }
+
+    private void ShowShellContextMenu(FolderTabViewModel viewModel, object? source, Point position)
+    {
+        // 列头上右键不弹菜单（它的排序按钮有自己的行为，弹一个目录背景菜单只会让人困惑）
+        if (position.Y <= HeaderRow.ActualHeight)
+        {
+            return;
+        }
+
+        // RightTapped 与 ContextRequested 可能为同一次右键都冒上来：菜单是模态弹出的，
+        // 第一个处理完（用户关掉菜单）之后第二个才会被调用，所以拿“刚刚弹过”的时间戳防重复
+        if (Environment.TickCount64 - _lastContextMenuTicks < DuplicateContextMenuGuardMs)
+        {
+            return;
+        }
+
+        var screen = DpiHelper.ToScreenPoint(DetailsRoot, MainWindowHandle, position);
+        var item = FindRowItem(source);
+
+        if (item is not null)
+        {
+            // 右键点到没选中的行：先把选择换成它（与资源管理器一致），菜单作用于刚刚选中的这批
+            if (!EntryList.SelectedItems.Contains(item))
+            {
+                EntryList.SelectedItem = item;
+            }
+
+            var paths = EntryList.SelectedItems.OfType<FileItemViewModel>().Select(i => i.FullPath).ToList();
+            if (paths.Count > 0)
+            {
+                viewModel.ShowShellContextMenu(paths, isBackground: false, (int)screen.X, (int)screen.Y);
+            }
+        }
+        else if (!string.IsNullOrEmpty(viewModel.CurrentPath))
+        {
+            viewModel.ShowShellContextMenu(
+                new[] { viewModel.CurrentPath },
+                isBackground: true,
+                (int)screen.X,
+                (int)screen.Y);
+        }
+
+        // 记在“菜单关掉之后”，这样紧跟着来的重复事件（间隔约 0 ms）会被挡掉，
+        // 而用户过一会儿真的再点一次右键不受影响
+        _lastContextMenuTicks = Environment.TickCount64;
+    }
+
+    /// <summary>同一次右键里两个事件都冒上来时，用来去重的时间窗（毫秒）。</summary>
+    private const long DuplicateContextMenuGuardMs = 400;
+
+    private long _lastContextMenuTicks;
+
+    /// <summary>从命中的最深层元素往上找它所属的那一行；没找到（空白处 / 列头）返回 null。</summary>
+    private FileItemViewModel? FindRowItem(object? source)
+    {
+        var node = source as DependencyObject;
+
+        while (node is not null)
+        {
+            if (node is FrameworkElement { DataContext: FileItemViewModel item })
+            {
+                return item;
+            }
+
+            if (ReferenceEquals(node, DetailsRoot))
+            {
+                return null;
+            }
+
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return null;
+    }
+
+    private static IntPtr MainWindowHandle
+        => App.MainWindow is { } window ? WindowNative.GetWindowHandle(window) : IntPtr.Zero;
 
     /// <summary>整体重建列表后按路径恢复选中项（排序、刷新用）。</summary>
     private void RestoreSelection()

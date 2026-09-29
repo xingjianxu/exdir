@@ -5,7 +5,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%LOCALAPPDATA%\exdir\settings.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -67,4 +67,18 @@ public sealed class AppSettings
 
     /// <summary>快捷菜单中的自定义命令。</summary>
     public List<QuickCommand> QuickCommands { get; set; } = new();
+
+    // ---------- 右键菜单 ----------
+
+    /// <summary>
+    /// 已经在设置里见过、可以逐项开关的系统右键菜单项。
+    /// 用户在设置页里看到的就是这份清单（再并上打开设置页时用样本目标现枚举出来的那些）。
+    /// </summary>
+    public List<ShellMenuItem> ShellMenuKnownItems { get; set; } = new();
+
+    /// <summary>
+    /// 被关掉的系统右键菜单项（存的是 <see cref="ShellMenuItem.Key" />）：
+    /// 弹出系统菜单前会把这些项从 HMENU 里删掉。空列表 = 全部开启（默认）。
+    /// </summary>
+    public List<string> ShellMenuDisabledItems { get; set; } = new();
 }

@@ -25,6 +25,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private readonly IShellService _shell;
     private readonly ISettingsService _settings;
     private readonly IShellIconService _icons;
+    private readonly IShellContextMenuService _contextMenu;
 
     private readonly List<string> _backStack = new();
     private readonly List<string> _forwardStack = new();
@@ -60,12 +61,14 @@ public sealed partial class FolderTabViewModel : ObservableObject
         IFileSystemService fileSystem,
         IShellService shell,
         ISettingsService settings,
-        IShellIconService icons)
+        IShellIconService icons,
+        IShellContextMenuService contextMenu)
     {
         _fileSystem = fileSystem;
         _shell = shell;
         _settings = settings;
         _icons = icons;
+        _contextMenu = contextMenu;
 
         _foldersFirst = settings.Current.FoldersFirst;
         _showExtensions = settings.Current.ShowExtensions;
@@ -592,6 +595,26 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     [RelayCommand]
     private void OpenTerminalAsAdmin() => _shell.OpenTerminal(_currentPath, asAdministrator: true);
+
+    /// <summary>
+    /// 在指定屏幕位置弹出系统右键菜单（由视图层在 <c>ContextRequested</c> 里调用）。
+    /// </summary>
+    /// <param name="paths">选中项路径；<paramref name="isBackground" /> 为 true 时只取第一个，代表当前目录的空白处。</param>
+    /// <param name="isBackground">true = 文件列表空白处（目录背景菜单）。</param>
+    /// <param name="screenX">弹出位置 X（屏幕物理像素，由视图用 <c>DpiHelper.ToScreenPoint</c> 换算）。</param>
+    /// <param name="screenY">弹出位置 Y（屏幕物理像素）。</param>
+    public void ShowShellContextMenu(IReadOnlyList<string> paths, bool isBackground, int screenX, int screenY)
+    {
+        try
+        {
+            _contextMenu.Show(paths, isBackground, screenX, screenY);
+        }
+        catch (Exception ex)
+        {
+            // 外壳扩展千奇百怪，弹菜单失败不能把整个应用带走
+            Log.Exception("系统右键菜单", ex);
+        }
+    }
 
     // ------------------------------------------------------------------ 排序命令
 

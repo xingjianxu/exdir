@@ -1,0 +1,305 @@
+# 系统右键菜单的回归脚本（真鼠标右键 + 截图 + exdir.log 断言）。
+#
+# 用法:
+#   pwsh -NoProfile -File tools\test-context-menu.ps1
+#   pwsh -NoProfile -File tools\test-context-menu.ps1 -Exe dist\win-x64\exdir.exe
+#
+# 三个用例（每次都真的启动 exdir、用真鼠标右键）：
+#   1. 在文件行上右键 → 弹出系统菜单（Win32 的 #32768 弹出菜单窗口属于 exdir 进程），
+#      截图存到 .artifacts\context-menu-file.png；
+#   2. 在列表空白处右键 → 弹出目录背景菜单，截图 context-menu-background.png；
+#   3. 把某个菜单项在设置里关掉（settings.json 的 ShellMenuDisabledItems 写进「属性」的键 verb:properties）
+#      → 重启后弹出的菜单里不再有「属性」（exdir.log 里会写“已关闭 属性”），截图 context-menu-filtered.png。
+#
+# 为什么用 exdir.log 断言而不是 UIA：Windows 11 的外壳右键菜单是自绘的，
+# Win32 #32768 窗口里没有可供 UIA 读取的 MenuItem（整张菜单在 UIA 里就是一个 Pane），
+# 所以“菜单弹出来了”靠 EnumWindows 找 #32768，“有哪些项 / 关掉了哪些项”靠 exdir 自己的日志。
+#
+# 脚本要求有交互桌面（真实鼠标右键 + 截图）；跑完会还原 settings.json 的原始内容。
+
+param(
+    [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe"
+)
+
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+
+Add-Type @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class MenuNative {
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, IntPtr extra);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int max);
+
+    public const int DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
+    public const uint RIGHTDOWN = 0x0008;
+    public const uint RIGHTUP = 0x0010;
+
+    /// <summary>某个进程当前的 Win32 弹出菜单窗口（#32768）。</summary>
+    public static List<IntPtr> FindPopupMenus(uint targetPid) {
+        var found = new List<IntPtr>();
+        EnumWindows((h, l) => {
+            uint pid;
+            GetWindowThreadProcessId(h, out pid);
+            if (pid != targetPid) return true;
+            var sb = new StringBuilder(64);
+            GetClassName(h, sb, sb.Capacity);
+            if (sb.ToString() == "#32768") found.Add(h);
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+}
+'@
+
+[void][MenuNative]::SetProcessDpiAwarenessContext([IntPtr][MenuNative]::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
+
+$exePath = [System.IO.Path]::GetFullPath($Exe)
+if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
+
+$shotDir = [System.IO.Path]::GetFullPath("$PSScriptRoot\..\.artifacts")
+$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+$logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
+$originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
+
+# 自己造一个只有两个文件的目录当测试现场：这样列表下面一定有空白的“背景”可以右键
+$testDir = Join-Path $env:TEMP 'exdir-context-menu-test'
+New-Item -ItemType Directory -Force -Path $testDir | Out-Null
+Set-Content (Join-Path $testDir 'alpha.txt') 'a' -Encoding utf8
+Set-Content (Join-Path $testDir 'beta.txt') 'b' -Encoding utf8
+
+$failures = 0
+function Assert {
+    param([bool]$Condition, [string]$Message)
+    if ($Condition) { Write-Host "PASS $Message" }
+    else { Write-Host "FAIL $Message"; $script:failures++ }
+}
+
+# ------------------------------------------------------------------ settings.json / 日志
+
+function Get-Setting {
+    param([string]$Name)
+    return (Get-Content $script:settingsPath -Raw | ConvertFrom-Json).$Name
+}
+
+function Set-Setting {
+    param([string]$Name, $Value)
+    $json = Get-Content $script:settingsPath -Raw | ConvertFrom-Json
+
+    # 老版本的 settings.json 里可能还没有这个字段（例如刚加的 ShellMenuDisabledItems），
+    # 直接 $json.$Name = $Value 会报“找不到属性”，所以用 Add-Member -Force
+    $json | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
+    $json | ConvertTo-Json -Depth 10 | Set-Content $script:settingsPath -Encoding utf8
+}
+
+function Get-LogTail {
+    param([int]$Lines = 30)
+    if (-not (Test-Path $script:logPath)) { return @() }
+    return @(Get-Content $script:logPath -Tail $Lines)
+}
+
+# ------------------------------------------------------------------ 会话
+
+function Start-Session {
+    Get-Process -Name 'exdir' -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch { } }
+
+    $proc = Start-Process -FilePath $script:exePath -WorkingDirectory (Split-Path $script:exePath) -PassThru
+    $handle = [IntPtr]::Zero
+    $deadline = (Get-Date).AddSeconds(40)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 400
+        if ($proc.HasExited) { throw "进程已退出，退出码 $($proc.ExitCode)" }
+        $proc.Refresh()
+        if ($proc.MainWindowHandle -ne [IntPtr]::Zero) { $handle = $proc.MainWindowHandle; break }
+    }
+    if ($handle -eq [IntPtr]::Zero) { throw '未出现主窗口' }
+
+    Start-Sleep -Seconds 5
+
+    return [pscustomobject]@{
+        Proc   = $proc
+        Handle = $handle
+        Root   = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+    }
+}
+
+function Stop-Session {
+    param($Session)
+    try { $Session.Proc.CloseMainWindow() | Out-Null; $Session.Proc.WaitForExit(4000) | Out-Null } catch { }
+    try { if (-not $Session.Proc.HasExited) { $Session.Proc.Kill() } } catch { }
+    Start-Sleep -Milliseconds 500
+}
+
+# ------------------------------------------------------------------ UIA / 鼠标
+
+function Find-Rows {
+    param($Session)
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::ListItem)
+    return @($Session.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond))
+}
+
+function Invoke-RightClick {
+    param($Session, [int]$ScreenX, [int]$ScreenY)
+    [void][MenuNative]::SetForegroundWindow($Session.Handle)
+    Start-Sleep -Milliseconds 400
+    [void][MenuNative]::SetCursorPos($ScreenX, $ScreenY)
+    Start-Sleep -Milliseconds 300
+    [MenuNative]::mouse_event([MenuNative]::RIGHTDOWN, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Milliseconds 90
+    [MenuNative]::mouse_event([MenuNative]::RIGHTUP, 0, 0, 0, [IntPtr]::Zero)
+    Start-Sleep -Seconds 3
+}
+
+function Dismiss-Menu {
+    param($Session)
+    [void][MenuNative]::SetForegroundWindow($Session.Handle)
+    Start-Sleep -Milliseconds 300
+    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+    Start-Sleep -Seconds 2
+}
+
+function Get-PopupMenus {
+    param($Session)
+    return @([MenuNative]::FindPopupMenus([uint32]$Session.Proc.Id))
+}
+
+# 截“窗口 ∪ 弹出菜单”：菜单在窗口外面，只截窗口会漏掉它
+function Save-Shot {
+    param($Session, [string]$Name)
+    New-Item -ItemType Directory -Force -Path $script:shotDir | Out-Null
+    $shot = Join-Path $script:shotDir ($Name + '.png')
+
+    $rect = $Session.Root.Current.BoundingRectangle
+    $left = [int]$rect.X; $top = [int]$rect.Y
+    $right = [int]($rect.X + $rect.Width); $bottom = [int]($rect.Y + $rect.Height)
+
+    foreach ($hwnd in (Get-PopupMenus -Session $Session)) {
+        $r = New-Object MenuNative+RECT
+        if (-not [MenuNative]::GetWindowRect($hwnd, [ref]$r)) { continue }
+        $left = [Math]::Min($left, $r.Left); $top = [Math]::Min($top, $r.Top)
+        $right = [Math]::Max($right, $r.Right); $bottom = [Math]::Max($bottom, $r.Bottom)
+    }
+
+    $left = [Math]::Max(0, $left); $top = [Math]::Max(0, $top)
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $right = [Math]::Min($screen.Width, $right); $bottom = [Math]::Min($screen.Height, $bottom)
+
+    $w = [Math]::Max(1, $right - $left); $h = [Math]::Max(1, $bottom - $top)
+    $bmp = New-Object System.Drawing.Bitmap $w, $h
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $gfx.CopyFromScreen($left, $top, 0, 0, (New-Object System.Drawing.Size $w, $h))
+    $gfx.Dispose()
+    $bmp.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+    Write-Host "已保存 $shot"
+}
+
+try {
+
+    # ============================================================== 用例 1：文件行上的系统菜单
+
+    Write-Host '--- 用例 1：在文件行上右键弹出系统菜单 ---'
+    Set-Setting 'PrimaryTabs' ([string[]]@($testDir))
+    Set-Setting 'IsDualPane' $false
+    Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
+    Set-Setting 'ShellMenuKnownItems' ([string[]]@())
+
+    # 窗口尺寸也写死：上次退出时如果窗口是最小化的，位置/尺寸可能是哨兵值，
+    # 窗口会小到只剩侧边栏，右键点不到列表（见 MainWindow.SaveWindowPlacement）
+    Set-Setting 'WindowWidth' 1280
+    Set-Setting 'WindowHeight' 800
+    Set-Setting 'WindowX' 0
+    Set-Setting 'WindowY' 0
+    Set-Setting 'WindowMaximized' $false
+    Set-Setting 'SidebarWidth' 232
+
+    $session = Start-Session
+
+    $rows = Find-Rows -Session $session
+    $alpha = $rows | Where-Object { $_.Current.Name -like 'alpha*' } | Select-Object -First 1
+    Assert ($null -ne $alpha) '测试目录里的 alpha.txt 出现在列表里'
+
+    $rect = $alpha.Current.BoundingRectangle
+    Invoke-RightClick -Session $session -ScreenX ([int]($rect.X + $rect.Width / 3)) -ScreenY ([int]($rect.Y + $rect.Height / 2))
+
+    Assert ((Get-PopupMenus -Session $session).Count -ge 1) '右键文件行弹出了系统菜单（进程里出现了 #32768 弹出菜单窗口）'
+    $log = Get-LogTail
+    Assert (@($log | Where-Object { $_ -match '系统右键菜单：文件 上下文共 (\d+) 项' }).Count -ge 1) '日志记下了“文件”上下文的菜单项数量'
+    Save-Shot -Session $session -Name 'context-menu-file'
+    Dismiss-Menu -Session $session
+    Assert ((Get-PopupMenus -Session $session).Count -eq 0) 'Esc 之后弹出菜单关掉了'
+
+    # ============================================================== 用例 2：列表空白处的背景菜单
+
+    Write-Host '--- 用例 2：在列表空白处右键弹出背景菜单 ---'
+    # 空白处要按“文件行的正下方”算：$rows 里也包含侧边栏树的节点，不能用“最底下的那个 ListItem”
+    $rowRect = $alpha.Current.BoundingRectangle
+    $blankX = [int]($rowRect.X + $rowRect.Width / 3)
+    $blankY = [int]($rowRect.Y + $rowRect.Height * 4)
+    Write-Host ("  空白处坐标 ({0},{1})" -f $blankX, $blankY)
+
+    Invoke-RightClick -Session $session -ScreenX $blankX -ScreenY $blankY
+
+    Assert ((Get-PopupMenus -Session $session).Count -ge 1) '空白处右键弹出了背景菜单'
+    $log = Get-LogTail
+    Assert (@($log | Where-Object { $_ -match '系统右键菜单：背景 上下文共 (\d+) 项' }).Count -ge 1) '日志记下了“背景”上下文的菜单项数量'
+    Save-Shot -Session $session -Name 'context-menu-background'
+    Dismiss-Menu -Session $session
+
+    Stop-Session -Session $session
+
+    # 菜单里见到的项应该被记进清单（退出时落盘）
+    $known = @(Get-Setting 'ShellMenuKnownItems')
+    $knownTexts = @($known | ForEach-Object { $_.Text })
+    Write-Host ("  清单里记下了 {0} 项：{1}" -f $known.Count, (($knownTexts | Select-Object -First 12) -join ' / '))
+    Assert ($known.Count -gt 10) '退出后 settings.json 的 ShellMenuKnownItems 记下了枚举出来的菜单项'
+    Assert (@($known | Where-Object { $_.Key -eq 'verb:properties' }).Count -eq 1) '清单里有「属性」（key = verb:properties）'
+    Assert (@($knownTexts | Where-Object { $_ -eq '打开' }).Count -eq 1) '清单里有「打开」（加速键与省略号已去掉）'
+    Assert (@($known | Where-Object { $_.Scopes -contains '背景' }).Count -gt 0) '清单里记下了「背景」上下文的项'
+
+    # ============================================================== 用例 3：关掉的项不再出现
+
+    Write-Host '--- 用例 3：在设置里关掉「属性」后菜单里不再有它 ---'
+    Set-Setting 'ShellMenuDisabledItems' ([string[]]@('verb:properties'))
+
+    $session = Start-Session
+    $rows = Find-Rows -Session $session
+    $alpha = $rows | Where-Object { $_.Current.Name -like 'alpha*' } | Select-Object -First 1
+    $rect = $alpha.Current.BoundingRectangle
+    Invoke-RightClick -Session $session -ScreenX ([int]($rect.X + $rect.Width / 3)) -ScreenY ([int]($rect.Y + $rect.Height / 2))
+
+    Assert ((Get-PopupMenus -Session $session).Count -ge 1) '关掉「属性」后菜单照样弹得出来'
+    $log = Get-LogTail
+    Write-Host ("  日志: {0}" -f (@($log | Where-Object { $_ -match '系统右键菜单' }) -join ' | '))
+    Assert (@($log | Where-Object { $_ -match '已关闭 属性' }).Count -ge 1) '日志表明「属性」这次被从菜单里删掉了（已关闭 属性）'
+    Save-Shot -Session $session -Name 'context-menu-filtered'
+    Dismiss-Menu -Session $session
+    Stop-Session -Session $session
+
+}
+finally {
+    Get-Process -Name 'exdir' -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch { } }
+
+    if ($null -ne $originalSettings) {
+        Set-Content $settingsPath $originalSettings -Encoding utf8
+        Write-Host '已还原 settings.json'
+    }
+}
+
+Write-Host ("SUMMARY failures={0}" -f $failures)
+if ($failures -gt 0) { exit 1 }

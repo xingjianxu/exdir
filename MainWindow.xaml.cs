@@ -314,8 +314,11 @@ public sealed partial class MainWindow : Window
             var settings = ViewModel.Settings;
             var scale = DpiHelper.GetScale(this);
 
-            var width = Math.Max(720, DpiHelper.ToPhysical(settings.WindowWidth, scale));
-            var height = Math.Max(480, DpiHelper.ToPhysical(settings.WindowHeight, scale));
+            // 下限是 DIP（720×480）：先夹再换算成物理像素。
+            // 反过来（先换算再对物理像素取 max）在高分屏上会把窗口压成下限的一半宽
+            // ——设置里存了个 157 DIP 这种被弄坏的值时，窗口会小到只剩侧边栏。
+            var width = DpiHelper.ToPhysical(Math.Max(720, settings.WindowWidth), scale);
+            var height = DpiHelper.ToPhysical(Math.Max(480, settings.WindowHeight), scale);
 
             var hasPosition = !double.IsNaN(settings.WindowX) && !double.IsNaN(settings.WindowY);
             var x = hasPosition ? DpiHelper.ToPhysical(settings.WindowX, scale) : 0;
@@ -361,10 +364,15 @@ public sealed partial class MainWindow : Window
 
             settings.WindowMaximized = presenter?.State == OverlappedPresenterState.Maximized;
 
-            if (settings.WindowMaximized != true)
+            // 最小化时 AppWindow.Position 报的是 (-32000,-32000) 这类哨兵值，
+            // 照抄会把窗口位置写坏（下次启动算出来在屏幕外，只能拿到默认位置），所以跳过
+            var minimized = presenter?.State == OverlappedPresenterState.Minimized;
+            var position = AppWindow.Position;
+            var positionUsable = position.X > -32000 && position.Y > -32000;
+
+            if (settings.WindowMaximized != true && !minimized && positionUsable)
             {
                 var size = AppWindow.Size;
-                var position = AppWindow.Position;
 
                 settings.WindowWidth = DpiHelper.ToDips(size.Width, scale);
                 settings.WindowHeight = DpiHelper.ToDips(size.Height, scale);

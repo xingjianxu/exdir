@@ -29,6 +29,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IFileSystemService _fileSystem;
     private readonly IShellService _shell;
     private readonly IShellIconService _icons;
+    private readonly IShellContextMenuService _contextMenu;
 
     private PanelViewModel _activePane = null!;
     private bool _isDualPane;
@@ -41,7 +42,8 @@ public sealed partial class MainViewModel : ObservableObject
         IKnownFolderService knownFolders,
         IFileSystemService fileSystem,
         IShellService shell,
-        IShellIconService icons)
+        IShellIconService icons,
+        IShellContextMenuService contextMenu)
     {
         _settings = settings;
         _driveService = driveService;
@@ -49,12 +51,13 @@ public sealed partial class MainViewModel : ObservableObject
         _fileSystem = fileSystem;
         _shell = shell;
         _icons = icons;
+        _contextMenu = contextMenu;
 
         Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService);
         Sidebar.NavigateRequested += OnSidebarNavigateRequested;
 
-        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons);
-        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons);
+        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu);
+        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu);
 
         PrimaryPane.Navigated += OnPaneNavigated;
         SecondaryPane.Navigated += OnPaneNavigated;
@@ -547,7 +550,7 @@ public sealed partial class MainViewModel : ObservableObject
     // ------------------------------------------------------------------ 设置对话框
 
     /// <summary>给设置对话框做一份“当前设置”的编辑快照（点“取消”就丢掉的副本）。</summary>
-    public SettingsViewModel CreateSettingsSnapshot() => new(_settings.Current);
+    public SettingsViewModel CreateSettingsSnapshot() => new(_settings.Current, _contextMenu);
 
     /// <summary>
     /// 应用设置对话框里改过的内容（点“保存”时调用）。

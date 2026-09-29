@@ -55,4 +55,48 @@ public static class DpiHelper
 
     /// <summary>物理像素 → DIP。</summary>
     public static double ToDips(int physical, double scale) => scale <= 0 ? physical : physical / scale;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+
+    /// <summary>
+    /// 把“元素内的 DIP 坐标”换算成屏幕物理像素，用来给原生菜单定位。
+    ///
+    /// 不能直接用窗口位置 + 缩放：WinUI 窗口外面还套着一圈系统边框，客户区原点并不等于窗口左上角；
+    /// 所以先 <c>TransformToVisual(null)</c> 拿到客户区坐标，再用 <c>ClientToScreen</c> 交给系统换算。
+    /// 拿不到窗口句柄（理论上不该发生）时返回未换算的值，位置可能偏一点，但不会崩。
+    /// </summary>
+    public static Windows.Foundation.Point ToScreenPoint(FrameworkElement element, IntPtr hwnd, Windows.Foundation.Point dipPoint)
+    {
+        try
+        {
+            var inClient = element.TransformToVisual(null).TransformPoint(dipPoint);
+            var scale = element.XamlRoot?.RasterizationScale ?? 1.0;
+
+            var point = new POINT
+            {
+                X = (int)Math.Round(inClient.X * scale),
+                Y = (int)Math.Round(inClient.Y * scale),
+            };
+
+            if (hwnd != IntPtr.Zero)
+            {
+                ClientToScreen(hwnd, ref point);
+            }
+
+            return new Windows.Foundation.Point(point.X, point.Y);
+        }
+        catch (Exception)
+        {
+            return dipPoint;
+        }
+    }
 }
