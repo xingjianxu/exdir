@@ -246,6 +246,12 @@
                             <!-- 图标：真实外壳图标（异步补上），拿到之前先用字形占位。
                                  两者固定 16×16 重叠摆放，所以换成真图标时行内不会跳动。 -->
                             <Grid Grid.Column="2" Width="16" Height="16" Margin="0,0,6,0">
+                                <Grid.RenderTransform>
+                                    <!-- 图标盒子本身是精确居中的，但文字的行盒下方还有一段降部（descent）空白，
+                                         字形的视觉重心比行盒中心低约 1 DIP。下推 1 DIP 去对文字的视觉中心，
+                                         而不是去对它的行盒中心（用 RenderTransform 是为了不影响行高与列宽）。 -->
+                                    <TranslateTransform Y="1" />
+                                </Grid.RenderTransform>
                                 <FontIcon
                                     FontSize="14"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"

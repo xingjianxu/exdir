@@ -74,6 +74,10 @@ pwsh -NoProfile -File tools\test-status-bar.ps1
 # 9) 真实外壳图标回归（每行都有图标 / 不同程序图标不同 / .lnk 带小箭头 / 同扩展名只提取一次 / 滚动后仍有图标）
 #    需要交互桌面；同样会把 exdir 置顶，跑完还原 settings.json
 pwsh -NoProfile -File tools\test-shell-icons.ps1
+
+# 10) 行内图标与文字是否垂直居中对齐（截图 + UIA 量“墨迹中心”，断言偏差在容差内）
+#     需要交互桌面；需要测“图标该不该再上下微调”时用这个，不要靠肉眼
+pwsh -NoProfile -File tools\measure-row-align.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -154,7 +158,8 @@ exdir/
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
-└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / test-status-bar / test-shell-icons / publish / make-icon 脚本
+└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
+                              measure-row-align / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -258,7 +263,13 @@ exdir/
     其余按**扩展名**（一个目录里几千个 .txt 只问外壳一次）；
   * 成本：单次提取约 16~20 ms（外壳内部开销），只在后台线程做；**不要**在 UI 线程上调
     `IShellIconService.GetIconAsync`。
-    回归：`tools/test-shell-icons.ps1`（13 条断言），踩过的坑见第 6 节第 30/31 条。
+  * **与文字的对齐**：图标盒子与名称文字盒子在布局上都是“行高居中”的，但文字的行盒底部还留着
+    一段降部（descent，Segoe UI 约 3.5 DIP）空白，字形的视觉中心比行盒中心低约 1 DIP。
+    所以图标用一个 `RenderTransform`（`TranslateTransform Y="1"`）**下推 1 DIP** 去对文字的视觉中心；
+    用 RenderTransform 而不是 Margin，是为了不影响行高/列宽（Margin 会改变布局盒高度，实际只推得动 0.5 DIP）。
+    改这个数值前先跑 `tools/measure-row-align.ps1`。
+    回归：`tools/test-shell-icons.ps1`（13 条断言）与 `tools/measure-row-align.ps1`（对齐偏差），
+    踩过的坑见第 6 节第 30/31 条。
 * **“状态”列（云同步状态）**：`DetailsView` 的第 0 列，只在**云同步目录**里出现，
   列出的是资源管理器“状态 / 可用性”列的含义（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步）：
   * 数据来源：`FileSystemService.Enumerate` 在目录位于云同步根下时，额外为每个条目读
@@ -529,6 +540,19 @@ exdir/
 33. **UIA 里“有没有真实图标”可以断言**：`DetailsView` 行模板里那个 `Image` 带
     `AutomationProperties.Name="程序图标"`，并且 `Visibility` 绑在 `HasIcon` 上——
     没拿到图标时它是 `Collapsed`，UIA 树里根本找不到它，所以脚本可以“数不到就是没图标”地断言。
+34. **写“量像素”的脚本时，UIA 的 `BoundingRectangle` 是屏幕坐标，截图是窗口内的相对坐标**：
+    `CopyFromScreen(rect.Left, rect.Top, ...)` 截出来的图里，(0,0) 是窗口左上角，
+    所以 `GetPixel` 必须减掉 `GetWindowRect` 的原点。不减的话量的就是屏幕坐标处的内容——
+    会得出“图标墨迹和文字墨迹一模一样”这类看似合理、其实是在量文字的结论
+    （本项目曾因此差点把“图标与文字对齐”改成反向）。
+    `tools/measure-row-align.ps1` 里就是 `$x - $originX` 这么做的。
+35. **“图标与文字垂直居中”不能只看布局盒子**：两边盒子都在行高里居中，图标仍会显得偏上，
+    因为文字行盒的底部有一段降部（descent）空白。要用“墨迹中心”比（`tools/measure-row-align.ps1`），
+    并且看**中位数**而不是单行——图标自己的画稿在 16×16 盒子里不一定居中，
+    带降部的名字（g/p/q/y）墨迹也会被尾巴拉低。当前取值（图标下推 1 DIP）下中位数约 2.5 物理像素、
+    平均约 2.0（200% 缩放）；去掉那 1 DIP 会恶化到 4.5 / 4.0，断言会失败。
+    另：下推只能用 `RenderTransform` —— 给 16 DIP 高的元素加 `Margin` 会同时把布局盒变成 17，
+    实际只向下移 0.5 DIP，而且非整数偏移会把位图重采样、图标发虚。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -554,7 +578,8 @@ exdir/
 * **行首显示真实的外壳图标**（2026-09，S14，见第 4 节“名称列图标”）：`.exe` / `.lnk` 各自显示
   程序自带的图标（快捷方式还带小箭头覆盖层），文件夹与文件类型与资源管理器一致；
   字形只在“图标还没取到 / 系统里查不到”时兜底；图标懒加载 + 两级缓存，滚动不重复取；
-  回归：`tools/test-shell-icons.ps1`（13 条断言全过）；
+  图标与名称文字垂直居中对齐（行盒降部导致的 1 DIP 视觉差用 `TranslateTransform` 补掉了）；
+  回归：`tools/test-shell-icons.ps1`（13 条断言全过）、`tools/measure-row-align.ps1`（对齐偏差在中位数 3 物理像素内）；
 * **云文件夹的同步状态列**（2026-09，见第 4 节“状态”列）：位于云同步根（OneDrive / WPS 云盘 /
   其它 CFAPI 同步目录）下的目录会在最前面多出一列图标（已同步 / 仅在云端 / 已固定 / 正在同步 /
   同步错误 / 未同步），数据来自系统属性 `System.StorageProviderState` +
