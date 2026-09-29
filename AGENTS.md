@@ -66,6 +66,10 @@ pwsh -NoProfile -File tools\test-pin-drag.ps1
 # 7) 设置对话框回归（内容 / 取消不落盘 / 保存立即落盘并作用到列表）
 #    需要交互桌面（真鼠标点击对话框按钮）
 pwsh -NoProfile -File tools\test-settings.ps1
+
+# 8) 状态栏回归（只有一条 / 一行高 / 贴底 / 项数 / 选中摘要 + 合计大小 / 磁盘可用空间 / 跟随活动窗格）
+#    需要交互桌面；脚本会把 exdir 置顶（终端铺满屏幕时才拍得到 exdir）
+pwsh -NoProfile -File tools\test-status-bar.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -133,8 +137,10 @@ exdir/
 │   ├─ SidebarViewModel       文件夹树（懒加载）
 │   ├─ FileItemViewModel      列表一行（带 Depth/IsExpanded/Children，可展开）
 │   ├─ PinnedFolderViewModel  title 栏上的固定目录
+│   ├─ StatusBarViewModel     文件列表区底部状态栏（项数 / 选中摘要 + 合计大小 / 卷容量）
 │   └─ SettingsViewModel      设置对话框的编辑快照（点“保存”才写回 AppSettings）
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
+│                             StatusBarView（文件列表区底部一行）
 │                             SettingsDialog（ContentDialog：所有配置项 + 底部保存/取消）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
@@ -142,7 +148,7 @@ exdir/
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
-└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / publish / make-icon 脚本
+└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / test-status-bar / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -159,6 +165,8 @@ exdir/
 ├────────────┬───┬────────────────────────────────────────────────┤
 │ 行2 侧边栏 │ ║ │ 窗格（1 或 2 个）：TabView，每个标签页内部自上而下为   │
 │ 文件夹树   │ ║ │ 导航条(← → ↑ ⟳ + 面包屑地址栏) + 详细信息列表        │
+│ （全高）   │ ║ ├────────────────────────────────────────────────┤
+│            │ ║ │ 状态栏：一行高（ExRowHeight=24 DIP），跨 1~2 个窗格   │
 └────────────┴───┴────────────────────────────────────────────────┘
 ```
 
@@ -266,6 +274,25 @@ exdir/
     拖动时在按钮之间的边界画一条 2px 强调色插入提示条（`InsertionIndicator`，位置用
     `Margin.Left` 设，它和按钮不在同一棵子树里所以要 `TransformToVisual` 换算到 `PinnedItemsHost`）。
     **Button 上的 `CanDrag` 在 WinUI 3 里是无效的**，必须自己识别手势，见第 6 节第 25 条。
+* **文件列表区底部有一条状态栏**（`Views/StatusBarView.xaml` + `ViewModels/StatusBarViewModel`）：
+  它挂在 `MainWindow` 里窗格那一列的**第 1 行**（第 0 行才是放 1~2 个窗格的 Grid，`Height="*"`），
+  所以：侧边栏保持全高、状态栏只占文件列表区（不跨侧边栏）、窗格拿掉它以外的全部高度；
+  高度用 `{StaticResource ExRowHeight}`（= 一行 24 DIP）。**不要再回到“DetailsView 里每标签页一条”**
+  （那是状态栏做出来之前的临时“选中摘要”条，已删除）。
+  三段内容（左→右）：
+  * `N 项`：`FolderTabViewModel.ItemCount`，只数当前目录的直接子项，不含就地展开出来的行；
+  * 选中摘要：`选中 2 项（合计 3.00 KB）`。**只累加文件**（目录要递归枚举才知道大小，
+    选中一堆目录时会把磁盘拖住），所以全会目录时显示「均为文件夹」，
+    含目录时用悬停提示说明“合计不含文件夹”；
+  * 卷容量：`D: 可用 120 GB / 共 512 GB`，走新增的 `IDriveService.GetDriveForPath(path)`
+    （每次导航后台重读，同一个卷 3 秒内复用；读盘可能卡很久，**不要在 UI 线程上调**），
+    UNC / 未就绪 / 路径为空时整段留空。
+  状态栏始终显示**活动窗格的活动标签页**，所以 `StatusBarViewModel` 自己订阅了
+  `MainViewModel.ActivePane` → `PanelViewModel.ActiveTab` → 标签页的
+  `ItemCount` / `Selection` / `CurrentPath`，换窗格（F6）、换标签页、换目录、改选中都会跟着变。
+  UIA 里只有最外层 Grid 有 `AutomationProperties.Name="状态栏"`，**里面三个 TextBlock 故意不加**：
+  这样它们的 UIA 名字就是自己的文本，`tools/test-status-bar.ps1` 才能直接断言内容
+  （容器给名字、叶子 TextBlock 不给 —— 想在 UIA 里读到文本就这么做）。
 * **导航条属于标签页，不属于窗格**：`Views/NavigationBarView` 是 `TabView.TabItemTemplate` 里
   `TabViewItem` 内容的第 0 行（第 1 行是 `DetailsView`），VM 类型是 `FolderTabViewModel`。
   因此每个标签页各自拥有后退/前进/上一级/刷新按钮与地址栏（历史和编辑态都跟着标签页走）。
@@ -522,6 +549,11 @@ exdir/
   验证：`tools/inspect-ui.ps1 -Hover Documents` / `-HoverAt "608,191"` 截图对比；
   例外：地址栏（面包屑分段 / 右侧空白区）与文件列表行内的展开箭头保持普通灰色悬停，
   见第 4 节 `ExSubtleButtonStyle`；
+* **文件列表区底部状态栏**（2026-09，S3）：一行高（`ExRowHeight`=24 DIP）、贴底显示，
+  横跨 1~2 个窗格（侧边栏保持全高），窗格占满其余高度；左边 `N 项`，
+  中间是选中摘要 + 合计大小（只统计文件），右边是当前卷的可用 / 总容量；
+  跟随**活动窗格**（F6 切换、切标签页、换目录、改选中都会刷新）。
+  回归：`tools/test-status-bar.ps1`（16 条断言全过）。
 * 快捷键、右键菜单尚未实现；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
 

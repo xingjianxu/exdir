@@ -15,7 +15,6 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- ===================== 列头 =====================
@@ -315,20 +314,7 @@
             Severity="Warning"
             Title="无法打开" />
 
-        <!-- ===================== 选中摘要 ===================== -->
-        <Grid
-            Grid.Row="3"
-            Height="22"
-            Padding="8,0,8,0"
-            Background="{ThemeResource LayerFillColorDefaultBrush}"
-            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-            BorderThickness="0,1,0,0">
-            <TextBlock
-                VerticalAlignment="Center"
-                FontSize="11"
-                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                Text="{x:Bind ViewModel.SelectionSummary, Mode=OneWay}" />
-        </Grid>
+        <!-- 状态栏不在这个控件里：它是全窗口一条（文件列表区底部），见 Views/StatusBarView -->
     </Grid>
 </UserControl>
 

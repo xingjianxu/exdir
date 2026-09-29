@@ -222,30 +222,41 @@
                 LineBrush="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
             <Grid Grid.Column="2">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition x:Name="PrimaryPaneColumn" Width="*" />
-                    <ColumnDefinition x:Name="PaneSplitterColumn" Width="0" />
-                    <ColumnDefinition x:Name="SecondaryPaneColumn" Width="0" />
-                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <!-- 文件列表（1~2 个窗格）占满除状态栏以外的全部高度 -->
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
 
-                <views:PaneView
-                    x:Name="PrimaryPane"
-                    Grid.Column="0"
-                    ViewModel="{x:Bind ViewModel.PrimaryPane}" />
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition x:Name="PrimaryPaneColumn" Width="*" />
+                        <ColumnDefinition x:Name="PaneSplitterColumn" Width="0" />
+                        <ColumnDefinition x:Name="SecondaryPaneColumn" Width="0" />
+                    </Grid.ColumnDefinitions>
 
-                <controls:PaneSplitter
-                    x:Name="PanesSplitter"
-                    Grid.Column="1"
-                    Width="{StaticResource ExSplitterWidth}"
-                    DeltaChanged="PanesSplitter_DeltaChanged"
-                    LineBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-                    Visibility="Collapsed" />
+                    <views:PaneView
+                        x:Name="PrimaryPane"
+                        Grid.Column="0"
+                        ViewModel="{x:Bind ViewModel.PrimaryPane}" />
 
-                <views:PaneView
-                    x:Name="SecondaryPane"
-                    Grid.Column="2"
-                    ViewModel="{x:Bind ViewModel.SecondaryPane}"
-                    Visibility="Collapsed" />
+                    <controls:PaneSplitter
+                        x:Name="PanesSplitter"
+                        Grid.Column="1"
+                        Width="{StaticResource ExSplitterWidth}"
+                        DeltaChanged="PanesSplitter_DeltaChanged"
+                        LineBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                        Visibility="Collapsed" />
+
+                    <views:PaneView
+                        x:Name="SecondaryPane"
+                        Grid.Column="2"
+                        ViewModel="{x:Bind ViewModel.SecondaryPane}"
+                        Visibility="Collapsed" />
+                </Grid>
+
+                <!-- 状态栏：一行高、贴底；侧边栏不受它影响（它只在窗格这一列里） -->
+                <views:StatusBarView Grid.Row="1" ViewModel="{x:Bind ViewModel.StatusBar}" />
             </Grid>
         </Grid>
     </Grid>

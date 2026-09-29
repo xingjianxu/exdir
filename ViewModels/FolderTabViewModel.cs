@@ -172,9 +172,16 @@ public sealed partial class FolderTabViewModel : ObservableObject
             if (SetProperty(ref _items, value))
             {
                 OnPropertyChanged(nameof(IsEmpty));
+                OnPropertyChanged(nameof(ItemCount));
             }
         }
     }
+
+    /// <summary>
+    /// 当前目录的直接子项数（不含就地展开出来的孙子行）——状态栏的“N 项”。
+    /// 在 <see cref="Items"/> 替换时一并通知：那时 <c>_entries</c> 已经是本次枚举的结果。
+    /// </summary>
+    public int ItemCount => _entries.Count;
 
     public IReadOnlyList<FileItemViewModel> Selection
     {
@@ -184,7 +191,6 @@ public sealed partial class FolderTabViewModel : ObservableObject
             if (SetProperty(ref _selection, value))
             {
                 OnPropertyChanged(nameof(HasSelection));
-                OnPropertyChanged(nameof(SelectionSummary));
                 OpenSelectionCommand.NotifyCanExecuteChanged();
                 CopySelectionPathCommand.NotifyCanExecuteChanged();
                 RevealInExplorerCommand.NotifyCanExecuteChanged();
@@ -193,13 +199,6 @@ public sealed partial class FolderTabViewModel : ObservableObject
     }
 
     public bool HasSelection => _selection.Count > 0;
-
-    public string SelectionSummary => _selection.Count switch
-    {
-        0 => string.Empty,
-        1 => _selection[0].DisplayName,
-        var n => $"已选择 {n} 项",
-    };
 
     public bool IsLoading
     {

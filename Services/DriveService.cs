@@ -28,6 +28,32 @@ public sealed class DriveService : IDriveService
         return result;
     }
 
+    public DriveModel? GetDriveForPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            // DriveInfo 要的是卷根（"C:\"）；Path.GetPathRoot 对 "C:\dir\file" 给 "C:\"，
+            // 对 UNC 给 "\\server\share"，而 DriveInfo 不认 UNC，会抛出来被下面吞掉
+            var root = Path.GetPathRoot(path);
+            if (string.IsNullOrEmpty(root))
+            {
+                return null;
+            }
+
+            return Create(new DriveInfo(root));
+        }
+        catch (Exception)
+        {
+            // 路径不存在 / 卷未就绪 / UNC：状态栏那一段留空即可
+            return null;
+        }
+    }
+
     private static DriveModel Create(DriveInfo drive)
     {
         var kind = drive.DriveType switch

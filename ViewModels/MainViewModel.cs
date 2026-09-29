@@ -61,6 +61,9 @@ public sealed partial class MainViewModel : ObservableObject
 
         ActivePane = PrimaryPane;
 
+        // 状态栏要读活动窗格 / 活动标签页，因此必须等 ActivePane 就位后再建
+        StatusBar = new StatusBarViewModel(this, driveService);
+
         ReloadDrives();
         LoadPinnedFolders();
         LoadQuickCommands();
@@ -82,6 +85,9 @@ public sealed partial class MainViewModel : ObservableObject
     public PanelViewModel PrimaryPane { get; }
 
     public PanelViewModel SecondaryPane { get; }
+
+    /// <summary>文件列表区底部状态栏的数据源（全窗口一条，始终跟随活动窗格）。</summary>
+    public StatusBarViewModel StatusBar { get; }
 
     // ------------------------------------------------------------------ 布局状态
 

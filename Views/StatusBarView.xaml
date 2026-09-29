@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Exdir.Views.StatusBarView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!--
+        文件列表区底部的状态栏：全窗口一条，横跨 1~2 个窗格，显示活动窗格的信息。
+        高度 = 一行（ExRowHeight），贴底；它上面的窗格占满其余高度（见 MainWindow 的行定义）。
+        只有外层给 AutomationProperties.Name：里面三个 TextBlock 不加，
+        这样它们在 UIA 里的名字就是自己的文本，回归脚本能直接断言内容。
+    -->
+    <Grid
+        Height="{StaticResource ExRowHeight}"
+        Padding="8,0,8,0"
+        Background="{ThemeResource LayerFillColorDefaultBrush}"
+        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+        BorderThickness="0,1,0,0"
+        ColumnSpacing="12"
+        AutomationProperties.Name="状态栏">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 条目数：当前目录的直接子项数（就地展开出来的行不算） -->
+        <TextBlock
+            Grid.Column="0"
+            VerticalAlignment="Center"
+            FontSize="12"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="{x:Bind ViewModel.ItemCountText, Mode=OneWay}" />
+
+        <!-- 选中摘要 + 合计大小（只统计文件，见 StatusBarViewModel.UpdateSelection） -->
+        <TextBlock
+            Grid.Column="1"
+            VerticalAlignment="Center"
+            FontSize="12"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="{x:Bind ViewModel.SelectionText, Mode=OneWay}"
+            TextTrimming="CharacterEllipsis"
+            ToolTipService.ToolTip="{x:Bind ViewModel.SelectionTooltip, Mode=OneWay}" />
+
+        <!-- 当前目录所在卷的可用空间 -->
+        <TextBlock
+            Grid.Column="2"
+            VerticalAlignment="Center"
+            FontSize="12"
+            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+            Text="{x:Bind ViewModel.DriveText, Mode=OneWay}" />
+    </Grid>
+</UserControl>

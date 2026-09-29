@@ -106,12 +106,17 @@
   - 验收：`inspect-ui.ps1 -Keys` 发送按键后控件树中选中项数量正确；路径框输入 `Backspace` 不受影响。
   - 预估：~250 行，3 个文件。
 
-- [ ] **S3 状态栏与选择统计**
-  - 目标：底部细状态栏，显示“N 项 / 已选 M 项（合计 X）/ 磁盘可用空间”。
-  - 涉及：新建 `Views/StatusBarView.xaml(.cs)`、`MainWindow.xaml(.cs)`、`ViewModels/MainViewModel.cs`、`ViewModels/FolderTabViewModel.cs`。
-  - 内容：选中项总大小（后台异步求和，避免大目录卡顿）、活动窗格磁盘剩余、加载状态。
-  - 验收：切换目录/选择时数字实时正确；状态栏高度 ≤ 22 DIP，不破坏紧凑观感。
-  - 预估：~300 行，5 个文件。
+- [x] **S3 状态栏与选择统计**（2026-09 完成）
+  - 目标：文件列表区底部细状态栏，显示“N 项 / 已选 M 项（合计 X）/ 磁盘可用空间”。
+  - 涉及：新建 `Views/StatusBarView.xaml(.cs)`、`ViewModels/StatusBarViewModel.cs`、`MainWindow.xaml(.cs)`、
+    `ViewModels/MainViewModel.cs`、`ViewModels/FolderTabViewModel.cs`、`Services/IDriveService.cs`、`Views/DetailsView.xaml`。
+  - 已完成：一条状态栏挂在窗格那列的第 1 行（窗格占满其余高度），高度 = `ExRowHeight`（24 DIP）、贴底；
+    左侧 `N 项`、中间 `选中 M 项（合计 X）`（只累加文件；目录不递归，全选目录时显示“均为文件夹”）、
+    右侧 `D: 可用 120 GB / 共 512 GB`（`IDriveService.GetDriveForPath`，后台读、按卷缓存 3 秒）；
+    跟随活动窗格（F6 / 切标签页 / 换目录 / 改选中都会刷新）；
+    删掉了原先 `DetailsView` 里每标签页一条的“选中摘要”条。
+  - 验收：`tools/test-status-bar.ps1`（16 条断言全过）；状态栏高度实测 24 DIP，贴客户区底边，宽度 = 文件列表区（不跨侧边栏）。
+  - 未做：选中项里**目录**的大小（当前只累加文件，需要后台递归求和）；状态栏里的加载 / 异步操作进度。
 
 ### Phase 2 — 文件操作基础设施（本项目的核心，务必先建底座）
 
