@@ -26,6 +26,8 @@
             <KeyboardAccelerator Key="B" Modifiers="Control" Invoked="Accelerator_ToggleSidebar" />
             <KeyboardAccelerator Key="F6" Invoked="Accelerator_SwitchPane" />
             <KeyboardAccelerator Key="F10" Invoked="Accelerator_ToggleDualPane" />
+            <KeyboardAccelerator Key="L" Modifiers="Control" Invoked="Accelerator_EditPath" />
+            <KeyboardAccelerator Key="D" Modifiers="Menu" Invoked="Accelerator_EditPath" />
         </Grid.KeyboardAccelerators>
 
         <Grid.RowDefinitions>
@@ -82,6 +84,11 @@
                         Padding="10,0"
                         MinHeight="0"
                         Title="编辑">
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.EditActivePathCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+L"
+                            Text="编辑地址栏" />
+                        <MenuFlyoutSeparator />
                         <MenuFlyoutItem
                             Command="{x:Bind ViewModel.CopyCurrentPathCommand}"
                             Text="复制当前目录路径" />
@@ -149,6 +156,29 @@
                         <MenuFlyoutItem Command="{x:Bind ViewModel.RefreshDrivesCommand}" Text="重新扫描磁盘" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Command="{x:Bind ViewModel.OpenSettingsFolderCommand}" Text="打开配置文件夹" />
+                    </MenuBarItem>
+
+                    <MenuBarItem
+                        Height="30"
+                        Padding="10,0"
+                        MinHeight="0"
+                        Title="配置">
+                        <MenuFlyoutSubItem Text="文件列表">
+                            <ToggleMenuFlyoutItem
+                                AutomationProperties.Name="文件列表过渡动画"
+                                IsChecked="{x:Bind ViewModel.EnableListAnimations, Mode=TwoWay}"
+                                Text="过渡动画（入场 / 重排）" />
+                            <MenuFlyoutSeparator />
+                            <ToggleMenuFlyoutItem
+                                AutomationProperties.Name="显示隐藏文件"
+                                IsChecked="{x:Bind ViewModel.ShowHiddenFiles, Mode=TwoWay}"
+                                KeyboardAcceleratorTextOverride="Ctrl+H"
+                                Text="显示隐藏文件" />
+                            <ToggleMenuFlyoutItem
+                                AutomationProperties.Name="显示文件扩展名"
+                                IsChecked="{x:Bind ViewModel.ShowExtensions, Mode=TwoWay}"
+                                Text="显示文件扩展名" />
+                        </MenuFlyoutSubItem>
                     </MenuBarItem>
 
                     <MenuBarItem

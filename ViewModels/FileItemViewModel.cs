@@ -1,18 +1,33 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using CommunityToolkit.Mvvm.ComponentModel;
 using Exdir.Helpers;
 using Exdir.Models;
 
 namespace Exdir.ViewModels;
 
-/// <summary>文件列表中的一行。不可变，切换目录/排序时整体重建。</summary>
-public sealed class FileItemViewModel
+/// <summary>
+/// 文件列表中的一行。
+/// 除了展开状态，其余信息在切换目录/排序时整体重建；目录行可以就地展开，
+/// 子节点由 <see cref="FolderTabViewModel"/> 懒加载后用 <see cref="SetChildren"/> 灌进来。
+/// </summary>
+public sealed class FileItemViewModel : ObservableObject
 {
-    private readonly string _displayName;
+    /// <summary>每深一层缩进的像素宽度。</summary>
+    public const double IndentPerLevel = 14;
 
-    public FileItemViewModel(FileSystemEntry entry, bool showExtensions)
+    private readonly string _displayName;
+    private readonly List<FileItemViewModel> _children = new();
+
+    private bool _isExpanded;
+    private bool _childrenLoaded;
+
+    public FileItemViewModel(FileSystemEntry entry, bool showExtensions, ColumnLayout columns, int depth = 0)
     {
         Entry = entry;
+        Columns = columns;
+        Depth = depth;
 
         _displayName = !entry.IsDirectory && !showExtensions && entry.Name.LastIndexOf('.') is var dot && dot > 0
             ? entry.Name[..dot]
@@ -20,6 +35,15 @@ public sealed class FileItemViewModel
     }
 
     public FileSystemEntry Entry { get; }
+
+    /// <summary>列宽状态，由同一个标签页的所有行共享（见 <see cref="ColumnLayout"/>）。</summary>
+    public ColumnLayout Columns { get; }
+
+    /// <summary>在树中的层级；根目录下的条目为 0。</summary>
+    public int Depth { get; }
+
+    /// <summary>名称列左侧的缩进占位宽度。</summary>
+    public double IndentWidth => Depth * IndentPerLevel;
 
     public string Name => Entry.Name;
 
@@ -50,4 +74,47 @@ public sealed class FileItemViewModel
         : $"{Entry.FullPath}\n{SizeFormatter.Format(Entry.Size)}";
 
     public string Extension => Entry.IsDirectory ? string.Empty : Path.GetExtension(Entry.Name);
+
+    // ------------------------------------------------------------------ 树形展开
+
+    /// <summary>已经加载过子项（哪怕为空）。</summary>
+    public bool ChildrenLoaded => _childrenLoaded;
+
+    /// <summary>已加载的子项（未加载时为空集合）。</summary>
+    public IReadOnlyList<FileItemViewModel> Children => _children;
+
+    /// <summary>是否显示展开箭头：目录，且（未加载过，或加载后确实有子项）。</summary>
+    public bool CanExpand => IsDirectory && !(_childrenLoaded && _children.Count == 0);
+
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (SetProperty(ref _isExpanded, value))
+            {
+                OnPropertyChanged(nameof(ExpanderGlyph));
+            }
+        }
+    }
+
+    /// <summary>展开箭头字形；不可展开时为空串（占位由固定宽度的容器保证）。</summary>
+    public string ExpanderGlyph => CanExpand
+        ? (IsExpanded ? "\uE70D" : "\uE76C")
+        : string.Empty;
+
+    /// <summary>灌入子项（由 FolderTabViewModel 排序后调用）。</summary>
+    public void SetChildren(IReadOnlyList<FileItemViewModel> children)
+    {
+        _children.Clear();
+        _children.AddRange(children);
+        _childrenLoaded = true;
+
+        OnPropertyChanged(nameof(Children));
+        OnPropertyChanged(nameof(CanExpand));
+        OnPropertyChanged(nameof(ExpanderGlyph));
+    }
+
+    /// <summary>重新排序已加载的直接子项。</summary>
+    public void SortChildren(Comparison<FileItemViewModel> comparison) => _children.Sort(comparison);
 }

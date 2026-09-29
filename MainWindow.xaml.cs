@@ -276,6 +276,12 @@ public sealed partial class MainWindow : Window
         ViewModel.ToggleDualPaneCommand.Execute(null);
     }
 
+    private void Accelerator_EditPath(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        ViewModel.EditActivePathCommand.Execute(null);
+    }
+
     // ------------------------------------------------------------------ 窗口位置
 
     private void RestoreWindowPlacement()

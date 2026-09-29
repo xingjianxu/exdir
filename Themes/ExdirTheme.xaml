@@ -18,6 +18,13 @@
 
     <!-- 列表与树：默认 32/32，压缩到 24 -->
     <x:Double x:Key="ListViewItemMinHeight">24</x:Double>
+    <!-- 选中行左侧的蓝色竖条：exdir 靠整行底色表示选中，不要这条竖线 -->
+    <x:Boolean x:Key="ListViewItemSelectionIndicatorVisualEnabled">False</x:Boolean>
+    <!-- TextBox 模板里的内层 BorderElement 用这个键当 MinHeight（默认 32），
+         不压掉的话输入框永远比 Height 高；又因为 TextBox 模板忽略 VerticalContentAlignment
+         （文字恒定顶对齐），只能让输入框“刚好包住文字”，再由外层 VerticalAlignment=Center 居中。
+         因此新增 TextBox 时请自行给对称的 Padding，不要再设 Height。 -->
+    <x:Double x:Key="TextControlThemeMinHeight">0</x:Double>
     <x:Double x:Key="TreeViewItemMinHeight">24</x:Double>
     <x:Double x:Key="MenuFlyoutItemMinHeight">28</x:Double>
     <x:Double x:Key="MenuBarItemHeight">30</x:Double>
@@ -35,7 +42,11 @@
 
     <x:Double x:Key="ExColumnNameMinWidth">160</x:Double>
     <!-- 注意：ColumnDefinition.Width 是 GridLength，无法直接使用 Double 资源；
-         列宽统一定义在 Exdir.Helpers.ColumnLayout 中，通过 x:Bind 共享。 -->
+         可用列宽的操作（拖动/自适应）都在 Exdir.Helpers.ColumnLayout 里，
+         通过 x:Bind 绑 ColumnLayout 的 GridLength 属性共享。 -->
+
+    <!-- 地址栏等单行输入框：上下对称的内边距 + 自动高度 = 文字在框内居中 -->
+    <Thickness x:Key="ExTextControlPadding">8,4,8,4</Thickness>
 
     <!-- 列表行左右内边距；列头必须使用相同值才能对齐 -->
     <Thickness x:Key="ExRowPadding">6,0,6,0</Thickness>

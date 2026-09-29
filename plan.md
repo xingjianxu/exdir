@@ -27,8 +27,17 @@
     移除 MSIX 清单与 `EnableMsixTooling`；`Assets\exdir.ico` 由脚本生成并设为应用图标。
   - 外壳布局：`TitleBar` 控件（菜单栏 + 当前目录名 + 原生窗口按钮）/ 工具条（磁盘 + 固定目录 + 快捷菜单）/ 侧边栏文件夹树 / 1~2 个窗格。
   - `PaneSplitter`（WinUI 无 GridSplitter）、Mica 背景、紧凑密度（标题栏 36、列表行 24）。
-  - `PaneView`：TabView 多标签，**每个标签页内部自带导航条**（`NavigationBarView`：后退/前进/上一级/刷新 + 可编辑路径框）。
-  - 列表：详细信息布局，列 名称/修改日期/类型/大小，点列头排序、多选、双击进入目录 / 打开文件、空目录与错误提示、选中摘要。
+  - `PaneView`：TabView 多标签，**每个标签页内部自带导航条**（`NavigationBarView`：后退/前进/上一级/刷新 + `PathBreadcrumb` 地址栏）。
+  - 列表：详细信息布局（**可展开的树形列表**），列 名称/修改日期/类型/大小，点列头排序、多选、双击进入目录 / 打开文件、空目录与错误提示、选中摘要。
+  - 列表交互（S1 部分完成，2026-09）：目录行可就地展开（懒加载子项、增量插行、刷新后恢复展开状态）；
+    列宽可拖动 / 双击复位并持久化；自动模式（列宽随窗格自适应）与手动模式（固定列宽 + 横向滚动，列头跟随横向偏移）；
+    排序/刷新后按路径恢复原来选中的行。
+  - 地址栏（S9 主体完成，2026-09）：路径按目录切分成可点击的面包屑（chevron 分隔），
+    点分段跳转、点当前段或右侧空白区切到可编辑输入框（回车前往、Esc/失焦取消），
+    编辑入口也有 `Ctrl+L` / `Alt+D`；超长路径滚到最右并在左端提示省略。
+  - 菜单栏「配置 → 文件列表」（2026-09）：过渡动画 / 显示隐藏文件 / 显示文件扩展名三个勾选项，
+    反向同步到 `AppSettings.EnableListAnimations` 等字段并由窗口关闭时落盘；
+    动画开关只清 `ListView` 的过渡集合，不重载目录（切换后已显示的行也不再有入场/重排动画）。
   - 侧边栏：主目录（含桌面/文档/下载/图片/音乐/视频）、云存储（注册表探测同步根）、此电脑（各磁盘）；展开时懒加载子目录。
   - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%LOCALAPPDATA%\exdir\settings.json`。
   - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
@@ -61,16 +70,21 @@
 
 ### Phase 1 — 把“看得见的列表”做扎实（不涉及写文件，风险最低）
 
-- [ ] **S1 列表交互与列管理**
+- [~] **S1 列表交互与列管理**
   - 目标：列表具备真实文件管理器的基本手感和列控制能力。
-  - 涉及：`Views/DetailsView.xaml(.cs)`、`Helpers/ColumnLayout.cs`、`ViewModels/FolderTabViewModel.cs`、`Themes/ExdirTheme.xaml`、`Models/AppSettings.cs`。
+  - 涉及：`Views/DetailsView.xaml(.cs)`、`Helpers/ColumnLayout.cs`、`Controls/ColumnResizeHandle.cs`、`ViewModels/FolderTabViewModel.cs`、`ViewModels/FileItemViewModel.cs`、`Themes/ExdirTheme.xaml`、`Models/AppSettings.cs`。
   - 内容：
-    - 列宽可拖动（自研列头分隔条，可复用 `PaneSplitter` 的指针拖拽思路，改成竖直细条）；
-    - 列宽持久化到设置（全局）；
-    - 窗格过窄时按优先级自动隐藏 类型 → 大小 → 修改日期 列（避免列被挤出可视区，这是当前已知瑕疵）；
-    - 列头排序增加“名称自然排序”（`strings like file2 < file10`，实现 `NaturalStringComparer`）；
-    - 右键列头 → 显示/隐藏列菜单（先只做 UI 骨架，行为在 S1 实现）。
-  - 验收：拖动分隔条列宽变化且重启后保持；把窗格拖到 400 DIP 宽时低优先级列自动隐藏，不出现横向溢出；截图确认列头与数据行仍严格对齐。
+    - [x] 列宽可拖动：列头右边界自研把手（`Controls/ColumnResizeHandle`，竖直细条 + `SizeWestEast` 光标），双击恢复默认列宽/自动模式；
+    - [x] 列宽持久化到设置（`AppSettings.ColumnWidths` + `ColumnAutoFit` + `ColumnAutoFillName`）；
+    - [x] 目录行就地展开（树形列表）：`FileItemViewModel` 带 `Depth/IsExpanded/Children`，
+          子项懒加载、展开用增量插行（保住滚动位置与选中项）、刷新后按路径恢复展开状态；箭头点击展开，
+          `←/→` 方向键展开/折叠，双击仍是“进入目录”；
+    - [x] 窗格过窄不再出现“列被挤出可视区”：自动模式各列按余量等比压缩，一旦手动拖过列宽就切到手动模式
+          （固定列宽 + `ScrollViewer` 横向滚动，`HeaderContent` 跟随 `HorizontalOffset` 平移）；
+    - [ ] 列头排序增加“名称自然排序”（`strings like file2 < file10`，实现 `NaturalStringComparer`）；
+    - [ ] 右键列头 → 显示/隐藏列菜单（先只做 UI 骨架，行为在 S1 实现）。
+  - 验收：拖动把手列宽变化且重启后保持（已用 `tools/inspect-ui.ps1` 量列边界验证）；把窗格拖到 400 DIP 宽时不出现列被裁掉；
+    截图确认列头与数据行仍严格对齐。
   - 预估：~450 行，5 个文件。
 
 - [ ] **S2 键盘与多选导航**
@@ -134,14 +148,23 @@
   - 内容：自建菜单（打开、在新标签页打开、复制/剪切/粘贴、删除、重命名、属性、复制路径、在终端打开、压缩…）；
     末项“显示系统菜单”调用 `IContextMenu` 弹出资源管理器同款菜单（能带第三方扩展）。
   - 验收：不同上下文菜单项正确启用/禁用；系统菜单能弹出（P/Invoke 需 DPI 正确）。
-  - 预估：~550 行，6 个文件。
+  - 预估：~550 行，6 个文件。 
 
-- [ ] **S9 地址面包屑**
+- [~] **S9 地址面包屑**（2026-09 完成主体，仅“每段右侧下拉同级目录”未做）
   - 目标：导航条上的路径框旁边/替代品：可点击的路径分段，支持 `\\server\share`、`C:\`、WSL 路径。
-  - 涉及：新增 `Views/PathBreadcrumb.xaml(.cs)`、`ViewModels/FolderTabViewModel.cs`、`Views/NavigationBarView.xaml(.cs)`。
-  - 内容：分段点击跳转、每段右侧下拉显示同级目录、点击空白处切换回可编辑 TextBox（保留现有回车行为）。
-  - 验收：深层路径渲染正确不溢出（超长时中间段省略）；截图确认高度不超过导航条。
-  - 预估：~450 行，4 个文件。
+  - 涉及：新增 `Views/PathBreadcrumb.xaml(.cs)`、`ViewModels/PathSegmentViewModel.cs`、`ViewModels/FolderTabViewModel.cs`、`Views/NavigationBarView.xaml(.cs)`。
+  - 内容：
+    - [x] 地址栏默认渲染为面包屑：`FolderTabViewModel.PathSegments`（按 `C:\` / `\\server\share` / 目录逐级切分），
+          段间用 chevron 字形 `E76C` 分隔，点非当前段 `NavigateToSegmentCommand` 跳转；
+    - [x] 点击空白处切回可编辑 `TextBox`（保留回车/Esc 行为）：空白区由 code-behind 按面包屑实际宽度定位的
+          `BlankArea` 按钮接管，地址栏其余非分段区域由 `AddressHost.Tapped` 兜底；
+    - [x] 编辑态提到 `FolderTabViewModel.IsPathEditing`（而非视图内部），因此新增 Windows 式入口
+          `Ctrl+L` / `Alt+D`（`MainViewModel.EditActivePathCommand`）；成功导航/失焦/Esc 都会退出；
+    - [x] 超长路径不溢出：`CrumbScroll` 自动滚到最右 + 左端省略号提示；点当前目录段也能进编辑态；
+    - [ ] 每段右侧下拉显示同级目录（点击 chevron 弹出兄弟目录菜单）。
+  - 验收：已用 UIA（`tools/inspect-ui.ps1`）验证分段名与坐标、点分段跳转、点空白区/当前段进编辑态、
+    失焦与外部导航退出编辑态、深层路径滚到尾部且提示省略；本机无交互桌面，真实的鼠标命中/回车无法自动化验证。
+  - 预估：~450 行，4 个文件（实际 ~330 行，5 个文件）。
 
 - [ ] **S10 标签页与窗格增强**
   - 目标：拖拽重排标签、复制标签、锁定标签（锁定后导航会新开标签）、标签页组保存/恢复、两窗格同步浏览（同时切换同一子目录）。
@@ -242,7 +265,7 @@
 
 | 项 | 说明 | 计划处理 |
 | --- | --- | --- |
-| 列被挤出可视区 | 窗格很窄（< ~410 DIP）时固定列溢出，`大小` 列看不见 | S1 |
+| 列被挤出可视区 | 窗格很窄（< ~410 DIP）时固定列溢出，`大小` 列看不见 | S1（已解决：自动模式等比压缩，手动模式改横向滚动） |
 | 图标是字形不是系统图标 | `Helpers/FileTypeHelper` 用 Segoe Fluent 字形兜底 | S14 |
 | 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
 | 无文件系统监视 | 外部改动需手动 F5 | S18 |
@@ -251,5 +274,6 @@
 | 侧边栏同步是“尽力而为” | 只在已加载节点里查找，深层目录不会自动展开定位 | S10（可加“展开到当前路径”） |
 | 单实例未处理 | 多次启动会有多个进程 | S19 |
 | 只有 x64 验证过 | x86/ARM64 未测试 | 需要时再验证 |
+| 展开的子项不随文件变化刷新 | 已展开目录的子项只在展开时枚举一次，需要 F5 刷新整个标签页 | 将来做文件系统监视时一并处理 |
 | 无单元测试 | 纯逻辑可测但尚未建工程 | S20 |
 | Release 产物 224 MB | 因为 .NET + WinAppSDK 全自包含。若可接受“要求目标机装 Windows App Runtime”，可改回框架依赖以大幅减小体积 | 按需 |

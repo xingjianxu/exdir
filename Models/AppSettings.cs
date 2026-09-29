@@ -28,6 +28,18 @@ public sealed class AppSettings
     public bool FoldersFirst { get; set; } = true;
     public bool ShowToolbar { get; set; } = true;
 
+    /// <summary>文件列表是否播放过渡动画（换目录的入场、插行/排序时的重排动画）。</summary>
+    public bool EnableListAnimations { get; set; } = true;
+
+    /// <summary>详细信息列表的列宽（名称/修改日期/类型/大小），单位 DIP；空表示用默认值。</summary>
+    public List<double> ColumnWidths { get; set; } = new();
+
+    /// <summary>名称列是否自动填满窗格剩余宽度（用户手动拖过名称列后为 false）。</summary>
+    public bool ColumnAutoFillName { get; set; } = true;
+
+    /// <summary>列宽是否整体自适应窗格宽度（用户拖动过列宽后为 false）。</summary>
+    public bool ColumnAutoFit { get; set; } = true;
+
     // ---------- 会话 ----------
     /// <summary>左（主）窗格打开的标签页路径。</summary>
     public List<string> PrimaryTabs { get; set; } = new();

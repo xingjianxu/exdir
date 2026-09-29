@@ -177,6 +177,31 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>文件列表是否播放过渡动画（配置菜单 → 文件列表 → 过渡动画）。</summary>
+    public bool EnableListAnimations
+    {
+        get => _settings.Current.EnableListAnimations;
+        set
+        {
+            if (_settings.Current.EnableListAnimations == value)
+            {
+                return;
+            }
+
+            _settings.Current.EnableListAnimations = value;
+            OnPropertyChanged();
+
+            // 动画开关只改变视图行为，不必重新枚举目录
+            foreach (var pane in new[] { PrimaryPane, SecondaryPane })
+            {
+                foreach (var tab in pane.Tabs)
+                {
+                    tab.ApplyAnimationSettings();
+                }
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ 标题
 
     /// <summary>窗口标题栏中间显示的当前目录名。</summary>
@@ -205,6 +230,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     private void ToggleShowExtensions() => ShowExtensions = !ShowExtensions;
+
+    [RelayCommand]
+    private void ToggleListAnimations() => EnableListAnimations = !EnableListAnimations;
 
     [RelayCommand]
     private async Task RefreshActivePaneAsync()
@@ -271,6 +299,10 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     private void SwitchActivePane() => ActivePane = ReferenceEquals(ActivePane, PrimaryPane) ? SecondaryPane : PrimaryPane;
+
+    /// <summary>把活动标签页的地址栏切到可编辑态（Ctrl+L / Alt+D）。</summary>
+    [RelayCommand]
+    private void EditActivePath() => ActivePane.ActiveTab?.BeginPathEdit();
 
     /// <summary>导航指定窗格（<c>primary</c> / <c>secondary</c>）到某路径。</summary>
     [RelayCommand]

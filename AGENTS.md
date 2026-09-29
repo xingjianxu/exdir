@@ -58,6 +58,24 @@ pwsh -NoProfile -File tools\inspect-ui.ps1 -Click "快捷菜单"      # 真实�
 pwsh -NoProfile -File tools\make-icon.ps1
 ```
 
+### 任务收尾（每个任务都必须做）
+
+**任何代码改动做完后，固定用一条命令收尾：**
+
+```powershell
+pwsh -NoProfile -File tools\publish.ps1
+```
+
+它会把最新 Release 产物镜像到 **`dist\win-x64`**——这就是交付给用户的版本。
+
+* **只出 win-x64**，不要生成 x86 / ARM64（未验证）。
+* `dist\win-x64\exdir.exe` 自包含，双击即可运行（目标机无需预装 .NET / Windows App Runtime）。
+* 交付前确认 `dist` 是最新的：看 `dist\win-x64\build-info.txt`（记录源码提交、构建时间、文件数），
+  并与 `bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\exdir.exe` 的时间戳对照；
+  两者不一致说明忘了 publish。
+* `publish.ps1` 会自动校验 `exdir.pri` 与每个 `.xaml` 对应的 `.xbf` 都在产物里，缺了就报错。
+* **不要用 `dotnet publish`**（见“踩过的坑”第 3 条）。
+
 ### 运行期日志
 
 非打包 WinUI 应用崩溃时没有控制台输出，`Diagnostics/Log.cs` 会把异常写到：
@@ -98,13 +116,15 @@ exdir/
 ├─ ViewModels/
 │   ├─ MainViewModel          磁盘、固定目录、快捷命令、侧边栏、两个窗格、全局命令
 │   ├─ PanelViewModel         一个窗格（标签页集合）
-│   ├─ FolderTabViewModel     一个标签页（当前目录、条目、选中、历史、排序）
+│   ├─ FolderTabViewModel     一个标签页（当前目录、条目、选中、历史、排序、地址栏编辑态）
+│   ├─ PathSegmentViewModel   地址栏面包屑里的一段路径（显示名 + 完整路径 + 是否当前段）
 │   ├─ SidebarViewModel       文件夹树（懒加载）
-│   ├─ FileItemViewModel      列表一行（不可变）
+│   ├─ FileItemViewModel      列表一行（带 Depth/IsExpanded/Children，可展开）
 │   └─ PinnedFolderViewModel  title 栏上的固定目录
-├─ Views/                     UserControl：SidebarView / DriveBarView / PaneView / NavigationBarView / DetailsView
+├─ Views/                     UserControl：SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
-├─ Helpers/                   ColumnLayout(列宽) / DpiHelper / FileTypeHelper / SizeFormatter
+│           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
+├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / DpiHelper / FileTypeHelper / SizeFormatter
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
@@ -117,13 +137,13 @@ exdir/
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 行0 TitleBar 控件:  ☰ |MenuBar(文件/编辑/查看/转到/工具/帮助)| … │ 系统窗口按钮 ─┐
+│ 行0 TitleBar 控件:  ☰ |MenuBar(文件/编辑/查看/转到/工具/配置/帮助)| … │ 系统窗口按钮 ─┐
 │                              中间: 当前目录名                     │  (AppWindow)  │
 ├─────────────────────────────────────────────────────────────────┤
 │ 行1 工具条:  左=磁盘/网络盘/可移动盘      右=固定目录 + 快捷菜单⋯  │
 ├────────────┬───┬────────────────────────────────────────────────┤
 │ 行2 侧边栏 │ ║ │ 窗格（1 或 2 个）：TabView，每个标签页内部自上而下为   │
-│ 文件夹树   │ ║ │ 导航条(← → ↑ ⟳ + 路径框) + 详细信息列表            │
+│ 文件夹树   │ ║ │ 导航条(← → ↑ ⟳ + 面包屑地址栏) + 详细信息列表        │
 └────────────┴───┴────────────────────────────────────────────────┘
 ```
 
@@ -141,11 +161,42 @@ exdir/
 * 紧凑密度靠 `Themes/ExdirTheme.xaml` 里覆盖 WinUI 数值型资源实现：
   `TitleBarExpandedHeight=36`、`ListViewItemMinHeight=24`、`TreeViewItemMinHeight=24`。
   **只覆盖数值/颜色类资源键**，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
+  同一处还关掉了选中行的左侧蓝色竖条：`ListViewItemSelectionIndicatorVisualEnabled=False`（只看整行底色）。
 * 活动窗格的边框用强调色（`PaneView.UpdateActiveVisual`），点击窗格会把自己设为活动窗格。
+* **详细信息列表是“可展开的树形列表”**（不是 TreeView）：
+  * 数据：`FileItemViewModel` 带 `Depth/IsExpanded/Children`，`FolderTabViewModel` 持有根层节点 `_rootNodes`，
+    `Items` 永远是“当前可见行”的扁平集合；展开子项是**懒加载 + 增量 `Items.Insert/RemoveAt`**
+    （整体替换会连滚动位置和选中项一起清掉），排序/刷新才整体重建成 `ObservableCollection`。
+  * 展开状态存在 `_expandedPaths`，刷新/重进同一个目录后按路径恢复（父级路径一定比子级短，按长度升序展开）。
+  * 行内：缩进 = `Depth * 14`，行首 18px 展开箭头（`CanExpand` 为 false 时不可点、字形为空串占位），
+    双击行仍然是“进入目录 / 打开文件”，箭头只负责展开/折叠，`←/→` 方向键也能展开/折叠。
+  * 排序对树的**每一层**生效（`CompareNodes`）；排序/刷新后由 `FolderTabViewModel.PendingSelection`
+    （一组路径，视图读，不清空）让视图在新集合里把行选回来；返回上一级用 `selectPath` 选中来源目录。
+* **列宽**：`Helpers/ColumnLayout` 的实例是**每个标签页一个**（`FolderTabViewModel.Columns`），
+  同时被列头与每一行绑定，因此列头与数据行永远对齐。要区分 requested（用户拖的，落盘）与
+  rendered（按窗格可用宽度算出来的，见 `FitTo`）：
+  * 自动模式（`AutoFit`，默认）：富余宽度给名称列，装不下时各列按余量等比压缩——
+    任何窗格尺寸下都能看到全部列；
+  * 手动模式：用户拖过任意列边界就进入（`SetRequestedWidth` 会关掉 `AutoFit`），列宽就是拖出来的值，
+    装不下就横向滚动（`ScrollViewer.HorizontalScrollMode=Enabled`，行 Grid 的
+    `MinWidth={x:Bind Columns.RowMinWidth}` 提供滚动范围）；
+  * 手动模式下列头靠 `TranslateTransform` 跟随 `ScrollViewer.HorizontalOffset`，
+    `HeaderRow.Clip` 负责裁掉平移出去的部分；
+  * 拖动把手 `Controls/ColumnResizeHandle` 由 `DetailsView` code-behind 追加到 `HeaderContent.Children`，
+    位置用 `TranslateTransform.X` 推到列边界（**不要用 Canvas**：Canvas 子元素实测高度为 0，命中区会是空的），
+    双击把手 = 该列恢复默认宽度 + 回到自动模式。
 * **导航条属于标签页，不属于窗格**：`Views/NavigationBarView` 是 `TabView.TabItemTemplate` 里
   `TabViewItem` 内容的第 0 行（第 1 行是 `DetailsView`），VM 类型是 `FolderTabViewModel`。
-  因此每个标签页各自拥有后退/前进/上一级/刷新按钮与路径输入框（历史和 `PathInput` 都跟着标签页走）。
-  要加“导航条上的新东西”（面包屑、视图切换、过滤器），改 `NavigationBarView.xaml` 而不是 `PaneView.xaml`。
+  因此每个标签页各自拥有后退/前进/上一级/刷新按钮与地址栏（历史和编辑态都跟着标签页走）。
+  要加“导航条上的新东西”（视图切换、过滤器），改 `NavigationBarView.xaml` 而不是 `PaneView.xaml`。
+* **地址栏 = 面包屑 + 可编辑输入框**（`Views/PathBreadcrumb`，仍是每个标签页一份）：
+  * 面包屑由 `FolderTabViewModel.PathSegments` 渲染（`ItemsControl` + 水平 `StackPanel`，
+    段与段之间是 chevron 字形 `E76C`，第一段不画）；
+  * 点某一段：非当前段 → `NavigateToSegmentCommand` 导航过去，当前目录段 → 进入编辑态；
+  * 点地址栏右侧空白区域（`BlankArea` 按钮，位置/宽度按面包屑实际宽度算）→ 进入编辑态；
+  * 编辑态由 `FolderTabViewModel.IsPathEditing` 持有（不在视图里），回车 `NavigatePathCommand` 前往、
+    `Esc` 或失焦 `CancelPathEdit()` 取消；**任何一次成功导航都会自动退出编辑态**；
+  * 路径比地址栏宽时 `CrumbScroll` 滚到最右（当前目录永远可见），左端露省略号提示还有被裁掉的分段。
 
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
@@ -158,6 +209,7 @@ exdir/
 | `Ctrl+B` | 显示/隐藏侧边栏 |
 | `F6` | 切换活动窗格 |
 | `F10` | 单窗格 / 双窗格切换 |
+| `Ctrl+L` / `Alt+D` | 编辑活动窗格的地址栏（等价于点地址栏空白处） |
 
 ## 5. 必须遵守的编码约定
 
@@ -183,9 +235,10 @@ exdir/
    cannot be assigned to the type 'Microsoft.UI.Xaml.GridLength'`。
    列宽统一定义在 `Helpers/ColumnLayout.cs`（强类型 `GridLength` 静态属性），
    通过 `{x:Bind helpers:ColumnLayout.DateWidth}` 共享，保证列头与数据行一致。
-2. **列头与数据行对齐**：数据行可用宽度 = ListView 宽度 − 滚动条占用宽度。
-   `DetailsView.UpdateHeaderAlignment()` 运行时实测
-   `ScrollViewer.ActualWidth - ViewportWidth` 并补偿到列头右内边距。不要写死常量。
+2. **列头与数据行对齐**：列宽不能用 XAML 资源（见第 1 条），统一走 `Helpers/ColumnLayout`：
+   列头与每一行绑定同一个 `ColumnLayout` 实例的 rendered 宽度；
+   可用宽度必须用 `ScrollViewer.ViewportWidth`（而不是 ListView 宽度）算——
+   自定义竖滚动条会占掉视口宽度（`HorizontalOffset` 同步列头时也一样）。
 3. **`dotnet publish` 会把 `.xbf` 和 `exdir.pri` 丢掉**，发布版启动即
    `XamlParseException: XAML parsing failed`。
    手动往 `ResolvedFileToPublish` 里补会更糟（整个发布目录被写成同一个文件的内容）。
@@ -209,6 +262,37 @@ exdir/
     凡是“按回车/按钮就要读输入框内容”的场合，必须写 `UpdateSourceTrigger=PropertyChanged`。
 11. **`DataTemplate` 内部的 `x:Name` 在 code-behind 里访问不到**：模板里需要事件处理或
     自己的状态时，用 `UserControl` 包一层（例：`NavigationBarView`），再把数据用 DP 传进去。
+12. **`TextBox` 的文字永远顶对齐**：控件模板根本不使用 `VerticalContentAlignment`
+    （[microsoft-ui-xaml#5369](https://github.com/microsoft/microsoft-ui-xaml/issues/5369)），
+    所以 `Height="24"` + `VerticalContentAlignment="Center"` 的结果是“框比 `Height` 更高、文字贴顶”；
+    框压不下去是因为模板内层 `BorderElement` 的 `MinHeight` 用了
+    `ThemeResource TextControlThemeMinHeight`（默认 32），不受控件自身 `Height`/`MinHeight` 约束。
+    地址栏的做法（`Views/PathBreadcrumb.xaml`）：在 `Themes/ExdirTheme.xaml` 里把
+    `TextControlThemeMinHeight` 覆盖为 0，文本框**不设 `Height`**、只给上下对称的
+    `ExTextControlPadding`，让框“刚好包住一行文字”，再由外层 `VerticalAlignment="Center"` 居中；
+    文字随字体/文本缩放变高时仍保持居中。新增 TextBox 请沿用这个模式。
+13. **用脚本模拟“拖动”时，`SetCursorPos` 不会让 WinUI 收到 `PointerMoved`**（只会在下一次
+    `mouse_event(LEFTDOWN)` 时把位置带过去）。拖拽类交互必须用
+    `mouse_event(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE, x*65535/(屏幕宽-1), y*65535/(屏幕高-1))`
+    逐步移动，否则测试会得出“拖动没反应”的假结论。双击同理，两次按下的间隔要小于系统双击时间。
+14. **`new DirectoryInfo("D:")` 是“D 盘的当前目录”**，会按进程工作目录解析，不是驱动器根。
+    `GetParentDirectory` 曾因此在 `D:\` 上返回进程工作目录的父目录（“上一级”从盘符根
+    跳到了 exe 所在目录）。判断根路径不能只看 `TrimEnd('\\').Length == 0`，还要看末尾是不是 `:`。
+15. **`Click` 事件的参数是 `RoutedEventArgs`，没有 `Handled`**（只有 `PointerRoutedEventArgs` /
+    `TappedRoutedEventArgs` 等才有）；想在 `Click` 里阻断冒泡得换事件或换控件。
+16. **空内容的 `Button` 会缩成 0×0**：WinUI 默认 `Button` 样式把 `HorizontalAlignment` 设成 `Left`、
+    `VerticalAlignment` 设成 `Center`，所以“拿一个透明按钮当整条区域的点击目标”时必须显式写
+    `HorizontalAlignment="Stretch" VerticalAlignment="Stretch"`，否则 `ActualWidth/Height` 都是 0，
+    既不显示也点不到（UIA 里它的 `BoundingRectangle` 会是空）。
+17. **`VisualTreeHelper.FindElementsInHostCoordinates` 在 WinUI 3 下传 `null` 会抛异常**
+    （DesktopWindowXamlSource 模式要求必须传 `UIElement subtree`），传了 subtree 时坐标要按窗口算；
+    而且它**不会返回 `ScrollViewer` 内滚动内容里的元素**（只会返回 ScrollViewer/ContentPresenter 本身），
+    所以不能拿它当“点这里会不会命中那个按钮”的笔据。想知道谁拿到点击，只能真鼠标点。
+18. **没有交互桌面时本机没法模拟输入/截图**：`GetForegroundWindow()` 返回 0 时，
+    `SendKeys`/`keybd_event`/`mouse_event` 都送不到窗口（`SendKeys` 抛异常，
+    `mouse_event` 静默无效），`Graphics.CopyFromScreen` 报“句柄无效”（`-PrintWindow` 只能抓到
+    系统窗口按钮，WinUI 内容全白）。这种情况下只能靠 UIA 读控件树 + `InvokePattern` 触发控件：
+    `tools/inspect-ui.ps1` 可以验证布局/状态转换，但验证不了真实的指针命中与键盘事件。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -227,9 +311,19 @@ exdir/
 
 * 非打包工程改造、单实例主窗口、Mica 背景、自定义标题栏、图标与窗口位置持久化；
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
-* 1/2 窗格 + 自研分隔条、TabView 多标签、详细信息列表（名称/修改日期/类型/大小、点列头排序、多选、双击进入）；
-* 导航条（← → ↑ ⟳ + 路径框）在**每个标签页内部**（`Views/NavigationBarView`），标签页之间历史与输入互不影响；
+* 1/2 窗格 + 自研分隔条、TabView 多标签；
+* 详细信息列表：**目录可就地展开的树形列表**（行内箭头 / `←→` 方向键展开、懒加载、刷新后恢复展开）、
+  名称/修改日期/类型/大小四列、点列头排序（含树的每一层）、**列宽可拖动+双击复位+持久化**、
+  多选、双击进入目录、无选中蓝色竖条、选中行不随排序/刷新丢失；
+* 导航条（← → ↑ ⟳ + **面包屑地址栏**）在**每个标签页内部**（`Views/NavigationBarView` +
+  `Views/PathBreadcrumb`），标签页之间历史与编辑态互不影响；
+  路径按目录分段显示（chevron 分隔）、点分段跳转、点当前目录段或右侧空白区就地编辑，回车跳转、Esc 取消；
+  超长路径自动滚到最右（当前目录永远可见）并在左端提示省略，编辑入口也有 `Ctrl+L` / `Alt+D`；
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
+* 菜单栏**「配置 → 文件列表」**（2026-09）：过渡动画开关（`AppSettings.EnableListAnimations`，
+  关闭后 `DetailsView` 会清空 `ListView` 的 `ItemContainerTransitions`/`Transitions` 并同步已生成的行容器，
+  换目录、插行、排序都直接到位）、显示隐藏文件、显示文件扩展名；
+  三项都是 `ToggleMenuFlyoutItem` 双向绑定 ViewModel 属性，改动立即生效并随退出落盘；
 * 快捷键、右键菜单尚未实现；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
 

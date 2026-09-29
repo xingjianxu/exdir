@@ -6,6 +6,7 @@
 #   pwsh -NoProfile -File tools\inspect-ui.ps1 -Filter Desktop      # 按名称精确匹配并打印位置
 #   pwsh -NoProfile -File tools\inspect-ui.ps1 -Keys "{F10}|^{t}"   # 先发送按键（SendKeys 语法），再导出
 #   pwsh -NoProfile -File tools\inspect-ui.ps1 -Click "快捷菜单"      # 真实鼠标点击该元素，并截图到 .artifacts
+#   pwsh -NoProfile -File tools\inspect-ui.ps1 -ClickAt "1100,284"    # 在窗口内按坐标点击（物理像素，相对窗口左上角）
 #
 # 说明：脚本必须先声明 Per-Monitor V2 DPI 感知，否则窗口坐标会被 DPI 虚拟化，
 #       得到的坐标与实际像素不一致（会导致“看起来有控件缺失”的误判）。
@@ -16,6 +17,7 @@ param(
     [switch]$All,
     [string]$Filter,
     [string]$Click,
+    [string]$ClickAt,
     [string]$Keys,
     [int]$MaxDepth = 30
 )
@@ -112,14 +114,39 @@ function Invoke-ByName {
     $cy = [int]($r.Y + $r.Height / 2)
     Write-Host ("点击 '{0}' 于 ({1},{2})" -f $target.Current.Name, $cx, $cy)
 
+    Invoke-Click -PointX $cx -PointY $cy
+}
+
+function Invoke-Click {
+    param([int]$PointX, [int]$PointY)
+
     [void][NativeDpi]::SetForegroundWindow($handle)
     Start-Sleep -Milliseconds 400
-    [void][NativeDpi]::SetCursorPos($cx, $cy)
+    [void][NativeDpi]::SetCursorPos($PointX, $PointY)
     Start-Sleep -Milliseconds 250
     [NativeDpi]::mouse_event([NativeDpi]::LEFTDOWN, 0, 0, 0, [IntPtr]::Zero)
     Start-Sleep -Milliseconds 90
     [NativeDpi]::mouse_event([NativeDpi]::LEFTUP, 0, 0, 0, [IntPtr]::Zero)
     Start-Sleep -Seconds 2
+}
+
+function Save-Shot {
+    param([string]$name)
+
+    $outDir = [System.IO.Path]::GetFullPath($ShotDir)
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+    $shot = Join-Path $outDir ('click-' + ($name -replace '[^\w\u4e00-\u9fa5]', '_') + '.png')
+
+    $rect = $root.Current.BoundingRectangle
+    $w = [int]$rect.Width
+    $h = [int]$rect.Height
+    $bmp = New-Object System.Drawing.Bitmap $w, $h
+    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
+    $gfx.CopyFromScreen([int]$rect.X, [int]$rect.Y, 0, 0, (New-Object System.Drawing.Size $w, $h))
+    $gfx.Dispose()
+    $bmp.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose()
+    Write-Host "已保存 $shot"
 }
 
 if ($Keys) {
@@ -134,21 +161,19 @@ if ($Keys) {
 
 if ($Click) {
     Invoke-ByName -name $Click
+    Save-Shot -name $Click
+}
 
-    $outDir = [System.IO.Path]::GetFullPath($ShotDir)
-    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-    $shot = Join-Path $outDir ('click-' + ($Click -replace '[^\w\u4e00-\u9fa5]', '_') + '.png')
+if ($ClickAt) {
+    $parts = $ClickAt.Split(',')
+    if ($parts.Count -ne 2) { throw '-ClickAt 需要 "x,y" 形式的窗口内物理像素坐标' }
 
-    $rect = $root.Current.BoundingRectangle
-    $w = [int]$rect.Width
-    $h = [int]$rect.Height
-    $bmp = New-Object System.Drawing.Bitmap $w, $h
-    $gfx = [System.Drawing.Graphics]::FromImage($bmp)
-    $gfx.CopyFromScreen([int]$rect.X, [int]$rect.Y, 0, 0, (New-Object System.Drawing.Size $w, $h))
-    $gfx.Dispose()
-    $bmp.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
-    $bmp.Dispose()
-    Write-Host "已保存 $shot"
+    $px = [int]$windowRect.X + [int]$parts[0]
+    $py = [int]$windowRect.Y + [int]$parts[1]
+    Write-Host ("点击窗口内 ({0},{1}) → 屏幕 ({2},{3})" -f $parts[0], $parts[1], $px, $py)
+
+    Invoke-Click -PointX $px -PointY $py
+    Save-Shot -name "at-$($parts[0])x$($parts[1])"
 }
 
 if ($Filter) {

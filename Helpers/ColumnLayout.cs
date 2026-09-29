@@ -1,30 +1,278 @@
+using System;
+using System.Collections.Generic;
+using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Xaml;
 
 namespace Exdir.Helpers;
 
 /// <summary>
-/// 详细信息视图的列宽定义。
-/// 说明：WinUI 的 XAML 不会为资源值做类型转换，
-/// <c>&lt;x:Double&gt;</c> 资源无法赋给 <see cref="GridLength"/> 类型的
-/// <c>ColumnDefinition.Width</c>，因此这里用强类型静态属性 + <c>x:Bind</c> 共享列宽，
-/// 保证列头与数据行永远一致。
+/// 详细信息视图的列宽状态（名称 / 修改日期 / 类型 / 大小）。
+///
+/// 这里要区分两个概念：
+/// <list type="bullet">
+/// <item><b>requested</b>：用户拖出来的宽度，持久化到 settings.json；</item>
+/// <item><b>rendered</b>：真正画到界面上的宽度，由 <see cref="FitTo"/> 按窗格可用宽度算出来。</item>
+/// </list>
+/// 列头与每一行都绑定 rendered（同一个对象），所以三者永远对齐。
+///
+/// 两种布局模式：
+/// <list type="bullet">
+/// <item><b>自动模式</b>（<see cref="AutoFit"/>，默认）：列宽随窗格自适应——富余宽度给名称列，
+///       窗格不够宽时各列按余量等比压缩，任何窗格尺寸下都能看到全部列；</item>
+/// <item><b>手动模式</b>：用户拖过任意列边界后进入。列宽就是用户拖的值，窗格装不下时横向滚动
+///       （同资源管理器），这样“拖到哪就是哪”，不会被自动压缩弹回去。</item>
+/// </list>
+/// 双击列边界可回到自动模式/默认宽度。
+///
+/// 为什么不用静态列宽：<c>ColumnDefinition.Width</c> 是 <see cref="GridLength"/>，
+/// XAML 不会为资源值做类型转换，所以列宽只能用强类型属性 + <c>x:Bind</c> 共享
+/// （见 AGENTS.md“踩过的坑”第 1 条）。
 /// </summary>
-public static class ColumnLayout
+public sealed class ColumnLayout : ObservableObject
 {
-    /// <summary>名称列：占满剩余宽度。</summary>
-    public static GridLength NameWidth { get; } = new(1, GridUnitType.Star);
+    /// <summary>列数（名称 / 修改日期 / 类型 / 大小）。</summary>
+    public const int ColumnCount = 4;
 
-    /// <summary>名称列最小宽度（像素）。
-    /// 故意取得较小：窗格很窄时让名称列先压缩，避免固定列被挤出可视区。
-    /// 后续可改为“宽度不足时自动隐藏低优先级列”（见 plan.md）。</summary>
-    public static double NameMinWidth => 80;
+    /// <summary>名称列最小宽度（像素）。</summary>
+    public const double NameMinWidth = 80;
 
-    /// <summary>修改日期列宽度（像素）。</summary>
-    public static GridLength DateWidth { get; } = new(136, GridUnitType.Pixel);
+    /// <summary>其余列最小宽度（像素）。</summary>
+    public const double NumberMinWidth = 44;
 
-    /// <summary>类型列宽度（像素）。</summary>
-    public static GridLength TypeWidth { get; } = new(104, GridUnitType.Pixel);
+    public const double DefaultNameWidth = 320;
+    public const double DefaultDateWidth = 136;
+    public const double DefaultTypeWidth = 104;
+    public const double DefaultSizeWidth = 86;
 
-    /// <summary>大小列宽度（像素）。</summary>
-    public static GridLength SizeWidth { get; } = new(86, GridUnitType.Pixel);
+    /// <summary>行/列头的左右内边距之和（6 + 6），与 Themes/ExdirTheme.xaml 的 ExRowPadding 保持一致。</summary>
+    public const double RowPaddingWidth = 12;
+
+    private static readonly double[] Defaults =
+        { DefaultNameWidth, DefaultDateWidth, DefaultTypeWidth, DefaultSizeWidth };
+
+    private static readonly double[] Minimums =
+        { NameMinWidth, NumberMinWidth, NumberMinWidth, NumberMinWidth };
+
+    private readonly double[] _requested = (double[])Defaults.Clone();
+    private readonly double[] _rendered = (double[])Defaults.Clone();
+
+    private bool _autoFillName = true;
+    private bool _autoFit = true;
+
+    /// <summary>用户拖动（或恢复默认）列宽后触发，供 ViewModel 写入设置。</summary>
+    public event EventHandler? RequestedChanged;
+
+    /// <summary>实际渲染宽度变化后触发，供视图重新摆放拖动把手。</summary>
+    public event EventHandler? RenderedChanged;
+
+    public GridLength NameWidth => LengthOf(0);
+
+    public GridLength DateWidth => LengthOf(1);
+
+    public GridLength TypeWidth => LengthOf(2);
+
+    public GridLength SizeWidth => LengthOf(3);
+
+    /// <summary>列宽总和（数据行的最小宽度还要加上左右内边距）。</summary>
+    public double TotalWidth => _rendered[0] + _rendered[1] + _rendered[2] + _rendered[3];
+
+    /// <summary>数据行的最小宽度：列宽总和 + 行左右内边距。</summary>
+    public double RowMinWidth => TotalWidth + RowPaddingWidth;
+
+    /// <summary>整体自适应窗格宽度（默认开启；拖动过列宽后关闭，双击列边界可恢复）。</summary>
+    public bool AutoFit
+    {
+        get => _autoFit;
+        set
+        {
+            if (SetProperty(ref _autoFit, value))
+            {
+                RequestedChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>名称列是否吃掉窗格里的富余宽度（与资源管理器一致：名称列负责填满剩余空间）。</summary>
+    public bool AutoFillName
+    {
+        get => _autoFillName;
+        set
+        {
+            if (SetProperty(ref _autoFillName, value))
+            {
+                RequestedChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+    }
+
+    /// <summary>列头显示名（用于拖动把手的无障碍名称）。</summary>
+    public static string GetColumnName(int index) => index switch
+    {
+        0 => "名称",
+        1 => "修改日期",
+        2 => "类型",
+        3 => "大小",
+        _ => "列",
+    };
+
+    /// <summary>当前实际画出来的宽度。</summary>
+    public double GetRenderedWidth(int index) => _rendered[index];
+
+    /// <summary>用户设定的宽度。</summary>
+    public double GetRequestedWidth(int index) => _requested[index];
+
+    /// <summary>设置用户宽度（拖动过程中调用）；低于该列最小值会被夹住。</summary>
+    public void SetRequestedWidth(int index, double width)
+    {
+        if ((uint)index >= ColumnCount)
+        {
+            return;
+        }
+
+        var clamped = Math.Round(Math.Max(Minimums[index], width));
+        if (Math.Abs(clamped - _requested[index]) < 0.5)
+        {
+            return;
+        }
+
+        _requested[index] = clamped;
+
+        // 手动拖过名称列边界后就不再自动填满，整体也不再自适应（与资源管理器一致）
+        if (index == 0)
+        {
+            AutoFillName = false;
+        }
+
+        AutoFit = false;
+
+        RequestedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>双击列边界：该列恢复默认宽度，并回到整体自适应模式。</summary>
+    public void ResetColumn(int index)
+    {
+        if ((uint)index >= ColumnCount)
+        {
+            return;
+        }
+
+        _requested[index] = Defaults[index];
+
+        if (index == 0)
+        {
+            AutoFillName = true;
+        }
+
+        AutoFit = true;
+
+        RequestedChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>从设置里恢复列宽与布局模式。</summary>
+    public void Apply(IReadOnlyList<double>? widths, bool autoFillName, bool autoFit)
+    {
+        if (widths is not null && widths.Count >= ColumnCount)
+        {
+            for (var i = 0; i < ColumnCount; i++)
+            {
+                var value = widths[i];
+                _requested[i] = double.IsFinite(value) && value > 0
+                    ? Math.Max(Minimums[i], Math.Round(value))
+                    : Defaults[i];
+            }
+        }
+
+        _autoFillName = autoFillName;
+        _autoFit = autoFit;
+
+        OnPropertyChanged(nameof(AutoFillName));
+        OnPropertyChanged(nameof(AutoFit));
+
+        Array.Copy(_requested, _rendered, ColumnCount);
+        NotifyRendered();
+    }
+
+    /// <summary>当前列宽快照（持久化用）。</summary>
+    public double[] ToArray() => (double[])_requested.Clone();
+
+    /// <summary>按窗格可用宽度（DIP，已扣掉左右内边距与滚动条）计算实际渲染宽度。</summary>
+    public void FitTo(double availableWidth)
+    {
+        if (availableWidth <= 0)
+        {
+            return;
+        }
+
+        var rendered = (double[])_requested.Clone();
+
+        if (_autoFillName || _autoFit)
+        {
+            var others = rendered[1] + rendered[2] + rendered[3];
+            rendered[0] = Math.Max(rendered[0], availableWidth - others);
+        }
+
+        var total = rendered[0] + rendered[1] + rendered[2] + rendered[3];
+        if (_autoFit && total > availableWidth)
+        {
+            ShrinkColumns(rendered, total - availableWidth);
+        }
+
+        var changed = false;
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            if (Math.Abs(_rendered[i] - rendered[i]) > 0.01)
+            {
+                _rendered[i] = rendered[i];
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            NotifyRendered();
+        }
+    }
+
+    /// <summary>各列按“距离最小值的余量”等比压缩；某一列到底后重新分配余量，故跑几轮。</summary>
+    private static void ShrinkColumns(double[] widths, double amount)
+    {
+        for (var pass = 0; pass < ColumnCount && amount > 0.5; pass++)
+        {
+            var slack = 0d;
+            for (var i = 0; i < ColumnCount; i++)
+            {
+                slack += Math.Max(0, widths[i] - Minimums[i]);
+            }
+
+            if (slack <= 0.01)
+            {
+                return;
+            }
+
+            var take = Math.Min(amount, slack);
+            for (var i = 0; i < ColumnCount; i++)
+            {
+                var room = Math.Max(0, widths[i] - Minimums[i]);
+                if (room > 0)
+                {
+                    widths[i] -= take * (room / slack);
+                }
+            }
+
+            amount -= take;
+        }
+    }
+
+    private GridLength LengthOf(int index) => new(_rendered[index], GridUnitType.Pixel);
+
+    private void NotifyRendered()
+    {
+        OnPropertyChanged(nameof(NameWidth));
+        OnPropertyChanged(nameof(DateWidth));
+        OnPropertyChanged(nameof(TypeWidth));
+        OnPropertyChanged(nameof(SizeWidth));
+        OnPropertyChanged(nameof(TotalWidth));
+        OnPropertyChanged(nameof(RowMinWidth));
+        RenderedChanged?.Invoke(this, EventArgs.Empty);
+    }
 }

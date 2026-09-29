@@ -60,8 +60,10 @@ public sealed class FileSystemService : IFileSystemService
         {
             var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-            // 已经是 "C:" 或 "\\server\share" 这类根路径
-            if (trimmed.Length == 0)
+            // 已经是 "C:\" 或 "\\server\share" 这类根路径。
+            // 注意不能只看 Length==0："D:\" 去掉反斜杠后是 "D:"，
+            // 而 new DirectoryInfo("D:") 会被当成“D 盘的当前目录”解析到进程工作目录去。
+            if (trimmed.Length == 0 || trimmed[^1] == ':')
             {
                 return null;
             }
