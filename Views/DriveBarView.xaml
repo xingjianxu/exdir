@@ -37,12 +37,9 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="models:DriveModel">
                         <Button
-                            MinHeight="26"
-                            Padding="8,1,8,1"
                             AutomationProperties.Name="{x:Bind ToolbarText}"
-                            Background="Transparent"
-                            BorderThickness="0"
                             Click="DriveButton_Click"
+                            Style="{StaticResource ExToolbarButtonStyle}"
                             ToolTipService.ToolTip="{x:Bind Tooltip}">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon FontSize="14" Glyph="{x:Bind Glyph}" />
@@ -76,7 +73,7 @@
                 DragLeave="PinnedDropZone_DragLeave"
                 DragOver="PinnedDropZone_DragOver"
                 Drop="PinnedDropZone_Drop">
-                <Grid>
+                <Grid x:Name="PinnedItemsHost">
                     <Border
                         x:Name="DropHighlight"
                         BorderThickness="1"
@@ -91,7 +88,7 @@
                         </Border.Background>
                     </Border>
 
-                    <ItemsControl ItemsSource="{x:Bind ViewModel.PinnedFolders, Mode=OneWay}">
+                    <ItemsControl x:Name="PinnedItems" ItemsSource="{x:Bind ViewModel.PinnedFolders, Mode=OneWay}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <StackPanel Orientation="Horizontal" Spacing="2" />
@@ -99,14 +96,16 @@
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:PinnedFolderViewModel">
+                                <!-- 按住按钮拖到兄弟按钮上就是排序（手势由 PinnedItemsHost 的 code-behind 监听识别，
+                                     因为 Button 会把左键的指针事件标成 Handled，CanDrag 在这里不生效） -->
                                 <Button
-                                    MinHeight="26"
-                                    Padding="8,1,8,1"
                                     AutomationProperties.Name="{x:Bind Name}"
-                                    Background="Transparent"
-                                    BorderThickness="0"
+                                    CanDrag="True"
                                     Click="PinnedButton_Click"
                                     ContextRequested="PinnedButton_ContextRequested"
+                                    DragStarting="PinnedButton_DragStarting"
+                                    DropCompleted="PinnedButton_DropCompleted"
+                                    Style="{StaticResource ExToolbarButtonStyle}"
                                     ToolTipService.ToolTip="{x:Bind Tooltip}">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <FontIcon FontSize="14" Glyph="&#xE8B7;" />
@@ -116,6 +115,21 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+
+                    <!-- 排序时的插入位置提示：2px 强调色竖条，位置由 code-behind 按相邻按钮的边界设置 -->
+                    <Border
+                        x:Name="InsertionIndicator"
+                        Width="2"
+                        Margin="0,5,0,5"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Stretch"
+                        CornerRadius="1"
+                        IsHitTestVisible="False"
+                        Visibility="Collapsed">
+                        <Border.Background>
+                            <SolidColorBrush Color="{ThemeResource SystemAccentColor}" />
+                        </Border.Background>
+                    </Border>
                 </Grid>
             </Border>
 
@@ -123,11 +137,9 @@
                 x:Name="QuickMenuButton"
                 Grid.Column="1"
                 MinWidth="30"
-                MinHeight="26"
                 Padding="6,1,6,1"
                 AutomationProperties.Name="快捷菜单"
-                Background="Transparent"
-                BorderThickness="0"
+                Style="{StaticResource ExToolbarButtonStyle}"
                 ToolTipService.ToolTip="快捷菜单">
                 <FontIcon FontSize="14" Glyph="&#xE712;" />
                 <Button.Flyout>

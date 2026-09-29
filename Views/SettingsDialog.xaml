@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  统一的设置对话框：底部固定「保存 / 取消」两个按钮（ContentDialog 的
+  PrimaryButton / CloseButton 就是画在底部）。
+  内容绑定的是 SettingsViewModel 快照，只有「保存」才会写回并落盘。
+-->
+<ContentDialog
+    x:Class="Exdir.Views.SettingsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    AutomationProperties.Name="设置"
+    CloseButtonText="取消"
+    DefaultButton="Primary"
+    PrimaryButtonText="保存"
+    Title="设置">
+
+    <!-- 内容比窗口还高时自己滚动（ContentDialog 会把整个对话框约束在窗口内），按钮区永远留在底部 -->
+    <ScrollViewer MaxHeight="500" VerticalScrollBarVisibility="Auto">
+        <StackPanel MinWidth="360" Spacing="16">
+
+            <StackPanel Spacing="2">
+                <TextBlock
+                    Margin="0,0,0,4"
+                    Style="{ThemeResource BodyStrongTextBlockStyle}"
+                    Text="文件列表" />
+                <CheckBox
+                    AutomationProperties.Name="显示隐藏文件"
+                    Content="显示隐藏文件"
+                    IsChecked="{x:Bind ViewModel.ShowHiddenFiles, Mode=TwoWay}" />
+                <CheckBox
+                    AutomationProperties.Name="显示文件扩展名"
+                    Content="显示文件扩展名"
+                    IsChecked="{x:Bind ViewModel.ShowExtensions, Mode=TwoWay}" />
+                <CheckBox
+                    AutomationProperties.Name="文件夹排在文件前面"
+                    Content="文件夹排在文件前面"
+                    IsChecked="{x:Bind ViewModel.FoldersFirst, Mode=TwoWay}" />
+                <CheckBox
+                    AutomationProperties.Name="过渡动画"
+                    Content="过渡动画（入场 / 重排）"
+                    IsChecked="{x:Bind ViewModel.EnableListAnimations, Mode=TwoWay}" />
+                <CheckBox
+                    AutomationProperties.Name="列宽自动适应窗格宽度"
+                    Content="列宽自动适应窗格宽度"
+                    IsChecked="{x:Bind ViewModel.ColumnAutoFit, Mode=TwoWay}"
+                    ToolTipService.ToolTip="关闭后列宽固定为拖动出来的值，窗格装不下时横向滚动（双击列边界可恢复默认）" />
+            </StackPanel>
+
+            <StackPanel Spacing="2">
+                <TextBlock
+                    Margin="0,0,0,4"
+                    Style="{ThemeResource BodyStrongTextBlockStyle}"
+                    Text="界面" />
+                <CheckBox
+                    AutomationProperties.Name="显示工具条"
+                    Content="显示工具条"
+                    IsChecked="{x:Bind ViewModel.ShowToolbar, Mode=TwoWay}" />
+                <CheckBox
+                    AutomationProperties.Name="显示侧边栏"
+                    Content="显示侧边栏"
+                    IsChecked="{x:Bind ViewModel.ShowSidebar, Mode=TwoWay}" />
+                <CheckBox
+                    AutomationProperties.Name="双窗格模式"
+                    Content="双窗格模式"
+                    IsChecked="{x:Bind ViewModel.DualPane, Mode=TwoWay}" />
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

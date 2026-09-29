@@ -16,6 +16,13 @@ public static class DragDropHelper
     /// <summary>本应用自己的拖放格式标识（值是一个多行字符串，每行一个路径）。</summary>
     public const string PathsFormat = "exdir/paths";
 
+    /// <summary>
+    /// “拖动工具条上已有的固定目录按钮”专用的格式标识（值是那一个目录的路径）。
+    /// 单独用一个格式是为了让落点能区分“调整顺序”和“新增固定”：只带
+    /// <see cref="PathsFormat" /> 的拖拽一律是新增，带这个格式的一律是排序。
+    /// </summary>
+    public const string PinnedReorderFormat = "exdir/pinned-reorder";
+
     /// <summary>把一批路径写进拖放数据包。</summary>
     public static void SetPaths(DataPackage data, IEnumerable<string> paths)
     {

@@ -7,6 +7,8 @@
 #   pwsh -NoProfile -File tools\inspect-ui.ps1 -Keys "{F10}|^{t}"   # 先发送按键（SendKeys 语法），再导出
 #   pwsh -NoProfile -File tools\inspect-ui.ps1 -Click "快捷菜单"      # 真实鼠标点击该元素，并截图到 .artifacts
 #   pwsh -NoProfile -File tools\inspect-ui.ps1 -ClickAt "1100,284"    # 在窗口内按坐标点击（物理像素，相对窗口左上角）
+#   pwsh -NoProfile -File tools\inspect-ui.ps1 -Hover "此电脑"        # 把真鼠标移到该元素上（不发点击）并截图，验证悬停高亮
+#   pwsh -NoProfile -File tools\inspect-ui.ps1 -HoverAt "157,37"     # 同上，但按窗口内坐标悬停
 #
 # 说明：脚本必须先声明 Per-Monitor V2 DPI 感知，否则窗口坐标会被 DPI 虚拟化，
 #       得到的坐标与实际像素不一致（会导致“看起来有控件缺失”的误判）。
@@ -18,6 +20,8 @@ param(
     [string]$Filter,
     [string]$Click,
     [string]$ClickAt,
+    [string]$Hover,
+    [string]$HoverAt,
     [string]$Keys,
     [int]$MaxDepth = 30
 )
@@ -40,6 +44,8 @@ public static class NativeDpi {
     public const int DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
     public const uint LEFTDOWN = 0x0002;
     public const uint LEFTUP = 0x0004;
+    public const uint MOVE = 0x0001;
+    public const uint ABSOLUTE = 0x8000;
 }
 '@
 
@@ -96,7 +102,7 @@ function Show-Tree {
     }
 }
 
-function Invoke-ByName {
+function Find-ByName {
     param([string]$name)
     $cond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::NameProperty, $name,
@@ -108,13 +114,48 @@ function Invoke-ByName {
         exit 5
     }
 
-    $target = $found[0]
+    return $found[0]
+}
+
+# 真鼠标移动：SetCursorPos 不会让 WinUI 收到 PointerMoved（只在下次 mouse_event 按下时带过去），
+# 所以必须用 MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE 把坐标归一化到 0..65535 发出去。
+function Move-Cursor {
+    param([int]$PointX, [int]$PointY)
+
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $nx = [int]($PointX * 65535 / ($screen.Width - 1))
+    $ny = [int]($PointY * 65535 / ($screen.Height - 1))
+    [NativeDpi]::mouse_event([NativeDpi]::MOVE -bor [NativeDpi]::ABSOLUTE, [uint32]$nx, [uint32]$ny, 0, [IntPtr]::Zero)
+}
+
+function Invoke-ByName {
+    param([string]$name)
+    $target = Find-ByName -name $name
     $r = $target.Current.BoundingRectangle
     $cx = [int]($r.X + $r.Width / 2)
     $cy = [int]($r.Y + $r.Height / 2)
     Write-Host ("点击 '{0}' 于 ({1},{2})" -f $target.Current.Name, $cx, $cy)
 
     Invoke-Click -PointX $cx -PointY $cy
+}
+
+function Invoke-Hover {
+    param([string]$name)
+    $target = Find-ByName -name $name
+    $r = $target.Current.BoundingRectangle
+    $cx = [int]($r.X + $r.Width / 2)
+    $cy = [int]($r.Y + $r.Height / 2)
+    Write-Host ("悬停 '{0}' 于 ({1},{2})" -f $target.Current.Name, $cx, $cy)
+
+    [void][NativeDpi]::SetForegroundWindow($handle)
+    Start-Sleep -Milliseconds 400
+    # 先把鼠标移开再移回来：如果光标本来就在按钮上（上一次跑完留下的），
+    # 同坐标的 mouse_event 不产生 PointerMoved，会得出“悬停无效”的假结论。
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    Move-Cursor -PointX 2 -PointY ($screen.Height - 2)
+    Start-Sleep -Milliseconds 250
+    Move-Cursor -PointX $cx -PointY $cy
+    Start-Sleep -Milliseconds 900   # 等 BrushTransition（0.083s）跑完
 }
 
 function Invoke-Click {
@@ -131,11 +172,11 @@ function Invoke-Click {
 }
 
 function Save-Shot {
-    param([string]$name)
+    param([string]$name, [string]$Prefix = 'click')
 
     $outDir = [System.IO.Path]::GetFullPath($ShotDir)
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-    $shot = Join-Path $outDir ('click-' + ($name -replace '[^\w\u4e00-\u9fa5]', '_') + '.png')
+    $shot = Join-Path $outDir ($Prefix + '-' + ($name -replace '[^\w\u4e00-\u9fa5]', '_') + '.png')
 
     $rect = $root.Current.BoundingRectangle
     $w = [int]$rect.Width
@@ -174,6 +215,29 @@ if ($ClickAt) {
 
     Invoke-Click -PointX $px -PointY $py
     Save-Shot -name "at-$($parts[0])x$($parts[1])"
+}
+
+if ($Hover) {
+    Invoke-Hover -name $Hover
+    Save-Shot -name $Hover -Prefix 'hover'
+}
+
+if ($HoverAt) {
+    $parts = $HoverAt.Split(',')
+    if ($parts.Count -ne 2) { throw '-HoverAt 需要 "x,y" 形式的窗口内物理像素坐标' }
+
+    $px = [int]$windowRect.X + [int]$parts[0]
+    $py = [int]$windowRect.Y + [int]$parts[1]
+    Write-Host ("悬停窗口内 ({0},{1}) → 屏幕 ({2},{3})" -f $parts[0], $parts[1], $px, $py)
+
+    [void][NativeDpi]::SetForegroundWindow($handle)
+    Start-Sleep -Milliseconds 400
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    Move-Cursor -PointX 2 -PointY ($screen.Height - 2)
+    Start-Sleep -Milliseconds 250
+    Move-Cursor -PointX $px -PointY $py
+    Start-Sleep -Milliseconds 900
+    Save-Shot -name "at-$($parts[0])x$($parts[1])" -Prefix 'hover'
 }
 
 if ($Filter) {

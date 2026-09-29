@@ -6,6 +6,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Exdir.Diagnostics;
 using Exdir.Models;
 using Exdir.Services;
 
@@ -354,6 +355,54 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// 工具条上的固定目录拖拽排序：把 <paramref name="path" /> 插到第 <paramref name="targetIndex" />
+    /// 个之前（<c>0..Count</c>，<c>Count</c> 表示放到最后）。和增删一样立即落盘。
+    /// </summary>
+    public void MovePinnedFolder(string? path, int targetIndex)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var current = -1;
+        for (var i = 0; i < PinnedFolders.Count; i++)
+        {
+            if (string.Equals(PinnedFolders[i].Path, path, StringComparison.OrdinalIgnoreCase))
+            {
+                current = i;
+                break;
+            }
+        }
+
+        if (current < 0)
+        {
+            return;
+        }
+
+        // 目标下标是按“自己还在列表里”算出来的，往后拖要减一才是移除后的插入位置
+        var target = Math.Clamp(targetIndex, 0, PinnedFolders.Count);
+        if (target > current)
+        {
+            target--;
+        }
+
+        if (target == current)
+        {
+            return;
+        }
+
+        // 用移除 + 插入而不是 ObservableCollection.Move：ItemsControl 对 Move 通知的支持
+        // 依版本而异，而这个集合只有十来个元素，重建容器的代价可以忽略
+        var folder = PinnedFolders[current];
+        PinnedFolders.RemoveAt(current);
+        PinnedFolders.Insert(target, folder);
+
+        PersistPinnedFolders(writeToDisk: true);
+        Log.Write($"固定目录排序：{folder.Name} 移到第 {target + 1} 位");
+    }
+
+    /// <summary>
     /// 把一批路径固定到工具条（文件列表 / 侧边栏拖到工具条固定目录区）。
     /// 返回真正新增的条目数：文件、不存在的路径、已经固定的目录都会被跳过。
     /// </summary>
@@ -484,6 +533,64 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Current.FoldersFirst = PrimaryPane.ActiveTab?.FoldersFirst ?? true;
 
         _settings.Save();
+    }
+
+    // ------------------------------------------------------------------ 设置对话框
+
+    /// <summary>给设置对话框做一份“当前设置”的编辑快照（点“取消”就丢掉的副本）。</summary>
+    public SettingsViewModel CreateSettingsSnapshot() => new(_settings.Current);
+
+    /// <summary>
+    /// 应用设置对话框里改过的内容（点“保存”时调用）。
+    /// 点“保存”是明确动作，所以结束时立刻落盘，不等到退出。
+    /// </summary>
+    public void ApplySettings(SettingsViewModel edited)
+    {
+        ArgumentNullException.ThrowIfNull(edited);
+
+        var settings = _settings.Current;
+
+        // 先只改字段、最后统一刷新：隐藏文件与扩展名都会触发重新枚举目录，
+        // 走属性设置器的话两项一起改就会把每个目录白枚举两遍。
+        var reloadLists = settings.ShowHiddenFiles != edited.ShowHiddenFiles
+                          || settings.ShowExtensions != edited.ShowExtensions;
+
+        settings.ShowHiddenFiles = edited.ShowHiddenFiles;
+        settings.ShowExtensions = edited.ShowExtensions;
+        settings.FoldersFirst = edited.FoldersFirst;
+        settings.ColumnAutoFit = edited.ColumnAutoFit;
+
+        OnPropertyChanged(nameof(ShowHiddenFiles));
+        OnPropertyChanged(nameof(ShowExtensions));
+
+        // 动画开关自带“应用到所有标签页”的逻辑，而且只改视图行为不重载目录，直接走属性设置器
+        EnableListAnimations = edited.EnableListAnimations;
+
+        foreach (var pane in new[] { PrimaryPane, SecondaryPane })
+        {
+            foreach (var tab in pane.Tabs)
+            {
+                // 赋值是幂等的：值没变时不会重排 / 不触发列宽回写
+                tab.FoldersFirst = edited.FoldersFirst;
+                tab.Columns.AutoFit = edited.ColumnAutoFit;
+            }
+        }
+
+        if (reloadLists)
+        {
+            _ = ApplyViewSettingsToAllTabsAsync();
+        }
+
+        IsToolbarVisible = edited.ShowToolbar;
+        IsSidebarVisible = edited.ShowSidebar;
+        IsDualPane = edited.DualPane;
+
+        _settings.Save();
+
+        Log.Write(
+            $"设置已保存：隐藏文件={edited.ShowHiddenFiles} 扩展名={edited.ShowExtensions} "
+            + $"文件夹优先={edited.FoldersFirst} 动画={edited.EnableListAnimations} 列宽自适应={edited.ColumnAutoFit} "
+            + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane}");
     }
 
     /// <summary>磁盘热插拔后刷新磁盘条与侧边栏。</summary>

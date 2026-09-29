@@ -54,4 +54,278 @@
     <!-- 分隔条视觉宽度（真正的命中区域更宽，见 PaneSplitter） -->
     <x:Double x:Key="ExSplitterVisualWidth">1</x:Double>
 
+    <!-- ===================== 3. 扁平按钮（工具条/导航条） ===================== -->
+
+    <!--
+        工具条/导航条上的“扁平按钮”：无底无边，只在悬停/按下时铺一层强调色。
+        这是具名样式（不是隐式样式），只作用于显式引用它的按钮，
+        所以对话框里的普通按钮仍然是 WinUI 默认外观。
+        模板抄的是 DefaultButtonStyle，只把 PointerOver/Pressed 的底色换成上面的强调色画刷；
+        用 Storyboard 而不是 VisualState.Setters —— 与 WinUI 原模板一致，
+        动画值的优先级高于本地属性，所以按钮上写 Background 也不会把悬停色顶掉。
+    -->
+    <Style x:Key="ExToolbarButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BackgroundSizing" Value="InnerBorderEdge" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{ThemeResource ButtonForeground}" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Padding" Value="8,1,8,1" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontSize" Value="{ThemeResource ControlContentThemeFontSize}" />
+        <Setter Property="UseSystemFocusVisuals" Value="{StaticResource UseSystemFocusVisuals}" />
+        <Setter Property="FocusVisualMargin" Value="-3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <ContentPresenter
+                        x:Name="ContentPresenter"
+                        AutomationProperties.AccessibilityView="Raw"
+                        Background="{TemplateBinding Background}"
+                        BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        Content="{TemplateBinding Content}"
+                        ContentTemplate="{TemplateBinding ContentTemplate}"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        CornerRadius="{TemplateBinding CornerRadius}"
+                        Foreground="{TemplateBinding Foreground}"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        Padding="{TemplateBinding Padding}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}">
+                        <ContentPresenter.BackgroundTransition>
+                            <BrushTransition Duration="0:0:0.083" />
+                        </ContentPresenter.BackgroundTransition>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ExToolbarButtonBackgroundPointerOver}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ExToolbarButtonBackgroundPressed}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ButtonBackgroundDisabled}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ButtonForegroundDisabled}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </ContentPresenter>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 列头排序按钮 / 行内小按钮：悬停色同上，但不预设最小高度与内边距（尺寸完全由使用处决定，
+         否则 ExToolbarButtonStyle 的 MinHeight=26 会把 24px 高的列头撑高）。 -->
+    <Style x:Key="ExFlatButtonStyle" TargetType="Button" BasedOn="{StaticResource ExToolbarButtonStyle}">
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <!--
+        例外：地址栏的面包屑分段/空白区、以及文件列表行内的展开箭头，悬停**保持普通灰色**
+        （即 ExSubtleButtonBackgroundPointerOver/Pressed：深色主题叠白、浅色主题叠黑），不要强调色——
+        地址栏空白区几乎铺满整条地址栏、行内展开箭头只有 18px，这两处一上强调色就喧宾夺主，
+        反而看不清当前指着的到底是哪一段路径/哪一行。
+
+        与 ExToolbarButtonStyle 的唯一差别就是悬停/按下用的画刷是 WinUI 自带的那两个键，
+        而 Storyboard 里的 {ThemeResource} 是写死在模板里的（BasedOn 改不了），所以模板要另写一份；
+        以后调整按钮模板时两个模板都得同步改。
+    -->
+    <Style x:Key="ExSubtleButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BackgroundSizing" Value="InnerBorderEdge" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{ThemeResource ButtonForeground}" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Padding" Value="8,1,8,1" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontSize" Value="{ThemeResource ControlContentThemeFontSize}" />
+        <Setter Property="UseSystemFocusVisuals" Value="{StaticResource UseSystemFocusVisuals}" />
+        <Setter Property="FocusVisualMargin" Value="-3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <ContentPresenter
+                        x:Name="ContentPresenter"
+                        AutomationProperties.AccessibilityView="Raw"
+                        Background="{TemplateBinding Background}"
+                        BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        Content="{TemplateBinding Content}"
+                        ContentTemplate="{TemplateBinding ContentTemplate}"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        CornerRadius="{TemplateBinding CornerRadius}"
+                        Foreground="{TemplateBinding Foreground}"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        Padding="{TemplateBinding Padding}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}">
+                        <ContentPresenter.BackgroundTransition>
+                            <BrushTransition Duration="0:0:0.083" />
+                        </ContentPresenter.BackgroundTransition>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="PointerOver">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ExSubtleButtonBackgroundPointerOver}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Pressed">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ExSubtleButtonBackgroundPressed}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ButtonBackgroundDisabled}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ButtonForegroundDisabled}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </ContentPresenter>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 同上，但不预设最小高度与内边距（行内展开箭头是 18×18）。 -->
+    <Style x:Key="ExFlatSubtleButtonStyle" TargetType="Button" BasedOn="{StaticResource ExSubtleButtonStyle}">
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <!--
+        悬停/按下的高亮色。WinUI 默认都是“在灰底上叠 8% 白/黑”（ButtonBackgroundPointerOver =
+        ControlFillColorSecondary、MenuBarItemBackgroundPointerOver = SubtleFillColorSecondary……），
+        几乎看不出鼠标停在哪里。这里统一换成强调色：有色相差异，一眼就能看出当前指着哪个目标。
+        深色主题用浅一点的强调色（SystemAccentColorLight2，与 AccentFillColorDefaultBrush 同源），
+        浅色主题用深一点的（SystemAccentColorDark1），否则浅底上的浅色同样看不清。
+
+        两档不透明度：小控件（工具条按钮、菜单项）用 ExToolbarButton*；
+        （地址栏分段与行内展开箭头例外，它们用 ExSubtleButtonStyle，保持 WinUI 默认灰色）
+        铺满整行的大表面（列表行 / 树节点 / 标签页头 / 标题栏菜单）用 ExSurface*，
+        面积大、同样不透明度会显得更重，所以压低一档。
+        选中态也一并改成强调色（ExSurfaceBackgroundSelected 比悬停略重）——
+        否则“悬停比选中还显眼”，层次是反的。
+
+        高对比主题只给工具条按钮色刷，其余键不覆盖、直接落到系统的高对比默认色。
+        注意：ThemeDictionaries 必须放在本文件的最后——XAML 编译器不允许在属性元素
+        （ResourceDictionary.ThemeDictionaries）之后再写隐式条目（报 WMC0035）。
+    -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="ExToolbarButtonBackgroundPointerOver" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.35" />
+            <SolidColorBrush x:Key="ExToolbarButtonBackgroundPressed" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.6" />
+            <!-- 地址栏 / 行内展开箭头用的“默认灰色”，不用 WinUI 的 ButtonBackground* 令牌：
+                 那些令牌在本 SDK 版本里是浅色叠加（深色主题下都偏白），铺在浅色导航条上几乎看不见；
+                 这里直接给定中性黑/白叠加，深浅主题各自都看得清。 -->
+            <SolidColorBrush x:Key="ExSubtleButtonBackgroundPointerOver" Color="White" Opacity="0.08" />
+            <SolidColorBrush x:Key="ExSubtleButtonBackgroundPressed" Color="White" Opacity="0.14" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundPointerOver" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.2" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundPressed" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.32" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundSelected" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.3" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundSelectedPointerOver" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.42" />
+
+            <!-- 键名均取自 WinUI generic.xaml，这一批就是下面各控件的“灰色悬停”来源 -->
+            <StaticResource x:Key="TitleBarPaneToggleButtonBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TitleBarPaneToggleButtonBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="MenuBarItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="MenuBarItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="MenuBarItemBackgroundSelected" ResourceKey="ExSurfaceBackgroundSelected" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TabViewButtonBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TabViewButtonBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TabViewItemHeaderCloseButtonBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TreeViewItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TreeViewItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TreeViewItemBackgroundSelected" ResourceKey="ExSurfaceBackgroundSelected" />
+            <StaticResource x:Key="TreeViewItemBackgroundSelectedPointerOver" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+            <StaticResource x:Key="TreeViewItemBackgroundSelectedPressed" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+            <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="ExSurfaceBackgroundSelected" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="ExToolbarButtonBackgroundPointerOver" Color="{ThemeResource SystemAccentColorDark1}" Opacity="0.25" />
+            <SolidColorBrush x:Key="ExToolbarButtonBackgroundPressed" Color="{ThemeResource SystemAccentColorDark1}" Opacity="0.5" />
+            <SolidColorBrush x:Key="ExSubtleButtonBackgroundPointerOver" Color="Black" Opacity="0.06" />
+            <SolidColorBrush x:Key="ExSubtleButtonBackgroundPressed" Color="Black" Opacity="0.11" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundPointerOver" Color="{ThemeResource SystemAccentColorDark1}" Opacity="0.15" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundPressed" Color="{ThemeResource SystemAccentColorDark1}" Opacity="0.25" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundSelected" Color="{ThemeResource SystemAccentColorDark1}" Opacity="0.24" />
+            <SolidColorBrush x:Key="ExSurfaceBackgroundSelectedPointerOver" Color="{ThemeResource SystemAccentColorDark1}" Opacity="0.34" />
+
+            <StaticResource x:Key="TitleBarPaneToggleButtonBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TitleBarPaneToggleButtonBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="MenuBarItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="MenuBarItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="MenuBarItemBackgroundSelected" ResourceKey="ExSurfaceBackgroundSelected" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="MenuFlyoutItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TabViewItemHeaderBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TabViewButtonBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TabViewButtonBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TabViewItemHeaderCloseButtonBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TreeViewItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="TreeViewItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="TreeViewItemBackgroundSelected" ResourceKey="ExSurfaceBackgroundSelected" />
+            <StaticResource x:Key="TreeViewItemBackgroundSelectedPointerOver" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+            <StaticResource x:Key="TreeViewItemBackgroundSelectedPressed" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+            <StaticResource x:Key="ListViewItemBackgroundPointerOver" ResourceKey="ExSurfaceBackgroundPointerOver" />
+            <StaticResource x:Key="ListViewItemBackgroundPressed" ResourceKey="ExSurfaceBackgroundPressed" />
+            <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="ExSurfaceBackgroundSelected" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+            <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="ExSurfaceBackgroundSelectedPointerOver" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="ExToolbarButtonBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" Opacity="0.6" />
+            <SolidColorBrush x:Key="ExToolbarButtonBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}" Opacity="1" />
+            <SolidColorBrush x:Key="ExSubtleButtonBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" Opacity="0.6" />
+            <SolidColorBrush x:Key="ExSubtleButtonBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}" Opacity="1" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
 </ResourceDictionary>

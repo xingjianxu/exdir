@@ -49,10 +49,9 @@
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Left"
-                    Background="Transparent"
-                    BorderThickness="0"
                     Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
                     CommandParameter="SyncState"
+                    Style="{StaticResource ExFlatButtonStyle}"
                     Visibility="{x:Bind ViewModel.Columns.ShowSyncColumn, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
                     AutomationProperties.Name="按同步状态排序">
                     <StackPanel Orientation="Horizontal" Spacing="4">
@@ -66,10 +65,9 @@
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Left"
-                    Background="Transparent"
-                    BorderThickness="0"
                     Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
                     CommandParameter="Name"
+                    Style="{StaticResource ExFlatButtonStyle}"
                     AutomationProperties.Name="按名称排序">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <TextBlock FontSize="12" Text="名称" />
@@ -82,10 +80,9 @@
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Left"
-                    Background="Transparent"
-                    BorderThickness="0"
                     Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
                     CommandParameter="LastWriteTime"
+                    Style="{StaticResource ExFlatButtonStyle}"
                     AutomationProperties.Name="按修改日期排序">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <TextBlock FontSize="12" Text="修改日期" />
@@ -98,10 +95,9 @@
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Left"
-                    Background="Transparent"
-                    BorderThickness="0"
                     Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
                     CommandParameter="Type"
+                    Style="{StaticResource ExFlatButtonStyle}"
                     AutomationProperties.Name="按类型排序">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <TextBlock FontSize="12" Text="类型" />
@@ -114,10 +110,9 @@
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Right"
-                    Background="Transparent"
-                    BorderThickness="0"
                     Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
                     CommandParameter="Size"
+                    Style="{StaticResource ExFlatButtonStyle}"
                     AutomationProperties.Name="按大小排序">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <TextBlock FontSize="12" Text="大小" />
@@ -238,11 +233,10 @@
                                 MinWidth="0"
                                 MinHeight="0"
                                 Padding="0"
-                                Background="Transparent"
-                                BorderThickness="0"
                                 Click="Expander_Click"
                                 IsHitTestVisible="{x:Bind CanExpand, Mode=OneWay}"
-                                AutomationProperties.Name="展开或折叠">
+                                AutomationProperties.Name="展开或折叠"
+                                Style="{StaticResource ExFlatSubtleButtonStyle}">
                                 <FontIcon
                                     FontSize="10"
                                     Foreground="{ThemeResource TextFillColorSecondaryBrush}"

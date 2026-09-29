@@ -163,22 +163,11 @@
                         Padding="10,0"
                         MinHeight="0"
                         Title="配置">
-                        <MenuFlyoutSubItem Text="文件列表">
-                            <ToggleMenuFlyoutItem
-                                AutomationProperties.Name="文件列表过渡动画"
-                                IsChecked="{x:Bind ViewModel.EnableListAnimations, Mode=TwoWay}"
-                                Text="过渡动画（入场 / 重排）" />
-                            <MenuFlyoutSeparator />
-                            <ToggleMenuFlyoutItem
-                                AutomationProperties.Name="显示隐藏文件"
-                                IsChecked="{x:Bind ViewModel.ShowHiddenFiles, Mode=TwoWay}"
-                                KeyboardAcceleratorTextOverride="Ctrl+H"
-                                Text="显示隐藏文件" />
-                            <ToggleMenuFlyoutItem
-                                AutomationProperties.Name="显示文件扩展名"
-                                IsChecked="{x:Bind ViewModel.ShowExtensions, Mode=TwoWay}"
-                                Text="显示文件扩展名" />
-                        </MenuFlyoutSubItem>
+                        <!-- 所有配置项集中在设置对话框里（底部“保存/取消”） -->
+                        <MenuFlyoutItem
+                            AutomationProperties.Name="设置"
+                            Click="Settings_Click"
+                            Text="设置…" />
                     </MenuBarItem>
 
                     <MenuBarItem

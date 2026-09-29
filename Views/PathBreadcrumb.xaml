@@ -52,11 +52,10 @@
                                 Padding="6,0"
                                 VerticalAlignment="Center"
                                 AutomationProperties.Name="{x:Bind DisplayName}"
-                                Background="Transparent"
-                                BorderThickness="0"
                                 Click="Segment_Click"
                                 Content="{x:Bind DisplayName}"
                                 FontSize="12"
+                                Style="{StaticResource ExSubtleButtonStyle}"
                                 ToolTipService.ToolTip="{x:Bind Tooltip}" />
                         </StackPanel>
                     </DataTemplate>
@@ -91,10 +90,9 @@
             HorizontalAlignment="Left"
             VerticalAlignment="Stretch"
             AutomationProperties.Name="地址栏空白区"
-            Background="Transparent"
-            BorderThickness="0"
             Click="BlankArea_Click"
             IsTabStop="False"
+            Style="{StaticResource ExSubtleButtonStyle}"
             ToolTipService.ToolTip="{x:Bind ViewModel.TooltipText, Mode=OneWay}"
             Visibility="Collapsed" />
 

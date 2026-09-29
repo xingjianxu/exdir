@@ -1,10 +1,10 @@
-# 验证“把目录从文件列表 / 侧边栏拖到工具条固定目录区”这条交互链路。
+# 验证“把目录从文件列表 / 侧边栏拖到工具条固定目录区”与“工具条上拖拽固定目录排序”两条交互链路。
 #
 # 本机没有交互桌面时，鼠标事件送不到窗口（见 AGENTS.md 第 6 节第 18 条），脚本会先探测前台窗口。
 # 拖动必须用 MOUSEEVENTF_ABSOLUTE 逐步移动（SetCursorPos 不会让 WinUI 收到 PointerMoved，见第 13 条）。
 #
 # 用法:
-#   pwsh -NoProfile -File tools\test-pin-drag.ps1                 # Debug 版，跑“列表 + 侧边栏”两个用例
+#   pwsh -NoProfile -File tools\test-pin-drag.ps1                 # Debug 版，跑“列表 + 侧边栏 + 取消固定 + 排序”四个用例
 #   pwsh -NoProfile -File tools\test-pin-drag.ps1 -Exe dist\win-x64\exdir.exe
 #
 # 脚本会临时往固定的目录里塞两个条目，结束时从备份还原 settings.json（并杀掉 exdir）。
@@ -108,6 +108,15 @@ $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
 function Get-Pins {
     if (-not (Test-Path $settingsPath)) { return @() }
     try { return @((Get-Content $settingsPath -Raw | ConvertFrom-Json).PinnedFolders) } catch { return @() }
+}
+
+# 固定目录按钮的 AutomationProperties.Name 是路径最后一段（和 PinnedFolderViewModel 一致）
+function Get-PinName {
+    param([string]$Path)
+    $trimmed = $Path.TrimEnd('\')
+    $name = [System.IO.Path]::GetFileName($trimmed)
+    if ([string]::IsNullOrEmpty($name)) { return $trimmed }
+    return $name
 }
 
 function Find-Element {
@@ -304,6 +313,60 @@ try {
                 Write-Host "  取消固定后剩余 $($after.Count) 项（原 $($before.Count) 项）: $($after -join ', ')" -ForegroundColor Red
                 $failures++
             }
+        }
+    }
+
+    # ---------------- 用例 4：工具条上拖拽固定目录按钮调整顺序 ----------------
+    Write-Host "`n[4] 工具条：拖拽固定目录按钮调整顺序" -ForegroundColor Cyan
+    $before = Get-Pins
+    if ($before.Count -lt 2) {
+        Write-Host "  固定目录不足 2 个，跳过（当前 $($before.Count) 个）" -ForegroundColor Yellow
+    }
+    else {
+        # 只留工具条那一行的按钮：同名的文件列表行/侧边栏节点也会被 Find-Element 搜到
+        $quickRect = Get-Rect (Find-Element -Name '快捷菜单' -Type 'Button')
+        $buttons = @()
+        foreach ($path in $before) {
+            for ($i = 0; $i -lt 10; $i++) {
+                $btn = Find-Element -Name (Get-PinName $path) -Type 'Button' -Index $i
+                if ($null -eq $btn) { break }
+
+                $r = Get-Rect $btn
+                if (($r.Y + $r.Height) -gt $quickRect.Y -and $r.Y -lt ($quickRect.Y + $quickRect.Height)) {
+                    $buttons += [pscustomobject]@{ Name = (Get-PinName $path); Rect = $r }
+                }
+            }
+        }
+        $buttons = @($buttons | Sort-Object { $_.Rect.X })
+        foreach ($b in $buttons) {
+            Write-Host "    候选: $($b.Name) @ ($([int]$b.Rect.X),$([int]$b.Rect.Y)) $([int]$b.Rect.Width)x$([int]$b.Rect.Height)"
+        }
+
+        if ($buttons.Count -lt 2) {
+            Write-Host "  工具条上只找到 $($buttons.Count) 个固定目录按钮" -ForegroundColor Red
+            $failures++
+        }
+        else {
+            $first = $buttons[0]
+            $second = $buttons[1]
+            Write-Host "  把 '$($first.Name)' 拖到 '$($second.Name)' 的右半边（换到它后面）"
+            $fromX = [int]($first.Rect.X + $first.Rect.Width / 2)
+            $fromY = [int]($first.Rect.Y + $first.Rect.Height / 2)
+            $toX = [int]($second.Rect.X + $second.Rect.Width * 0.75)
+            $toY = [int]($second.Rect.Y + $second.Rect.Height / 2)
+            Invoke-Drag -FromX $fromX -FromY $fromY -ToX $toX -ToY $toY -ShotDuring 'reorder-dragover'
+            Save-Shot -Name 'reorder-dropped'
+
+            $after = Get-Pins
+            if ($after.Count -eq $before.Count -and $after[0] -eq $before[1] -and $after[1] -eq $before[0]) {
+                Write-Host "  顺序已交换: $($after -join ', ')" -ForegroundColor Green
+            }
+            else {
+                Write-Host "  顺序未按预期变化（拖前: $($before -join ', ') / 拖后: $($after -join ', ')）" -ForegroundColor Red
+                $failures++
+            }
+
+            Show-DragLog
         }
     }
 

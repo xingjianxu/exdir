@@ -53,6 +53,8 @@ pwsh -NoProfile -File tools\capture.ps1 -Keys '{F10}','^{t}'         # 先发快
 pwsh -NoProfile -File tools\inspect-ui.ps1                      # 打印控件树（名称 + 物理坐标 + 尺寸）
 pwsh -NoProfile -File tools\inspect-ui.ps1 -Filter Desktop      # 按名称查元素坐标
 pwsh -NoProfile -File tools\inspect-ui.ps1 -Click "快捷菜单"      # 真实鼠标点击并截图到 .artifacts
+pwsh -NoProfile -File tools\inspect-ui.ps1 -Hover "Documents"   # 真鼠标移上去（不点击）并截图，看悬停高亮
+pwsh -NoProfile -File tools\inspect-ui.ps1 -HoverAt "157,37"    # 同上，但按窗口内坐标悬停（中文名不好传参时用）
 
 # 5) 重新生成应用图标（Assets\exdir.ico）
 pwsh -NoProfile -File tools\make-icon.ps1
@@ -60,6 +62,10 @@ pwsh -NoProfile -File tools\make-icon.ps1
 # 6) 拖放回归（文件列表 / 侧边栏 → 工具条固定目录，含右键取消固定）
 #    需要交互桌面；当前 shell 提权时会自动改用 explorer.exe 以普通权限启动 exdir（见第 6 节第 21 条）
 pwsh -NoProfile -File tools\test-pin-drag.ps1
+
+# 7) 设置对话框回归（内容 / 取消不落盘 / 保存立即落盘并作用到列表）
+#    需要交互桌面（真鼠标点击对话框按钮）
+pwsh -NoProfile -File tools\test-settings.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -109,7 +115,7 @@ pwsh -NoProfile -File tools\publish.ps1
 exdir/
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
 ├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格
-├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局尺寸常量（合并顺序在 XamlControlsResources 之后）
+├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
 ├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / 枚举
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
@@ -126,15 +132,17 @@ exdir/
 │   ├─ PathSegmentViewModel   地址栏面包屑里的一段路径（显示名 + 完整路径 + 是否当前段）
 │   ├─ SidebarViewModel       文件夹树（懒加载）
 │   ├─ FileItemViewModel      列表一行（带 Depth/IsExpanded/Children，可展开）
-│   └─ PinnedFolderViewModel  title 栏上的固定目录
-├─ Views/                     UserControl：SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
+│   ├─ PinnedFolderViewModel  title 栏上的固定目录
+│   └─ SettingsViewModel      设置对话框的编辑快照（点“保存”才写回 AppSettings）
+├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
+│                             SettingsDialog（ContentDialog：所有配置项 + 底部保存/取消）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
 ├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper / SizeFormatter / DragDropHelper(内部拖放格式)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
-└─ tools/                     capture / inspect-ui / test-pin-drag / publish / make-icon 脚本
+└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -169,6 +177,34 @@ exdir/
   `TitleBarExpandedHeight=36`、`ListViewItemMinHeight=24`、`TreeViewItemMinHeight=24`。
   **只覆盖数值/颜色类资源键**，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
   同一处还关掉了选中行的左侧蓝色竖条：`ListViewItemSelectionIndicatorVisualEnabled=False`（只看整行底色）。
+* **扁平控件的悬停/按下/选中底色全部是强调色**（`Themes/ExdirTheme.xaml`）：
+  WinUI 默认都是“灰底上叠 8% 白”（`ButtonBackgroundPointerOver`、`MenuBarItemBackgroundPointerOver`、
+  `ListViewItemBackgroundPointerOver`…），几乎看不出鼠标停在哪里。现在统一换成强调色，
+  深色主题用 `SystemAccentColorLight2`、浅色用 `SystemAccentColorDark1`（与 `AccentFillColorDefaultBrush` 同源）。
+  两档不透明度：小控件（工具条/导航条/列头、菜单项、标题栏菜单）用 `ExToolbar*`
+  （地址栏与行内展开箭头例外，见下）；
+  铺满整行的大表面（文件列表行 / 侧边栏树节点 / 标签页头）用 `ExSurface*`（压低一档）。
+  **选中态也一并改成强调色**（`ExSurfaceBackgroundSelected` 比悬停重），
+  否则“悬停比选中还显眼”，层次是反的。
+  * 小控件走具名样式：`ExToolbarButtonStyle`（预设 `MinHeight=26` + `Padding=8,1,8,1`）
+    与 `ExFlatButtonStyle`（在其基础上把 `MinHeight`/`Padding` 归零，给列头、行内箭头这种
+    尺寸自定的按钮用）。**是具名样式、不是隐式样式**：对话框里的普通按钮仍是 WinUI 默认外观，
+    新加扁平按钮写 `Style="{StaticResource ExToolbarButtonStyle}"`，不要再手写 `Background="Transparent"`；
+    已挂样式的：`DriveBarView`（磁盘/固定目录/快捷菜单）、`NavigationBarView`（← → ↑ ⟳）、
+    `DetailsView`（5 个列头排序按钮）。
+  * **例外：地址栏与行内展开箭头不用强调色**（`ExSubtleButtonStyle` / `ExFlatSubtleButtonStyle`）：
+    面包屑分段、地址栏右侧空白区、文件列表行内那个 18px 展开箭头，悬停/按下都是普通灰色
+    （色刷 `ExSubtleButtonBackgroundPointerOver/Pressed`：深色主题叠白、浅色主题叠黑）。
+    地址栏空白区几乎铺满整条地址栏，行内箭头只有 18px，一上强调色就喧宾夺主。
+    这两个样式与 `ExToolbar*` 只差悬停/按下的画刷，但 Storyboard 里的 `{ThemeResource}` 键
+    是写死在模板里的（`BasedOn` 改不了），所以模板另写了一份，改模板时两处要同步。
+  * 表/树/菜单/标签这些改不了样式的（模板在 WinUI 里），就在 `ThemeDictionaries` 里覆写
+    WinUI 的资源键（键名抄 `generic.xaml`）：`TitleBarPaneToggleButtonBackground*`、
+    `MenuBarItemBackground*`、`MenuFlyoutItemBackground*`、`TabViewItemHeaderBackground*`、
+    `TabViewButtonBackground*`、`TabViewItemHeaderCloseButtonBackgroundPointerOver`、
+    `TreeViewItemBackground*`、`ListViewItemBackground*`（含 `Selected` / `SelectedPointerOver` / `SelectedPressed`）。
+    这些键**只在当前主题对应的 ThemeDictionaries 里生效，不跨主题合并**，
+    所以深/浅两份都要写全（高对比主题故意不覆盖，让它落到系统的高对比色）。
 * 活动窗格的边框用强调色（`PaneView.UpdateActiveVisual`），点击窗格会把自己设为活动窗格。
 * **详细信息列表是“可展开的树形列表”**（不是 TreeView）：
   * 数据：`FileItemViewModel` 带 `Depth/IsExpanded/Children`，`FolderTabViewModel` 持有根层节点 `_rootNodes`，
@@ -222,6 +258,14 @@ exdir/
     模板里拿不到 `DataContext`）；
   * 外部来源（资源管理器等）只有 `StandardDataFormats.StorageItems`，`DragOver` 里同步判断不了内容，
     所以先接受、`Drop` 里再筛目录（`DragDropHelper.GetPathsAsync`）。
+  * **拖拽排序**：固定目录按钮自己也是拖源（拖到兄弟按钮上换位）。它写的是另一个格式
+    `exdir/pinned-reorder`（值是那一个目录的路径），`Drop` 里按鼠标横坐标算出插入位置后交给
+    `MainViewModel.MovePinnedFolder`（`RemoveAt` + `Insert`，不用 `ObservableCollection.Move`；
+    改集合用 `DispatcherQueue.TryEnqueue` 推到下一轮消息循环，避免在拖放宿主的回调里摘掉源按钮）：
+    这样“带 `exdir/paths` = 新增固定”与“带 `exdir/pinned-reorder` = 排序”两条路径互不干扰。
+    拖动时在按钮之间的边界画一条 2px 强调色插入提示条（`InsertionIndicator`，位置用
+    `Margin.Left` 设，它和按钮不在同一棵子树里所以要 `TransformToVisual` 换算到 `PinnedItemsHost`）。
+    **Button 上的 `CanDrag` 在 WinUI 3 里是无效的**，必须自己识别手势，见第 6 节第 25 条。
 * **导航条属于标签页，不属于窗格**：`Views/NavigationBarView` 是 `TabView.TabItemTemplate` 里
   `TabViewItem` 内容的第 0 行（第 1 行是 `DetailsView`），VM 类型是 `FolderTabViewModel`。
   因此每个标签页各自拥有后退/前进/上一级/刷新按钮与地址栏（历史和编辑态都跟着标签页走）。
@@ -250,6 +294,27 @@ exdir/
 
 另外：`文件列表 / 侧边栏文件夹树` 里的**目录**可以直接拖到工具条右侧的“固定目录”区固定下来。
 
+### 设置对话框（所有配置项的唯一入口）
+
+* 菜单栏**「配置 → 设置…」**弹出 `Views/SettingsDialog`（一个 `ContentDialog`）：
+  **底部是「保存 / 取消」**（`PrimaryButtonText="保存"` + `CloseButtonText="取消"` +
+  `DefaultButton="Primary"`，即回车 = 保存、Esc = 取消），内容按“文件列表 / 界面”分两组：
+  显示隐藏文件、显示文件扩展名、文件夹排在文件前面、过渡动画、列宽自动适应窗格宽度、
+  显示工具条、显示侧边栏、双窗格模式。新增配置项**一律加到这里**，不要再往菜单里挂勾选项。
+* **编辑的是快照**（`ViewModels/SettingsViewModel`，构造时从 `AppSettings` 复制一份）：
+  `ShowAsync()` 返回 `Primary` 才调 `MainViewModel.ApplySettings(snapshot)` 写回并**立即落盘**，
+  返回 `Close`（取消）就什么都不做——不需要逐项回滚，也不会误写 `settings.json`。
+* `MainViewModel.ApplySettings` 里先把值写进 `AppSettings`、再统一刷新界面：
+  隐藏文件 / 扩展名会重新枚举目录，所以这两项是“最后只刷一次”；
+  过渡动画只改视图行为（`tab.ApplyAnimationSettings()`），不重载目录。
+* 「查看」菜单里的工具条 / 侧边栏 / 双窗格（含快捷键）保留：它们是**命令型**菜单项
+  （`MenuFlyoutItem` + `ToggleXxxCommand`，本来就不显示勾选标记），和对话框切的是同一份设置，
+  两边不会各说各话（`ApplySettings` 会 `OnPropertyChanged(ShowHiddenFiles/ShowExtensions/…)`，
+  对话框里改完再点菜单项，切的就是新状态）。
+* 设置对话框的内容比窗口还高时自己滚动（`ScrollViewer` + `MaxHeight`）：
+  `ContentDialog` 会把整个对话框约束在窗口内，按钮区永远留在底部。
+  （本机屏幕只有 720×450 DIP，8 项就会要滚；正常窗口高度下一屏放得下。）
+
 ## 5. 必须遵守的编码约定
 
 * **分层**：`Views` 不直接做 I/O，一律经由 ViewModel → `Services` 接口。
@@ -261,6 +326,10 @@ exdir/
   （普通 CLR 属性在 `InitializeComponent` 之后赋值时绑定不会生效。）
 * **主窗口的 ViewModel 用普通只读属性，且必须在 `InitializeComponent()` 之前赋值**，
   因为 `x:Bind` 在 `InitializeComponent` 期间求值。
+  `SettingsDialog`（`ContentDialog` 子类）同理：`ViewModel` 属性在构造函数里先赋值再 `InitializeComponent()`。
+* **新增配置项要动五个地方**：`AppSettings` 字段 → `SettingsViewModel` 属性 →
+  `SettingsDialog.xaml` 勾选项 → `MainViewModel.ApplySettings` 应用 → `tools/test-settings.ps1` 的 `$KeyMap`。
+  对话框只负责编辑快照，落盘与应用只在 `MainViewModel.ApplySettings` 一处发生。
 * **数据集合整体替换而非增量 Add**：`FolderTabViewModel.Items` 每次导航/排序都新建
   `ObservableCollection` 再赋值，避免逐条 Add 造成 O(n²) 的 UI 开销。
 * **中文注释**、中文 UI 文案。注释解释“为什么”，不要复述代码。
@@ -314,6 +383,9 @@ exdir/
     `mouse_event(LEFTDOWN)` 时把位置带过去）。拖拽类交互必须用
     `mouse_event(MOUSEEVENTF_MOVE|MOUSEEVENTF_ABSOLUTE, x*65535/(屏幕宽-1), y*65535/(屏幕高-1))`
     逐步移动，否则测试会得出“拖动没反应”的假结论。双击同理，两次按下的间隔要小于系统双击时间。
+    同理，**用 `mouse_event` 模拟“悬停”时，如果光标本来就在目标点上，同坐标的移动不会产生
+    `PointerMoved`**（会得出“悬停高亮没生效”的假结论）——先移到屏幕角落再移回来
+    （`tools/inspect-ui.ps1 -Hover` 就是这么做的）。
 14. **`new DirectoryInfo("D:")` 是“D 盘的当前目录”**，会按进程工作目录解析，不是驱动器根。
     `GetParentDirectory` 曾因此在 `D:\` 上返回进程工作目录的父目录（“上一级”从盘符根
     跳到了 exe 所在目录）。判断根路径不能只看 `TrimEnd('\\').Length == 0`，还要看末尾是不是 `:`。
@@ -360,6 +432,36 @@ exdir/
 24. **`MenuFlyout` 等弹出菜单不在主窗口的 UIA 子树里**（Desktop 下它是另一个 XAML 岛/窗口）：
     `inspect-ui.ps1` 那套 `root.FindAll(...)` 找不到菜单项，要从 `AutomationElement.RootElement` 往下找
     （`tools/test-pin-drag.ps1` 的 `Find-Element -From` 就是这么用的）。
+25. **WinUI 3 的 `Button` 会把左键的 `PointerPressed`/`PointerMoved` 标成 `Handled`**：
+    所以 `CanDrag="True"` 形同虚设（框架的拖拽手势识别根本收不到事件，`DragStarting` 永不触发），
+    挂在 Button 上的 `PointerPressed="..."` 也只有**右键**会跑到（左键被 Button 内部吞了，
+    曾据此误判成“拖拽没开始”）。要在 Button 上做拖拽手势只能自己识别：在**容器**上
+    `AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(...), handledEventsToo: true)`
+    （`PointerMoved`/`PointerReleased`/`PointerCaptureLost` 同理），按下后指针移动超过阈值再调
+    `UIElement.StartDragAsync(point)`；它收的是 **`Microsoft.UI.Input.PointerPoint`**
+    （`e.GetCurrentPoint()` 的返回类型，不是 `Windows.UI.Input.PointerPoint`），
+    调用后照常触发 `DragStarting`，在那里填 `DataPackage`。（提权进程不支持 `StartDragAsync`，
+    与第 21 条一致，要 `try/catch` 住不要把进程搞挂。）
+26. **菜单/弹层有入场动画，UIA 脚本“先查坐标再点”会打空（尤其是第二次打开）**：
+    `MenuBarItem.Expand()` 之后菜单项刚出现的那几帧里 `BoundingRectangle` 还在动，
+    而脚本往往“先拿到元素 → 切前台 → 等几百毫秒 → 按之前读到的坐标点击”，这一串下来就点空了；
+    更坑的是上一次关掉的 `MenuFlyout` 的菜单项**仍会留在 UIA 树里**（只是没了坐标/变成 offscreen），
+    按名字查到的可能是那个旧元素——症状是“菜单项找得到、点了却什么都不发生”。
+    所以自动化脚本优先用 UIA 模式：`MenuBarItem` 用 `ExpandCollapsePattern` 打开、
+    菜单项用 `InvokePattern`；实在要真鼠标点击就先过滤 `IsOffscreen == false` 且宽高 > 0，
+    并在点击前那一刻才读坐标（`tools/test-settings.ps1`）。
+27. **`ContentDialog` 是独立的弹出岛窗口**：在 UIA 里它是 `RootElement` 下的顶层 `Window`
+    （名字取对话框的 `AutomationProperties.Name`/`Title`，这里是“设置”），**不在主窗口的子树里**，
+    所以断言对话框内容要从这个窗口往下找；而且对话框内容超出可视区时，
+    屏幕外的控件 `IsOffscreen=true`、`BoundingRectangle` 是空的，
+    **按“是不是对话框窗口的后代”筛选才能数全**（按可见性筛会少见几个）。
+28. **`ToggleMenuFlyoutItem` 在 UIA 里没有 `TogglePattern`**（只有 Invoke / ScrollItem / VirtualizedItem，
+    `CheckBox` 才支持 Toggle）。所以“菜单项的勾选状态对不对”没法用 UIA 断言，
+    只能截图肉眼看（或改用 `CheckBox` 类控件）。
+29. **一个 `ResourceDictionary` 里 `ThemeDictionaries` 必须放在最后**：只要写了
+    `ResourceDictionary.ThemeDictionaries` 属性元素，后面就不能再有隐式资源条目，
+    否则 XAML 编译器报 `WMC0035: Duplication assignment to the '_Items' property`
+    （`Themes/ExdirTheme.xaml` 里主题相关色刷就因此挪到了文件末尾）。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -392,14 +494,34 @@ exdir/
   路径按目录分段显示（chevron 分隔）、点分段跳转、点当前目录段或右侧空白区就地编辑，回车跳转、Esc 取消；
   超长路径自动滚到最右（当前目录永远可见）并在左端提示省略，编辑入口也有 `Ctrl+L` / `Alt+D`；
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
-* 菜单栏**「配置 → 文件列表」**（2026-09）：过渡动画开关（`AppSettings.EnableListAnimations`，
-  关闭后 `DetailsView` 会清空 `ListView` 的 `ItemContainerTransitions`/`Transitions` 并同步已生成的行容器，
-  换目录、插行、排序都直接到位）、显示隐藏文件、显示文件扩展名；
-  三项都是 `ToggleMenuFlyoutItem` 双向绑定 ViewModel 属性，改动立即生效并随退出落盘；
+* **所有配置项集中在设置对话框**（2026-09，S17a）：菜单栏「配置 → 设置…」弹出
+  `Views/SettingsDialog`（`ContentDialog`，底部「保存 / 取消」），里面是 8 个勾选项
+  （文件列表：显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 过渡动画 /
+  列宽自动适应窗格宽度；界面：显示工具条 / 显示侧边栏 / 双窗格模式），
+  分「文件列表 / 界面」两组；编辑的是 `SettingsViewModel` 快照，
+  **点“取消”什么都不改、点“保存”立即应用并落盘**（不再等退出才写），
+  应用入口是 `MainViewModel.ApplySettings`；新增配置项要同时改 `AppSettings`、`SettingsViewModel`、
+  `SettingsDialog.xaml`、`ApplySettings` 与 `tools/test-settings.ps1` 的 `$KeyMap`（见第 4 节）。
+  回归：`tools/test-settings.ps1`（对话框内容与初始值 / 取消不落盘 / 保存立即落盘并作用到文件列表）。
+  原先的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）已移除，
+  「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与对话框共享同一份设置）；
 * **工具条“固定目录”支持拖放固定**（2026-09）：文件列表 / 侧边栏树里的目录可以直接拖到工具条右侧的
   固定目录区（拖拽时强调色高亮 + “固定到工具条”提示，松手即写 `settings.json`），
   右键固定目录按钮可“取消固定”；最多固定 12 个（`MainViewModel.MaxPinnedFolders`）；
   验证脚本 `tools/test-pin-drag.ps1`（列表 → 固定、侧边栏 → 固定、右键 → 取消固定 三个用例）；
+* **工具条固定目录支持拖拽排序**（2026-09）：按住固定目录按钮横向拖到兄弟按钮上就换位
+  （拖动时按钮之间画 2px 强调色插入位置提示条 + “调整固定目录顺序”提示，松手即写 `settings.json`）；
+  实现见第 4 节“拖拽排序”与第 6 节第 25 条（`Button` 的 `CanDrag` 在 WinUI 3 里无效，
+  要在 `PinnedItemsHost` 上 `AddHandler(..., handledEventsToo: true)` + `StartDragAsync`），
+  排序落点走 `MainViewModel.MovePinnedFolder`；`tools/test-pin-drag.ps1` 第 4 个用例验证
+  （拖 Documents 到 Downloads 右半边 → 顺序互换）；
+* **悬停/按下/选中高亮统一改成强调色**（2026-09）：原来是 WinUI 默认的 8% 白（灰底上几乎看不出来），
+  现在工具条按钮悬停是强调色 35%（深色）/ 25%（浅色）、按下 60% / 50%；
+  文件列表行 / 侧边栏树 / 标签页头 / 菜单项等大表面用低一档的 `ExSurface*`，
+  选中态也是强调色、比悬停略重（层次：选中 > 悬停），见第 4 节；
+  验证：`tools/inspect-ui.ps1 -Hover Documents` / `-HoverAt "608,191"` 截图对比；
+  例外：地址栏（面包屑分段 / 右侧空白区）与文件列表行内的展开箭头保持普通灰色悬停，
+  见第 4 节 `ExSubtleButtonStyle`；
 * 快捷键、右键菜单尚未实现；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
 

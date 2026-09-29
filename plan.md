@@ -35,12 +35,16 @@
   - 地址栏（S9 主体完成，2026-09）：路径按目录切分成可点击的面包屑（chevron 分隔），
     点分段跳转、点当前段或右侧空白区切到可编辑输入框（回车前往、Esc/失焦取消），
     编辑入口也有 `Ctrl+L` / `Alt+D`；超长路径滚到最右并在左端提示省略。
-  - 菜单栏「配置 → 文件列表」（2026-09）：过渡动画 / 显示隐藏文件 / 显示文件扩展名三个勾选项，
-    反向同步到 `AppSettings.EnableListAnimations` 等字段并由窗口关闭时落盘；
-    动画开关只清 `ListView` 的过渡集合，不重载目录（切换后已显示的行也不再有入场/重排动画）。
+  - 菜单栏**「配置 → 设置…」= 统一设置对话框**（2026-09，S17a）：过渡动画 / 显示隐藏文件 /
+    显示文件扩展名 / 文件夹排在文件前面 / 列宽自适应 / 工具条 / 侧边栏 / 双窗格
+    八项集中在一个 `ContentDialog`（`Views/SettingsDialog`）里，底部「保存 / 取消」；
+    点在快照上、点保存才应用并立即落盘（取消什么都不改）；
+    回归脚本 `tools/test-settings.ps1`。
   - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
     松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
     `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
+  - 工具条“固定目录”支持**拖拽排序**（2026-09，S7b）：按住固定目录按钮横向拖到兄弟按钮上就换位，
+    拖动时有插入位置提示条，松手立即写 `settings.json`（也是“工具条上的拖拽是由应用自己识别手势的”首个实现）。
   - 云文件夹的同步状态列（2026-09，S23）：云同步目录（OneDrive / WPS 云盘 / 其它 CFAPI 同步根）
     的列表最前面多出一列状态图标（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步），
     可点列头排序；非云目录整列隐藏。
@@ -152,6 +156,16 @@
     `Models/AppSettings.cs`（结构版本 2→3）、`Services/SettingsService.cs`。
     验收：`tools/test-pin-drag.ps1` 三个用例全通过（列表 `.cargo` → 固定、侧边栏“图片” → 固定、
     右键 Desktop → 取消固定），并检查 `%LOCALAPPDATA%\exdir\settings.json` 的 `PinnedFolders` 真的变了。
+  - [x] **S7b 固定目录拖拽排序**（2026-09）：按住工具条上的固定目录按钮横向拖到兄弟按钮上即换位，
+    拖动时按钮之间画 2px 强调色插入位置提示条 + “调整固定目录顺序”提示，松手即写 `settings.json`。
+    新增格式 `DragDropHelper.PinnedReorderFormat`（`exdir/pinned-reorder`，与代表“新增固定”的
+    `exdir/paths` 分开）、`MainViewModel.MovePinnedFolder`（去重定位 + `RemoveAt`/`Insert` + 立即落盘），
+    改 `Views/DriveBarView.xaml(.cs)`。
+    踩到的坑（已记入 `AGENTS.md` 第 6 节第 25 条）：`Button` 在 WinUI 3 里把左键的
+    `PointerPressed`/`PointerMoved` 标成 Handled，`CanDrag` 完全无效，只能在容器上
+    `AddHandler(..., handledEventsToo: true)` 自己识别手势，移动超过阈值后调 `StartDragAsync`。
+    验收：`tools/test-pin-drag.ps1` 第 4 个用例（把最左边两个固定目录中排在前面的那个拖到另一个的
+    右半边 → `settings.json` 的 `PinnedFolders` 前两项互换），拖拽中的截图里能看到插入位置提示条。
   - [ ] 其余（文件本身可拖出到资源管理器、拖到目录行上悬停进入目录）仍未做。
 
 ### Phase 3 — 交互增强
@@ -231,6 +245,23 @@
   - 涉及：新增 `Views/SettingsWindow.xaml(.cs)` + `ViewModels/SettingsViewModel.cs`；`Models/AppSettings.cs`。
   - 验收：改完立即生效并落盘；快捷菜单里出现自定义命令且能真正执行。
   - 预估：~600 行，4 个文件（可能需拆成“设置外壳 + 各分页”两步）。
+  - [x] **S17a 设置对话框（所有配置项的唯一入口）**（2026-09，~330 行，7 个文件）
+    - 内容：菜单栏「配置 → 设置…」弹出 `Views/SettingsDialog`（`ContentDialog`，
+      底部 `PrimaryButtonText="保存"` / `CloseButtonText="取消"`，回车=保存、Esc=取消），
+      分「文件列表」「界面」两组共 8 项：显示隐藏文件、显示文件扩展名、文件夹排在文件前面、
+      过渡动画、列宽自动适应窗格宽度、显示工具条、显示侧边栏、双窗格模式；
+      原来的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）删除，
+      「查看」菜单里的工具条 / 侧边栏 / 双窗格保留（与对话框共享同一份设置）。
+    - 做法：新增 `ViewModels/SettingsViewModel.cs`（从 `AppSettings` 复制的快照）+
+      `Views/SettingsDialog.xaml(.cs)`；`MainViewModel.CreateSettingsSnapshot()` /
+      `ApplySettings(snapshot)` 作为唯一应用入口（应用后立刻 `Save()`）；
+      `MainWindow.Settings_Click` 接对话框（`XamlRoot = RootGrid.XamlRoot`）。
+      两个新坑已记入 `AGENTS.md` 第 6 节第 26/27 条（弹层动画期坐标会变 → 自动化改用 UIA 模式；
+      `ContentDialog` 是独立弹出窗口，屏幕外控件要按“对话框后代”而非可见性筛选）。
+    - 验收：`tools/test-settings.ps1` 16 项断言全绿（内容齐全、初始值与 settings.json 一致、
+      取消不落盘、保存立即落盘、关掉“显示文件扩展名”后列表行名里的 `.xxx` 从 13 行降到 5 行，
+      再打开后恢复原样）；跑完自动还原 `settings.json`。
+    - 未做（留给 S17 其余部分）：外观（紧凑度/主题）、固定目录管理、快捷命令编辑器。
 
 - [ ] **S18 文件系统监视自动刷新**
   - 目标：`FileSystemWatcher` 监视当前目录，外部变动时增量刷新（去抖），保持选中与滚动位置。
@@ -313,8 +344,9 @@
 | 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
 | 无文件系统监视 | 外部改动需手动 F5 | S18 |
 | 快捷菜单为空 | 按需求刻意留空，仅数据驱动 | S17 |
+| 设置对话框内容在极矮的窗口（≤ ~500 DIP）里要滚动 | 8 项内容约 430 DIP，`ContentDialog` 的标题+按钮区又占 ~200 DIP；已做 `ScrollViewer`（按钮永远可见），本机屏幕只有 450 DIP 所以看得见滚动条 | 需要时改双列/紧凑行高 |
 | 提权运行后拖放失效 | Windows 不允许高完整性级别（管理员）进程参与拖放：`DragItemsStarting` 会触发，但永远收不到 `DragOver`/`Drop`；以普通权限运行则正常（见 AGENTS.md 第 6 节第 21 条） | 系统限制，无解；必要时在界面上提示 |
-| 拖放只做了“目录 → 工具条固定目录” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
+| 拖放只做了“目录 → 工具条固定目录”与“工具条固定目录之间排序” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
 | 固定目录最多 12 个 | 工具条固定目录区不滚动，太多了会把左侧磁盘区挤没（`MainViewModel.MaxPinnedFolders`） | 需要时改成横向滚动 / 溢出菜单 |
 | 无右键菜单 | 需求未明确，需先确认路线 | S8 |
 | 侧边栏同步是“尽力而为” | 只在已加载节点里查找，深层目录不会自动展开定位 | S10（可加“展开到当前路径”） |

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using Exdir.Helpers;
 using Exdir.ViewModels;
+using Exdir.Views;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -193,6 +194,28 @@ public sealed partial class MainWindow : Window
 
     private void AppTitleBar_PaneToggleRequested(TitleBar sender, object args)
         => ViewModel.IsSidebarVisible = !ViewModel.IsSidebarVisible;
+
+    /// <summary>「配置 → 设置…」：统一的设置对话框，只有点“保存”才会应用改动并落盘。</summary>
+    private async void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SettingsDialog(ViewModel.CreateSettingsSnapshot())
+        {
+            XamlRoot = RootGrid.XamlRoot,
+        };
+
+        try
+        {
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                ViewModel.ApplySettings(dialog.ViewModel);
+            }
+        }
+        catch (Exception ex)
+        {
+            // 同一个 XamlRoot 上已有对话框时 ShowAsync 会抛异常，这里只记日志
+            Diagnostics.Log.Exception("设置对话框", ex);
+        }
+    }
 
     private async void About_Click(object sender, RoutedEventArgs e)
     {

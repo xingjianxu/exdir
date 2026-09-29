@@ -27,9 +27,8 @@
                 Height="26"
                 Padding="0"
                 AutomationProperties.Name="后退"
-                Background="Transparent"
-                BorderThickness="0"
                 Command="{x:Bind ViewModel.GoBackCommand, Mode=OneWay}"
+                Style="{StaticResource ExToolbarButtonStyle}"
                 ToolTipService.ToolTip="后退 (Alt+←)">
                 <FontIcon FontSize="13" Glyph="&#xE72B;" />
             </Button>
@@ -38,9 +37,8 @@
                 Height="26"
                 Padding="0"
                 AutomationProperties.Name="前进"
-                Background="Transparent"
-                BorderThickness="0"
                 Command="{x:Bind ViewModel.GoForwardCommand, Mode=OneWay}"
+                Style="{StaticResource ExToolbarButtonStyle}"
                 ToolTipService.ToolTip="前进 (Alt+→)">
                 <FontIcon FontSize="13" Glyph="&#xE72A;" />
             </Button>
@@ -49,9 +47,8 @@
                 Height="26"
                 Padding="0"
                 AutomationProperties.Name="上一级"
-                Background="Transparent"
-                BorderThickness="0"
                 Command="{x:Bind ViewModel.GoUpCommand, Mode=OneWay}"
+                Style="{StaticResource ExToolbarButtonStyle}"
                 ToolTipService.ToolTip="上一级 (Alt+↑)">
                 <FontIcon FontSize="13" Glyph="&#xE74A;" />
             </Button>
@@ -60,9 +57,8 @@
                 Height="26"
                 Padding="0"
                 AutomationProperties.Name="刷新"
-                Background="Transparent"
-                BorderThickness="0"
                 Command="{x:Bind ViewModel.RefreshCommand, Mode=OneWay}"
+                Style="{StaticResource ExToolbarButtonStyle}"
                 ToolTipService.ToolTip="刷新 (F5)">
                 <FontIcon FontSize="13" Glyph="&#xE72C;" />
             </Button>
