@@ -28,6 +28,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IKnownFolderService _knownFolders;
     private readonly IFileSystemService _fileSystem;
     private readonly IShellService _shell;
+    private readonly IShellIconService _icons;
 
     private PanelViewModel _activePane = null!;
     private bool _isDualPane;
@@ -39,19 +40,21 @@ public sealed partial class MainViewModel : ObservableObject
         IDriveService driveService,
         IKnownFolderService knownFolders,
         IFileSystemService fileSystem,
-        IShellService shell)
+        IShellService shell,
+        IShellIconService icons)
     {
         _settings = settings;
         _driveService = driveService;
         _knownFolders = knownFolders;
         _fileSystem = fileSystem;
         _shell = shell;
+        _icons = icons;
 
         Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService);
         Sidebar.NavigateRequested += OnSidebarNavigateRequested;
 
-        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings);
-        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings);
+        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons);
+        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons);
 
         PrimaryPane.Navigated += OnPaneNavigated;
         SecondaryPane.Navigated += OnPaneNavigated;

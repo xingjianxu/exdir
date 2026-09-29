@@ -331,6 +331,20 @@ public sealed partial class DetailsView : UserControl
 
     // ------------------------------------------------------------------ 列表
 
+    /// <summary>
+    /// 行容器被生成时才去取它的真实图标：列表是虚拟化的，所以只有真正显示出来的行
+    /// （以及预取的那几行）才会付出一次 <c>SHGetFileInfo</c>；滚动不会再重复取（服务里有缓存）。
+    /// </summary>
+    private void EntryList_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.InRecycleQueue || args.Item is not FileItemViewModel item || ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        _ = viewModel.EnsureIconAsync(item);
+    }
+
     private void EntryList_Loaded(object sender, RoutedEventArgs e)
     {
         AttachScrollViewer();

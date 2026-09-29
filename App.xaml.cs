@@ -72,6 +72,7 @@ public partial class App : Application
         services.AddSingleton<IFileSystemService, FileSystemService>();
         services.AddSingleton<IDriveService, DriveService>();
         services.AddSingleton<IShellService, ShellService>();
+        services.AddSingleton<IShellIconService, ShellIconService>();
 
         // ViewModel
         services.AddSingleton<MainViewModel>();

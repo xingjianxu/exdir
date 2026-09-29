@@ -4,6 +4,7 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Exdir.Helpers;
 using Exdir.Models;
+using Microsoft.UI.Xaml.Media;
 namespace Exdir.ViewModels;
 
 /// <summary>
@@ -21,6 +22,7 @@ public sealed class FileItemViewModel : ObservableObject
 
     private bool _isExpanded;
     private bool _childrenLoaded;
+    private ImageSource? _icon;
 
     public FileItemViewModel(FileSystemEntry entry, bool showExtensions, ColumnLayout columns, int depth = 0)
     {
@@ -67,6 +69,30 @@ public sealed class FileItemViewModel : ObservableObject
     public string TypeName => Entry.TypeName;
 
     public string Glyph => FileTypeHelper.GetGlyph(Entry.FullPath, Entry.IsDirectory);
+
+    // ------------------------------------------------------------------ 真实外壳图标
+
+    /// <summary>
+    /// 真实外壳图标（.exe/.lnk 显示各自的程序图标）。
+    /// 行进入可视区后才异步补上（见 <see cref="FolderTabViewModel.EnsureIconAsync"/>）：
+    /// 为 null 时界面退回 <see cref="Glyph"/> 字形，所以不会出现空白占位。
+    /// </summary>
+    public ImageSource? Icon => _icon;
+
+    /// <summary>是否已经拿到真实图标（界面据此在“字形 / 真实图标”之间切换）。</summary>
+    public bool HasIcon => _icon is not null;
+
+    /// <summary>是否已经排过队。失败的行也算排过，不再反复重试。</summary>
+    public bool IconRequested { get; set; }
+
+    /// <summary>由 <see cref="FolderTabViewModel"/> 在 UI 线程上回填。</summary>
+    public void SetIcon(ImageSource icon)
+    {
+        if (SetProperty(ref _icon, icon, nameof(Icon)))
+        {
+            OnPropertyChanged(nameof(HasIcon));
+        }
+    }
 
     // ------------------------------------------------------------------ 云同步状态
 

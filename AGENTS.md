@@ -70,6 +70,10 @@ pwsh -NoProfile -File tools\test-settings.ps1
 # 8) 状态栏回归（只有一条 / 一行高 / 贴底 / 项数 / 选中摘要 + 合计大小 / 磁盘可用空间 / 跟随活动窗格）
 #    需要交互桌面；脚本会把 exdir 置顶（终端铺满屏幕时才拍得到 exdir）
 pwsh -NoProfile -File tools\test-status-bar.ps1
+
+# 9) 真实外壳图标回归（每行都有图标 / 不同程序图标不同 / .lnk 带小箭头 / 同扩展名只提取一次 / 滚动后仍有图标）
+#    需要交互桌面；同样会把 exdir 置顶，跑完还原 settings.json
+pwsh -NoProfile -File tools\test-shell-icons.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -120,15 +124,17 @@ exdir/
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
 ├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
-├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / 枚举
+├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / IconBitmap / 枚举
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
 │   ├─ IDriveService          DriveInfo 枚举
 │   ├─ IKnownFolderService    用户标准目录 + 云存储同步根（注册表探测）
 │   ├─ ICloudSyncService      云同步根判定 + 单个条目的同步状态（状态列）
+│   ├─ IShellIconService      系统外壳图标（SHGetFileInfo 提取 + 两级缓存，见第 4 节“名称列图标”）
 │   ├─ ISettingsService       settings.json 读写（含结构版本迁移）
 │   ├─ IShellService          默认程序打开 / 终端 / 剪贴板 / 命令行
-│   └─ Native/                Win32 互操作（ShellPropertyStore：属性系统 + 占位符兼容模式）
+│   └─ Native/                Win32 互操作（ShellPropertyStore：属性系统 + 占位符兼容模式；
+│                             ShellIconExtractor：图标提取 / HICON → BGRA 像素）
 ├─ ViewModels/
 │   ├─ MainViewModel          磁盘、固定目录、快捷命令、侧边栏、两个窗格、全局命令
 │   ├─ PanelViewModel         一个窗格（标签页集合）
@@ -144,11 +150,11 @@ exdir/
 │                             SettingsDialog（ContentDialog：所有配置项 + 底部保存/取消）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper / SizeFormatter / DragDropHelper(内部拖放格式)
+├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
-└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / test-status-bar / publish / make-icon 脚本
+└─ tools/                     capture / inspect-ui / test-pin-drag / test-settings / test-status-bar / test-shell-icons / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -238,6 +244,21 @@ exdir/
     位置用 `TranslateTransform.X` 推到列边界（**不要用 Canvas**：Canvas 子元素实测高度为 0，命中区会是空的），
     双击把手 = 该列恢复默认宽度 + 回到自动模式；宽度为 0 的列（下面说的“状态”列）会把把手
     `Visibility=Collapsed`，否则它会压在名称列左边界上抢走点击。
+* **名称列的行首图标是真实的外壳图标**（2026-09，S14）：`.exe` 显示程序自带图标、`.lnk` 显示目标图标
+  + 快捷方式小箭头、文件夹/文件类型按系统关联，与资源管理器一致；
+  `Helpers/FileTypeHelper` 的 Segoe 字形**降级成兜底占位**（图标还没到、或系统里查不到图标时显示）：
+  * 取图标：`Services/ShellIconService` 用 `SHGetFileInfo`（`Services/Native/ShellIconExtractor`）
+    拿 HICON，再用 `GetDIBits` 读成 32bpp BGRA，交给 `Helpers/IconImageHelper` 在 UI 线程建 `WriteableBitmap`；
+  * **懒加载**：图标由 `DetailsView` 的 `ContainerContentChanging` 触发（行容器真的被创建时才取），
+    `FileItemViewModel.IconRequested` 保证同一行只排一次队；
+  * 缓存两级：`ShellIconService` 里“图标键 → Task”（并发合并）与“内容哈希 → 像素”，
+    `IconImageHelper` 里“内容哈希 → ImageSource”。所以几千个普通文件夹只占一张位图，
+    滚动、排序、刷新、重进目录都不会重复取；
+  * 图标键：目录与“图标写在文件自身里”的类型（`.exe/.lnk/.url/.ico/.msi/.scr/.cpl/.com/.pif`）按**路径**，
+    其余按**扩展名**（一个目录里几千个 .txt 只问外壳一次）；
+  * 成本：单次提取约 16~20 ms（外壳内部开销），只在后台线程做；**不要**在 UI 线程上调
+    `IShellIconService.GetIconAsync`。
+    回归：`tools/test-shell-icons.ps1`（13 条断言），踩过的坑见第 6 节第 30/31 条。
 * **“状态”列（云同步状态）**：`DetailsView` 的第 0 列，只在**云同步目录**里出现，
   列出的是资源管理器“状态 / 可用性”列的含义（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步）：
   * 数据来源：`FileSystemService.Enumerate` 在目录位于云同步根下时，额外为每个条目读
@@ -489,6 +510,25 @@ exdir/
     `ResourceDictionary.ThemeDictionaries` 属性元素，后面就不能再有隐式资源条目，
     否则 XAML 编译器报 `WMC0035: Duplication assignment to the '_Items' property`
     （`Themes/ExdirTheme.xaml` 里主题相关色刷就因此挪到了文件末尾）。
+30. **`SHGetFileInfo(SHGFI_ICON)` 并发调用时会偶发“只给图标索引、不给 HICON”**：
+    返回值非 0、`iIcon` 有效，但 `hIcon == 0`（实测：一批行并行取图标时，第一个碰上的那个文件命中，
+    典型是 `.txt` 这种扩展名图标）。**解决办法：把“问外壳要 HICON”这一步串行化**
+    （`ShellIconExtractor.Gate`），并**失败时重试一次**；串行+重试之后 3 次冷启动跑下来哈希完全一致。
+    读像素（`GetDIBits`）各用各的位图，不需要在锁里。
+31. **`calc.exe` 这个名字取不到外壳图标**：它是 Windows 的“应用执行别名”，外壳会转去 AppX 包里取图标，
+    非打包进程里这一步只给出图标索引、给不出 HICON（**同一个文件改名叫 `calculator.exe` 就一切正常**）。
+    因此 `ShellIconExtractor` 在“外壳给不出 HICON”时会退回 `ExtractIconEx` 直接读文件自身的图标资源
+    （对 exe 有效，对目录/lnk 自然返回 0，正好什么都不影响）。
+    排查这类问题的日志形如 `外壳图标：xxx 提取失败（SHGetFileInfo 没有返回图标（iIcon=130 …））`。
+32. **图标的尺寸要按 `SM_CXSMICON` 取（`SHGFI_SMALLICON`）**：它正好等于“16 DIP 在当前 DPI 下的物理像素数”
+    （100% → 16、150% → 24、200% → 32），跟列表里 16×16 DIP 的 `Image` 是 1:1，任何缩放下都清晰。
+    用 `SHGFI_LARGEICON` 在 200% 缩放下拿到的是 64×64（`SM_CXICON`），白多 4 倍内存。
+    另外 **`WriteableBitmap.PixelBuffer` 要的是预乘 alpha**：`GetDIBits` 读出来的是直通 alpha，
+    必须自己预乘（否则半透明边缘会发白）；`GetDIBits` 还要按“自下而上”请求（`biHeight` 给正数）再自己翻行，
+    别指望 GDI 给你换方向。
+33. **UIA 里“有没有真实图标”可以断言**：`DetailsView` 行模板里那个 `Image` 带
+    `AutomationProperties.Name="程序图标"`，并且 `Visibility` 绑在 `HasIcon` 上——
+    没拿到图标时它是 `Collapsed`，UIA 树里根本找不到它，所以脚本可以“数不到就是没图标”地断言。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -511,6 +551,10 @@ exdir/
 * 详细信息列表：**目录可就地展开的树形列表**（行内箭头 / `←→` 方向键展开、懒加载、刷新后恢复展开）、
   状态/名称/修改日期/类型/大小五列、点列头排序（含树的每一层）、**列宽可拖动+双击复位+持久化**、
   多选、双击进入目录、无选中蓝色竖条、选中行不随排序/刷新丢失；
+* **行首显示真实的外壳图标**（2026-09，S14，见第 4 节“名称列图标”）：`.exe` / `.lnk` 各自显示
+  程序自带的图标（快捷方式还带小箭头覆盖层），文件夹与文件类型与资源管理器一致；
+  字形只在“图标还没取到 / 系统里查不到”时兜底；图标懒加载 + 两级缓存，滚动不重复取；
+  回归：`tools/test-shell-icons.ps1`（13 条断言全过）；
 * **云文件夹的同步状态列**（2026-09，见第 4 节“状态”列）：位于云同步根（OneDrive / WPS 云盘 /
   其它 CFAPI 同步目录）下的目录会在最前面多出一列图标（已同步 / 仅在云端 / 已固定 / 正在同步 /
   同步错误 / 未同步），数据来自系统属性 `System.StorageProviderState` +

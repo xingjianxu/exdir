@@ -130,6 +130,7 @@
             Padding="0"
             CanDragItems="True"
             CanReorderItems="False"
+            ContainerContentChanging="EntryList_ContainerContentChanging"
             DragItemsStarting="EntryList_DragItemsStarting"
             ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
             Loaded="EntryList_Loaded"
@@ -242,12 +243,21 @@
                                     Glyph="{x:Bind ExpanderGlyph, Mode=OneWay}" />
                             </Button>
 
-                            <FontIcon
-                                Grid.Column="2"
-                                Margin="0,0,6,0"
-                                FontSize="14"
-                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                Glyph="{x:Bind Glyph}" />
+                            <!-- 图标：真实外壳图标（异步补上），拿到之前先用字形占位。
+                                 两者固定 16×16 重叠摆放，所以换成真图标时行内不会跳动。 -->
+                            <Grid Grid.Column="2" Width="16" Height="16" Margin="0,0,6,0">
+                                <FontIcon
+                                    FontSize="14"
+                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                    Glyph="{x:Bind Glyph}"
+                                    Visibility="{x:Bind HasIcon, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}" />
+                                <Image
+                                    Width="16"
+                                    Height="16"
+                                    AutomationProperties.Name="程序图标"
+                                    Source="{x:Bind Icon, Mode=OneWay}"
+                                    Visibility="{x:Bind HasIcon, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                            </Grid>
 
                             <TextBlock
                                 Grid.Column="3"

@@ -226,11 +226,24 @@
   - 预估：~500 行（缩略图另算一步）。
   - 建议拆分为 S13a（图标/紧凑，无缩略图）与 S13b（缩略图）。
 
-- [ ] **S14 真实 Shell 图标**
-  - 目标：用 `SHGetFileInfo`/`IImageList` 取系统图标，替换当前的 Segoe 字形（`Helpers/FileTypeHelper` 里的字形兜底保留）。
-  - 涉及：`Services/IShellIconService.cs(.cs)`、`Helpers/FileTypeHelper.cs`、`Views/DetailsView.xaml`、`ViewModels/FileItemViewModel.cs`。
-  - 验收：`.exe/.lnk/.文件夹` 显示与资源管理器一致；图标有缓存，滚动不重复取。
-  - 预估：~350 行，4 个文件。
+- [x] **S14 真实 Shell 图标**（2026-09 完成，~640 行，11 个文件）
+  - 目标：用 `SHGetFileInfo` 取系统图标，替换当前的 Segoe 字形（`Helpers/FileTypeHelper` 里的字形兜底保留）。
+  - 做法：新增 `Services/IShellIconService.cs` + `Services/ShellIconService.cs`（两级缓存：
+    “图标键 → Lazy<Task>”合并并发，“内容哈希 → 像素”去重）、`Services/Native/ShellIconExtractor.cs`
+    （`SHGetFileInfo` → HICON → `GetDIBits` → 预乘 BGRA）、`Models/IconBitmap.cs`、
+    `Helpers/IconImageHelper.cs`（UI 线程建 `WriteableBitmap`，按内容哈希共享图像源）；
+    `FileItemViewModel` 加 `Icon/HasIcon/IconRequested`，`FolderTabViewModel.EnsureIconAsync` 负责回填，
+    `DetailsView` 用 `ContainerContentChanging` 只给真正显示出来的行取图标，
+    行模板里 `Image`（名字“程序图标”）与 `FontIcon` 字形固定 16×16 重叠，谁到谁的 `Visibility` 才打开。
+  - 验收：`.exe/.lnk/.文件夹` 显示与资源管理器一致（含 `.lnk` 的小箭头覆盖层）；
+    图标有缓存、滚动不重复取；工具：`tools/test-shell-icons.ps1`（13 条断言全过：
+    可见行全有图标、几个不同程序哈希互不相同、`.lnk` 与目标程序图标不同、3 个 `.txt` 只提取一次、
+    滚动到末尾后的行也有图标、日志无异常）。
+  - 顺带：图标尺寸用 `SHGFI_SMALLICON`（= `SM_CXSMICON` = 16 DIP 的物理像素，任何缩放下 1:1）。
+  - 坑（已记入 `AGENTS.md` 第 6 节第 30/31/32/33 条）：`SHGetFileInfo` 并发时会偶发“只给索引不给 HICON”
+    （串行化 + 重试一次解决）；`calc.exe` 撞上“应用执行别名”、外壳给不出 HICON
+    （退回 `ExtractIconEx` 读文件自身的图标资源）；`WriteableBitmap` 要预乘 alpha。
+  - 未做：图标还没用到侧边栏树 / 磁盘条（那边仍是字形）；缩略图视图留给 S13b。
 
 ### Phase 5 — 压缩、设置、平台
 
@@ -344,7 +357,7 @@
 | 项 | 说明 | 计划处理 |
 | --- | --- | --- |
 | 列被挤出可视区 | 窗格很窄（< ~410 DIP）时固定列溢出，`大小` 列看不见 | S1（已解决：自动模式等比压缩，手动模式改横向滚动） |
-| 图标是字形不是系统图标 | `Helpers/FileTypeHelper` 用 Segoe Fluent 字形兜底 | S14 |
+| 图标是字形不是系统图标 | `Helpers/FileTypeHelper` 用 Segoe Fluent 字形兜底 | S14（已解决：列表行首改成真实外壳图标，字形只在取不到时兜底；侧边栏/磁盘条仍是字形） |
 | 云状态每项一次属性读取 | 云目录里每个条目约 2~3 ms（并行后），只有云目录才付出这笔开销；超过 1500 ms 预算的条目不再显示状态 | S21（如需优化：两阶段加载，先出列表再补状态） |
 | 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
 | 无文件系统监视 | 外部改动需手动 F5 | S18 |

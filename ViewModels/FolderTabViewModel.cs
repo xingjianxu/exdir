@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.Models;
 using Exdir.Services;
@@ -23,6 +24,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private readonly IFileSystemService _fileSystem;
     private readonly IShellService _shell;
     private readonly ISettingsService _settings;
+    private readonly IShellIconService _icons;
 
     private readonly List<string> _backStack = new();
     private readonly List<string> _forwardStack = new();
@@ -54,11 +56,16 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private bool _showExtensions = true;
     private bool _enableListAnimations = true;
 
-    public FolderTabViewModel(IFileSystemService fileSystem, IShellService shell, ISettingsService settings)
+    public FolderTabViewModel(
+        IFileSystemService fileSystem,
+        IShellService shell,
+        ISettingsService settings,
+        IShellIconService icons)
     {
         _fileSystem = fileSystem;
         _shell = shell;
         _settings = settings;
+        _icons = icons;
 
         _foldersFirst = settings.Current.FoldersFirst;
         _showExtensions = settings.Current.ShowExtensions;
@@ -506,6 +513,38 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
         // 只打开第一项：目录进入，文件交给默认程序
         OpenItem(item);
+    }
+
+    // ------------------------------------------------------------------ 图标
+
+    /// <summary>
+    /// 行进入可视区时请求它的真实外壳图标（由 <c>DetailsView</c> 的
+    /// <c>ContainerContentChanging</c> 调用，所以只为真正显示出来的行付出代价）。
+    /// 提取在后台线程，回填到 VM 时已经回到 UI 线程（图像源必须在 UI 线程建）。
+    /// </summary>
+    public async Task EnsureIconAsync(FileItemViewModel item)
+    {
+        if (item.IconRequested)
+        {
+            return;
+        }
+
+        // 先置位再 await：容器反复回收重建时同一行不会重复排队
+        item.IconRequested = true;
+
+        try
+        {
+            var bitmap = await _icons.GetIconAsync(item.FullPath, item.IsDirectory).ConfigureAwait(true);
+            if (bitmap is not null)
+            {
+                item.SetIcon(IconImageHelper.ToImageSource(bitmap));
+            }
+        }
+        catch (Exception ex)
+        {
+            // 图标只是锦上添花：失败了就继续用字形，不能影响列表
+            Log.Exception($"设置图标 @ {item.FullPath}", ex);
+        }
     }
 
     /// <summary>双击 / 回车打开某一项。</summary>
