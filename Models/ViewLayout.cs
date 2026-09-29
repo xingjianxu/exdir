@@ -7,6 +7,9 @@ public enum FileSortColumn
     LastWriteTime,
     Type,
     Size,
+
+    /// <summary>云同步状态（只有云目录里才显示这一列）。</summary>
+    SyncState,
 }
 
 /// <summary>布局形态。目前只实现 Details，其余为后续扩展预留。</summary>

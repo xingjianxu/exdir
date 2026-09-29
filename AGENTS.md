@@ -106,13 +106,15 @@ exdir/
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
 ├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局尺寸常量（合并顺序在 XamlControlsResources 之后）
-├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / 枚举
+├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / 枚举
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
-│   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整
+│   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
 │   ├─ IDriveService          DriveInfo 枚举
 │   ├─ IKnownFolderService    用户标准目录 + 云存储同步根（注册表探测）
-│   ├─ ISettingsService       settings.json 读写
-│   └─ IShellService          默认程序打开 / 终端 / 剪贴板 / 命令行
+│   ├─ ICloudSyncService      云同步根判定 + 单个条目的同步状态（状态列）
+│   ├─ ISettingsService       settings.json 读写（含结构版本迁移）
+│   ├─ IShellService          默认程序打开 / 终端 / 剪贴板 / 命令行
+│   └─ Native/                Win32 互操作（ShellPropertyStore：属性系统 + 占位符兼容模式）
 ├─ ViewModels/
 │   ├─ MainViewModel          磁盘、固定目录、快捷命令、侧边栏、两个窗格、全局命令
 │   ├─ PanelViewModel         一个窗格（标签页集合）
@@ -124,7 +126,7 @@ exdir/
 ├─ Views/                     UserControl：SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / DpiHelper / FileTypeHelper / SizeFormatter
+├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper / SizeFormatter
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
@@ -176,7 +178,8 @@ exdir/
   同时被列头与每一行绑定，因此列头与数据行永远对齐。要区分 requested（用户拖的，落盘）与
   rendered（按窗格可用宽度算出来的，见 `FitTo`）：
   * 自动模式（`AutoFit`，默认）：富余宽度给名称列，装不下时各列按余量等比压缩——
-    任何窗格尺寸下都能看到全部列；
+    任何窗格尺寸下都能看到全部列（但各列都有最小宽度，5 列全在时下限约 264 DIP，
+    窗格比这还窄就只能横向滚动，见 `ColumnLayout.Minimums`）；
   * 手动模式：用户拖过任意列边界就进入（`SetRequestedWidth` 会关掉 `AutoFit`），列宽就是拖出来的值，
     装不下就横向滚动（`ScrollViewer.HorizontalScrollMode=Enabled`，行 Grid 的
     `MinWidth={x:Bind Columns.RowMinWidth}` 提供滚动范围）；
@@ -184,7 +187,23 @@ exdir/
     `HeaderRow.Clip` 负责裁掉平移出去的部分；
   * 拖动把手 `Controls/ColumnResizeHandle` 由 `DetailsView` code-behind 追加到 `HeaderContent.Children`，
     位置用 `TranslateTransform.X` 推到列边界（**不要用 Canvas**：Canvas 子元素实测高度为 0，命中区会是空的），
-    双击把手 = 该列恢复默认宽度 + 回到自动模式。
+    双击把手 = 该列恢复默认宽度 + 回到自动模式；宽度为 0 的列（下面说的“状态”列）会把把手
+    `Visibility=Collapsed`，否则它会压在名称列左边界上抢走点击。
+* **“状态”列（云同步状态）**：`DetailsView` 的第 0 列，只在**云同步目录**里出现，
+  列出的是资源管理器“状态 / 可用性”列的含义（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步）：
+  * 数据来源：`FileSystemService.Enumerate` 在目录位于云同步根下时，额外为每个条目读
+    `System.StorageProviderState` 与 `System.FilePlaceholderStatus`（`Services/Native/ShellPropertyStore`），
+    映射成 `Models.CloudSyncState` 存到 `FileSystemEntry.SyncState`；
+  * 显隐：`FolderTabViewModel.NavigateAsync` 里按“有没有条目带状态”设置
+    `Columns.ShowSyncColumn`（隐藏时该列算 0 宽，列定义不动，所以其它列的下标与落盘的列宽都不受影响）；
+    离开云目录时如果正在“按状态排序”会退回按名称排序；
+  * 单元格：一个 `Grid` 里放 6 个 `TextBlock`（Segoe Fluent Icons 字形 + 主题画刷），
+    用 `CloudSyncStateVisibilityConverter` + `ConverterParameter` 只显示当前那一个。
+    **用 TextBlock 而不是 FontIcon**：TextBlock 会进 UIA 树，`AutomationProperties.Name` 里写着
+    “仅在云端 / 已同步”，自动化脚本可以直接断言（FontIcon 不是控件，UIA 里根本没有它）。
+  * 成本：每个条目要建一次属性存储（实测约 2~3 ms/项），所以只在云目录里做、并行读，
+    并有 1500 ms 时间预算（超预算的条目保持无状态），超时会在 exdir.log 留一行 `云同步状态：…`；
+    侧边栏只建目录树（`EnumerateSubDirectoriesAsync`），不读状态。
 * **导航条属于标签页，不属于窗格**：`Views/NavigationBarView` 是 `TabView.TabItemTemplate` 里
   `TabViewItem` 内容的第 0 行（第 1 行是 `DetailsView`），VM 类型是 `FolderTabViewModel`。
   因此每个标签页各自拥有后退/前进/上一级/刷新按钮与地址栏（历史和编辑态都跟着标签页走）。
@@ -293,6 +312,18 @@ exdir/
     `mouse_event` 静默无效），`Graphics.CopyFromScreen` 报“句柄无效”（`-PrintWindow` 只能抓到
     系统窗口按钮，WinUI 内容全白）。这种情况下只能靠 UIA 读控件树 + `InvokePattern` 触发控件：
     `tools/inspect-ui.ps1` 可以验证布局/状态转换，但验证不了真实的指针命中与键盘事件。
+19. **`PROPVARIANT` 在 x64 上是 24 字节，不是按字段算出来的 16 字节**。
+    自己写个只有 `vt` + `u`（`FieldOffset(8)`）的结构去接 `IPropertyStore.GetValue`，
+    native 写回 24 字节会把栈踩坏——表现是**整个进程没有任何日志/异常就消失**（托管异常处理器
+    根本没机会跑），只能靠“功能一跑就死”察觉。`Services/Native/ShellPropertyStore` 的
+    `PropVariant` 显式写了 `Size = 24`（x86 上是 16，给大一点无害）。
+    排查“无日志猝死”时，先怀疑互操作结构体大小，而不是业务代码。
+20. **往详细信息列表加列要同时改五个地方**，漏一个就会出现“四列宽度算了五个列”这类偏移：
+    `ColumnLayout` 的 `Defaults`/`Minimums`/下标常量与 `GridLength` 属性、`DetailsView.xaml` 的
+    **列头 Grid 与行模板 Grid 两处 `ColumnDefinitions`** 以及它们的 `Grid.Column`、
+    `FitTo` 里的 `total`/`others` 求和（当初就是漏了最后一项导致压缩量算少、列溢出窗格）、
+    以及 `AppSettings.ColumnWidths` 的顺序（改了顺序就要像“状态列”那样提 `CurrentSchemaVersion`
+    并在 `SettingsService.Migrate` 里补，否则用户拖过的列宽会整体错位）。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -313,8 +344,13 @@ exdir/
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
 * 1/2 窗格 + 自研分隔条、TabView 多标签；
 * 详细信息列表：**目录可就地展开的树形列表**（行内箭头 / `←→` 方向键展开、懒加载、刷新后恢复展开）、
-  名称/修改日期/类型/大小四列、点列头排序（含树的每一层）、**列宽可拖动+双击复位+持久化**、
+  状态/名称/修改日期/类型/大小五列、点列头排序（含树的每一层）、**列宽可拖动+双击复位+持久化**、
   多选、双击进入目录、无选中蓝色竖条、选中行不随排序/刷新丢失；
+* **云文件夹的同步状态列**（2026-09，见第 4 节“状态”列）：位于云同步根（OneDrive / WPS 云盘 /
+  其它 CFAPI 同步目录）下的目录会在最前面多出一列图标（已同步 / 仅在云端 / 已固定 / 正在同步 /
+  同步错误 / 未同步），数据来自系统属性 `System.StorageProviderState` +
+  `System.FilePlaceholderStatus`（属性系统读不到时退回占位符属性位），不弹窗、不下载内容；
+  非云目录整列隐藏，普通目录的枚举不为此多花一次系统调用；
 * 导航条（← → ↑ ⟳ + **面包屑地址栏**）在**每个标签页内部**（`Views/NavigationBarView` +
   `Views/PathBreadcrumb`），标签页之间历史与编辑态互不影响；
   路径按目录分段显示（chevron 分隔）、点分段跳转、点当前目录段或右侧空白区就地编辑，回车跳转、Esc 取消；

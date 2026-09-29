@@ -21,4 +21,10 @@ public sealed class FileSystemEntry
 
     /// <summary>是否隐藏或系统项。</summary>
     public bool IsHidden { get; init; }
+
+    /// <summary>
+    /// 云同步状态。只有位于云同步根之下的目录才会去读（见 <c>CloudSyncService</c>），
+    /// 其它目录恒为 <see cref="CloudSyncState.None"/>，列表里不会显示状态图标。
+    /// </summary>
+    public CloudSyncState SyncState { get; init; }
 }

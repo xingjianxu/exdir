@@ -35,6 +35,7 @@
                     <TranslateTransform x:Name="HeaderTransform" />
                 </Grid.RenderTransform>
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="{x:Bind ViewModel.Columns.SyncStateWidth, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind ViewModel.Columns.NameWidth, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind ViewModel.Columns.DateWidth, Mode=OneWay}" />
                     <ColumnDefinition Width="{x:Bind ViewModel.Columns.TypeWidth, Mode=OneWay}" />
@@ -42,8 +43,26 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
+                <!-- 同步状态列只在云同步目录里出现（宽度为 0 时这里也隐藏，免得留下一个点不到的排序按钮） -->
                 <Button
                     Grid.Column="0"
+                    Height="24"
+                    Padding="0"
+                    HorizontalAlignment="Left"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
+                    CommandParameter="SyncState"
+                    Visibility="{x:Bind ViewModel.Columns.ShowSyncColumn, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                    AutomationProperties.Name="按同步状态排序">
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <TextBlock FontSize="12" Text="状态" />
+                        <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.SyncStateSortGlyph, Mode=OneWay}" />
+                    </StackPanel>
+                </Button>
+
+                <Button
+                    Grid.Column="1"
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Left"
@@ -59,7 +78,7 @@
                 </Button>
 
                 <Button
-                    Grid.Column="1"
+                    Grid.Column="2"
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Left"
@@ -75,7 +94,7 @@
                 </Button>
 
                 <Button
-                    Grid.Column="2"
+                    Grid.Column="3"
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Left"
@@ -91,7 +110,7 @@
                 </Button>
 
                 <Button
-                    Grid.Column="3"
+                    Grid.Column="4"
                     Height="24"
                     Padding="0"
                     HorizontalAlignment="Right"
@@ -139,6 +158,7 @@
                         DoubleTapped="Row_DoubleTapped"
                         ToolTipService.ToolTip="{x:Bind Tooltip}">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{x:Bind Columns.SyncStateWidth, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind Columns.NameWidth, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind Columns.DateWidth, Mode=OneWay}" />
                             <ColumnDefinition Width="{x:Bind Columns.TypeWidth, Mode=OneWay}" />
@@ -146,8 +166,59 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
+                        <!-- 同步状态：一格只可能显示一个字形（其余都折叠），字形即状态，颜色走主题资源。
+                             用 TextBlock 而不是 FontIcon，是因为 TextBlock 会进 UIA 树，
+                             自动化脚本能直接读到“仅在云端 / 已同步”这样的状态名。 -->
+                        <Grid
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            ToolTipService.ToolTip="{x:Bind SyncStateTooltip, Mode=OneWay}">
+                            <TextBlock
+                                FontFamily="Segoe Fluent Icons"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                Text="{x:Bind SyncStateGlyph, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind SyncStateText, Mode=OneWay}"
+                                Visibility="{x:Bind SyncState, Mode=OneWay, Converter={StaticResource SyncStateVisibility}, ConverterParameter=Synced}" />
+                            <TextBlock
+                                FontFamily="Segoe Fluent Icons"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                Text="{x:Bind SyncStateGlyph, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind SyncStateText, Mode=OneWay}"
+                                Visibility="{x:Bind SyncState, Mode=OneWay, Converter={StaticResource SyncStateVisibility}, ConverterParameter=Pinned}" />
+                            <TextBlock
+                                FontFamily="Segoe Fluent Icons"
+                                FontSize="12"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="{x:Bind SyncStateGlyph, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind SyncStateText, Mode=OneWay}"
+                                Visibility="{x:Bind SyncState, Mode=OneWay, Converter={StaticResource SyncStateVisibility}, ConverterParameter=CloudOnly}" />
+                            <TextBlock
+                                FontFamily="Segoe Fluent Icons"
+                                FontSize="12"
+                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                Text="{x:Bind SyncStateGlyph, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind SyncStateText, Mode=OneWay}"
+                                Visibility="{x:Bind SyncState, Mode=OneWay, Converter={StaticResource SyncStateVisibility}, ConverterParameter=Syncing}" />
+                            <TextBlock
+                                FontFamily="Segoe Fluent Icons"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                                Text="{x:Bind SyncStateGlyph, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind SyncStateText, Mode=OneWay}"
+                                Visibility="{x:Bind SyncState, Mode=OneWay, Converter={StaticResource SyncStateVisibility}, ConverterParameter=Error}" />
+                            <TextBlock
+                                FontFamily="Segoe Fluent Icons"
+                                FontSize="12"
+                                Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                Text="{x:Bind SyncStateGlyph, Mode=OneWay}"
+                                AutomationProperties.Name="{x:Bind SyncStateText, Mode=OneWay}"
+                                Visibility="{x:Bind SyncState, Mode=OneWay, Converter={StaticResource SyncStateVisibility}, ConverterParameter=Excluded}" />
+                        </Grid>
+
                         <!-- 名称列：缩进占位 + 展开箭头 + 图标 + 文本 -->
-                        <Grid Grid.Column="0" VerticalAlignment="Center">
+                        <Grid Grid.Column="1" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="18" />
@@ -191,7 +262,7 @@
                         </Grid>
 
                         <TextBlock
-                            Grid.Column="1"
+                            Grid.Column="2"
                             VerticalAlignment="Center"
                             FontSize="12"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -199,7 +270,7 @@
                             TextTrimming="CharacterEllipsis" />
 
                         <TextBlock
-                            Grid.Column="2"
+                            Grid.Column="3"
                             VerticalAlignment="Center"
                             FontSize="12"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -207,7 +278,7 @@
                             TextTrimming="CharacterEllipsis" />
 
                         <TextBlock
-                            Grid.Column="3"
+                            Grid.Column="4"
                             HorizontalAlignment="Right"
                             VerticalAlignment="Center"
                             FontSize="12"
@@ -263,3 +334,4 @@
         </Grid>
     </Grid>
 </UserControl>
+

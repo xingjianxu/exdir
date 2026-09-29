@@ -5,7 +5,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%LOCALAPPDATA%\exdir\settings.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -31,7 +31,10 @@ public sealed class AppSettings
     /// <summary>文件列表是否播放过渡动画（换目录的入场、插行/排序时的重排动画）。</summary>
     public bool EnableListAnimations { get; set; } = true;
 
-    /// <summary>详细信息列表的列宽（名称/修改日期/类型/大小），单位 DIP；空表示用默认值。</summary>
+    /// <summary>
+    /// 详细信息列表的列宽（状态/名称/修改日期/类型/大小），单位 DIP；空表示用默认值。
+    /// 结构版本 1 时只有后 4 列，读取时会自动在最前面补上状态列的宽度（见 SettingsService.Migrate）。
+    /// </summary>
     public List<double> ColumnWidths { get; set; } = new();
 
     /// <summary>名称列是否自动填满窗格剩余宽度（用户手动拖过名称列后为 false）。</summary>

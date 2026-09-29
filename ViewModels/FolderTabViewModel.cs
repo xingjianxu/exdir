@@ -283,6 +283,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     public string SizeSortGlyph => GlyphFor(FileSortColumn.Size);
 
+    public string SyncStateSortGlyph => GlyphFor(FileSortColumn.SyncState);
+
     // ------------------------------------------------------------------ 导航
 
     /// <summary>加载指定目录。</summary>
@@ -356,6 +358,14 @@ public sealed partial class FolderTabViewModel : ObservableObject
         _entries = entries;
         CurrentPath = normalized;
         PathInput = normalized;
+
+        // 只有云同步目录才有状态可显示（非云目录里整列隐藏）；离开云目录后“按状态排序”也就没意义了
+        Columns.ShowSyncColumn = entries.Any(static entry => entry.SyncState != CloudSyncState.None);
+        if (!Columns.ShowSyncColumn && SortColumn == FileSortColumn.SyncState)
+        {
+            SortColumn = FileSortColumn.Name;
+            SortAscending = true;
+        }
 
         // 换了目录：上一个目录的展开状态没有意义
         if (!string.Equals(previous, normalized, StringComparison.OrdinalIgnoreCase))
@@ -934,6 +944,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
             FileSortColumn.LastWriteTime => a.LastWriteTime.CompareTo(b.LastWriteTime),
             FileSortColumn.Type => string.Compare(a.TypeName, b.TypeName, StringComparison.CurrentCultureIgnoreCase),
             FileSortColumn.Size => a.Size.CompareTo(b.Size),
+            FileSortColumn.SyncState => a.SyncState.CompareTo(b.SyncState),
             _ => string.Compare(a.DisplayName, b.DisplayName, StringComparison.CurrentCultureIgnoreCase),
         };
 
@@ -972,6 +983,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         OnPropertyChanged(nameof(DateSortGlyph));
         OnPropertyChanged(nameof(TypeSortGlyph));
         OnPropertyChanged(nameof(SizeSortGlyph));
+        OnPropertyChanged(nameof(SyncStateSortGlyph));
     }
 
     private string GlyphFor(FileSortColumn column)

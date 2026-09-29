@@ -38,6 +38,9 @@
   - 菜单栏「配置 → 文件列表」（2026-09）：过渡动画 / 显示隐藏文件 / 显示文件扩展名三个勾选项，
     反向同步到 `AppSettings.EnableListAnimations` 等字段并由窗口关闭时落盘；
     动画开关只清 `ListView` 的过渡集合，不重载目录（切换后已显示的行也不再有入场/重排动画）。
+  - 云文件夹的同步状态列（2026-09，S23）：云同步目录（OneDrive / WPS 云盘 / 其它 CFAPI 同步根）
+    的列表最前面多出一列状态图标（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步），
+    可点列头排序；非云目录整列隐藏。
   - 侧边栏：主目录（含桌面/文档/下载/图片/音乐/视频）、云存储（注册表探测同步根）、此电脑（各磁盘）；展开时懒加载子目录。
   - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%LOCALAPPDATA%\exdir\settings.json`。
   - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
@@ -249,6 +252,34 @@
   - 目标：补齐 `AutomationProperties.Name`、Tab 键顺序、快捷键提示；更新 `README.md`（截图 + 使用说明）与 `AGENTS.md`。
   - 预估：~200 行 + 文档。
 
+### Phase 7 — 云同步状态（已完成）
+
+- [x] **S23 云文件夹的文件同步状态列**（2026-09）
+  - 目标：云同步目录里能一眼看出每个文件/目录的同步状态（像资源管理器的“状态”列 / 图标）。
+  - 涉及：新增 `Models/CloudSyncState.cs`、`Helpers/CloudSyncStateHelper.cs`、
+    `Services/CloudSyncService.cs`（ICloudSyncService + 实现）、`Services/Native/ShellPropertyStore.cs`；
+    修改 `Services/FileSystemService.cs`、`Helpers/ColumnLayout.cs`、`Models/FileSystemEntry.cs`、
+    `Models/ViewLayout.cs`、`Models/AppSettings.cs`、`Services/SettingsService.cs`、
+    `ViewModels/FileItemViewModel.cs`、`ViewModels/FolderTabViewModel.cs`、
+    `Views/DetailsView.xaml(.cs)`、`Converters/CommonConverters.cs`、`App.xaml(.cs)`。
+  - 内容：
+    - [x] 启动时 `RtlSetProcessPlaceholderCompatibilityMode(PHCM_EXPOSE_PLACEHOLDERS)`，
+          否则云文件的 reparse/offline 位被系统伪装、可用性状态可能恒为“同步挂起”；
+    - [x] 目录位于云同步根下时，逐条读 `System.StorageProviderState`（资源管理器同源）+ 
+          `System.FilePlaceholderStatus`，映射成 6 种状态；读不到就退回占位符属性位 + 文件属性；
+    - [x] 状态存在 `FileSystemEntry.SyncState`，只在云目录里读（并行、1500 ms 预算、可取消），
+          普通目录零额外开销；
+    - [x] 列表最前面新增“状态”列：云目录里自动出现、非云目录自动隐藏（列定义不动，
+          隐藏时算 0 宽，不影响其它列下标与已落盘的列宽），可点列头按状态排序；
+    - [x] `AppSettings` 结构版本 1→2：旧的 4 列宽自动在最前面补上状态列宽度。
+  - 验收（本机无交互桌面，用 UIA + 真实 WPS 云同步根验证）：
+    `tools/inspect-ui.ps1` 可见列头 `按同步状态排序`、每行的 `仅在云端`/`已同步` 文案
+    （与 PowerShell 读到的 `System.StorageProviderState` 完全一致，含 2 个 SPS=2 的“已同步”目录）；
+    非云目录（`D:\opt`）下状态列头与状态文案均为 0 个；
+    用 `InvokePattern` 点列头后行顺序按状态分组（升/降序均正确）；
+    云目录 19 项 113 ms / 62 项 247 ms（见 exdir.log 的 `云同步状态：…` 行）。
+  - 预估：~700 行，17 个文件（超出了单步 8 个文件的规模线，但功能本身不可再拆）。
+
 ---
 
 ## 4. 横切关注点
@@ -267,6 +298,7 @@
 | --- | --- | --- |
 | 列被挤出可视区 | 窗格很窄（< ~410 DIP）时固定列溢出，`大小` 列看不见 | S1（已解决：自动模式等比压缩，手动模式改横向滚动） |
 | 图标是字形不是系统图标 | `Helpers/FileTypeHelper` 用 Segoe Fluent 字形兜底 | S14 |
+| 云状态每项一次属性读取 | 云目录里每个条目约 2~3 ms（并行后），只有云目录才付出这笔开销；超过 1500 ms 预算的条目不再显示状态 | S21（如需优化：两阶段加载，先出列表再补状态） |
 | 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
 | 无文件系统监视 | 外部改动需手动 F5 | S18 |
 | 快捷菜单为空 | 按需求刻意留空，仅数据驱动 | S17 |

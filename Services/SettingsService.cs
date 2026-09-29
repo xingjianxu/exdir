@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Exdir.Helpers;
 using Exdir.Models;
 
 namespace Exdir.Services;
@@ -60,8 +61,9 @@ public sealed class SettingsService : ISettingsService
                 }
 
                 var json = File.ReadAllText(SettingsFilePath);
-                Current = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions) ?? new AppSettings();
-                Current.SchemaVersion = AppSettings.CurrentSchemaVersion;
+                var loaded = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions) ?? new AppSettings();
+                Migrate(loaded);
+                Current = loaded;
             }
             catch (Exception)
             {
@@ -69,6 +71,26 @@ public sealed class SettingsService : ISettingsService
                 Current = new AppSettings();
             }
         }
+    }
+
+    /// <summary>把旧版本的设置补成当前结构（只动缺失的部分，不覆盖用户已有设置）。</summary>
+    private static void Migrate(AppSettings settings)
+    {
+        if (settings.SchemaVersion < 2)
+        {
+            // v1 的列宽只有 名称/修改日期/类型/大小；v2 在最前面多了一个“状态”列。
+            // 不补上的话用户拖过的列宽会整体错位（名称的宽度跑到状态列上）。
+            if (settings.ColumnWidths.Count == ColumnLayout.ColumnCount - 1)
+            {
+                settings.ColumnWidths.Insert(0, ColumnLayout.DefaultSyncStateWidth);
+            }
+            else
+            {
+                settings.ColumnWidths.Clear();
+            }
+        }
+
+        settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }
 
     public void Save()

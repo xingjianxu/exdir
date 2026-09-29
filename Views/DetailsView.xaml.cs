@@ -183,7 +183,13 @@ public sealed partial class DetailsView : UserControl
         UpdateSplitterPositions();
     }
 
-    private void OnRenderedChanged(object? sender, EventArgs e) => UpdateSplitterPositions();
+    private void OnRenderedChanged(object? sender, EventArgs e)
+    {
+        UpdateSplitterPositions();
+
+        // 列集合本身变了（显示/隐藏“状态”列）也会走到这里：名称列要重新吃掉多出来的宽度
+        QueueFit();
+    }
 
     private void FitColumns()
     {
@@ -227,7 +233,12 @@ public sealed partial class DetailsView : UserControl
 
         for (var i = 0; i < _handles.Length; i++)
         {
-            x += _layout.GetRenderedWidth(i);
+            var width = _layout.GetRenderedWidth(i);
+            x += width;
+
+            // 宽度为 0 的列（非云目录里的“状态”列）不摆把手：
+            // 否则它会压在名称列的左边界上，把本该点到名称列那几像素抢走
+            _handles[i].Visibility = width > 0 ? Visibility.Visible : Visibility.Collapsed;
 
             if (_handles[i].RenderTransform is TranslateTransform transform)
             {

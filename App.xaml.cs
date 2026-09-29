@@ -1,6 +1,7 @@
 using System;
 using Exdir.Diagnostics;
 using Exdir.Services;
+using Exdir.Services.Native;
 using Exdir.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
@@ -37,6 +38,10 @@ public partial class App : Application
             // 先读取设置：MainViewModel 构造时会依赖其中若干项
             Services.GetRequiredService<ISettingsService>().Load();
 
+            // 让本进程看得到云占位符的真实属性（reparse/sparse/offline 位）：
+            // 否则“同步状态”列可能只能拿到固定的“同步挂起”，放在枚举任何目录之前调用
+            ShellPropertyStore.EnsurePlaceholdersExposed();
+
             MainWindow = Services.GetRequiredService<MainWindow>();
             MainWindow.Activate();
 
@@ -62,9 +67,10 @@ public partial class App : Application
 
         // 基础设施
         services.AddSingleton<ISettingsService, SettingsService>();
+        services.AddSingleton<IKnownFolderService, KnownFolderService>();
+        services.AddSingleton<ICloudSyncService, CloudSyncService>();
         services.AddSingleton<IFileSystemService, FileSystemService>();
         services.AddSingleton<IDriveService, DriveService>();
-        services.AddSingleton<IKnownFolderService, KnownFolderService>();
         services.AddSingleton<IShellService, ShellService>();
 
         // ViewModel

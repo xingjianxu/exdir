@@ -18,6 +18,7 @@
             <conv:BoolToVisibilityConverter x:Key="InverseBoolToVisibility" Invert="True" />
             <conv:StringToVisibilityConverter x:Key="StringToVisibility" />
             <conv:CountToVisibilityConverter x:Key="CountToVisibility" />
+            <conv:CloudSyncStateVisibilityConverter x:Key="SyncStateVisibility" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

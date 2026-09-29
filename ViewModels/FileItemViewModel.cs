@@ -4,7 +4,6 @@ using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Exdir.Helpers;
 using Exdir.Models;
-
 namespace Exdir.ViewModels;
 
 /// <summary>
@@ -68,6 +67,22 @@ public sealed class FileItemViewModel : ObservableObject
     public string TypeName => Entry.TypeName;
 
     public string Glyph => FileTypeHelper.GetGlyph(Entry.FullPath, Entry.IsDirectory);
+
+    // ------------------------------------------------------------------ 云同步状态
+
+    /// <summary>同步状态；非云目录（或客户端不报状态）为 <see cref="CloudSyncState.None"/>。</summary>
+    public CloudSyncState SyncState => Entry.SyncState;
+
+    /// <summary>状态列里显示的字形（无状态时为空串，单元格也就看不见东西）。</summary>
+    public string SyncStateGlyph => CloudSyncStateHelper.GetGlyph(Entry.SyncState);
+
+    /// <summary>状态文案（无障碍名称）。</summary>
+    public string SyncStateText => CloudSyncStateHelper.GetText(Entry.SyncState);
+
+    /// <summary>同步状态提示（悬停）；无状态时为 null，避免弹出一个空提示框。</summary>
+    public string? SyncStateTooltip => Entry.SyncState == CloudSyncState.None
+        ? null
+        : CloudSyncStateHelper.GetTooltip(Entry.SyncState);
 
     public string Tooltip => Entry.IsDirectory
         ? Entry.FullPath

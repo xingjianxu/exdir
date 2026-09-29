@@ -6,7 +6,7 @@ using Microsoft.UI.Xaml;
 namespace Exdir.Helpers;
 
 /// <summary>
-/// 详细信息视图的列宽状态（名称 / 修改日期 / 类型 / 大小）。
+/// 详细信息视图的列宽状态（同步状态 / 名称 / 修改日期 / 类型 / 大小）。
 ///
 /// 这里要区分两个概念：
 /// <list type="bullet">
@@ -24,14 +24,23 @@ namespace Exdir.Helpers;
 /// </list>
 /// 双击列边界可回到自动模式/默认宽度。
 ///
+/// 首列的“同步状态”只在云同步目录里才存在（<see cref="ShowSyncColumn"/>）：隐藏时把它算成 0 宽，
+/// 列定义本身不动，也就不会影响其它列的下标与持久化的列宽。
+///
 /// 为什么不用静态列宽：<c>ColumnDefinition.Width</c> 是 <see cref="GridLength"/>，
 /// XAML 不会为资源值做类型转换，所以列宽只能用强类型属性 + <c>x:Bind</c> 共享
 /// （见 AGENTS.md“踩过的坑”第 1 条）。
 /// </summary>
 public sealed class ColumnLayout : ObservableObject
 {
-    /// <summary>列数（名称 / 修改日期 / 类型 / 大小）。</summary>
-    public const int ColumnCount = 4;
+    /// <summary>列数（同步状态 / 名称 / 修改日期 / 类型 / 大小）。</summary>
+    public const int ColumnCount = 5;
+
+    /// <summary>同步状态列的下标。放在最前面，因为它只是个图标（像资源管理器叠在图标旁）。</summary>
+    public const int SyncStateIndex = 0;
+
+    /// <summary>名称列的下标（拿富余宽度的就是它）。</summary>
+    public const int NameIndex = 1;
 
     /// <summary>名称列最小宽度（像素）。</summary>
     public const double NameMinWidth = 80;
@@ -39,25 +48,32 @@ public sealed class ColumnLayout : ObservableObject
     /// <summary>其余列最小宽度（像素）。</summary>
     public const double NumberMinWidth = 44;
 
+    public const double DefaultSyncStateWidth = 56;
     public const double DefaultNameWidth = 320;
     public const double DefaultDateWidth = 136;
     public const double DefaultTypeWidth = 104;
     public const double DefaultSizeWidth = 86;
 
+    /// <summary>状态列最小宽度：刚好放得下列头“状态”两个字再加排序字形。</summary>
+    public const double SyncStateMinWidth = 40;
+
     /// <summary>行/列头的左右内边距之和（6 + 6），与 Themes/ExdirTheme.xaml 的 ExRowPadding 保持一致。</summary>
     public const double RowPaddingWidth = 12;
 
     private static readonly double[] Defaults =
-        { DefaultNameWidth, DefaultDateWidth, DefaultTypeWidth, DefaultSizeWidth };
+        { DefaultSyncStateWidth, DefaultNameWidth, DefaultDateWidth, DefaultTypeWidth, DefaultSizeWidth };
 
     private static readonly double[] Minimums =
-        { NameMinWidth, NumberMinWidth, NumberMinWidth, NumberMinWidth };
+        { SyncStateMinWidth, NameMinWidth, NumberMinWidth, NumberMinWidth, NumberMinWidth };
 
     private readonly double[] _requested = (double[])Defaults.Clone();
     private readonly double[] _rendered = (double[])Defaults.Clone();
 
     private bool _autoFillName = true;
     private bool _autoFit = true;
+    private bool _showSyncColumn;
+
+    public ColumnLayout() => _rendered[SyncStateIndex] = 0;
 
     /// <summary>用户拖动（或恢复默认）列宽后触发，供 ViewModel 写入设置。</summary>
     public event EventHandler? RequestedChanged;
@@ -65,19 +81,40 @@ public sealed class ColumnLayout : ObservableObject
     /// <summary>实际渲染宽度变化后触发，供视图重新摆放拖动把手。</summary>
     public event EventHandler? RenderedChanged;
 
-    public GridLength NameWidth => LengthOf(0);
+    public GridLength SyncStateWidth => LengthOf(SyncStateIndex);
 
-    public GridLength DateWidth => LengthOf(1);
+    public GridLength NameWidth => LengthOf(NameIndex);
 
-    public GridLength TypeWidth => LengthOf(2);
+    public GridLength DateWidth => LengthOf(2);
 
-    public GridLength SizeWidth => LengthOf(3);
+    public GridLength TypeWidth => LengthOf(3);
+
+    public GridLength SizeWidth => LengthOf(4);
 
     /// <summary>列宽总和（数据行的最小宽度还要加上左右内边距）。</summary>
-    public double TotalWidth => _rendered[0] + _rendered[1] + _rendered[2] + _rendered[3];
+    public double TotalWidth => _rendered[0] + _rendered[1] + _rendered[2] + _rendered[3] + _rendered[4];
 
     /// <summary>数据行的最小宽度：列宽总和 + 行左右内边距。</summary>
     public double RowMinWidth => TotalWidth + RowPaddingWidth;
+
+    /// <summary>
+    /// 是否显示“同步状态”列（由 <c>FolderTabViewModel</c> 按当前目录是否有云同步状态决定）。
+    /// 隐藏时该列宽度算作 0，列头与单元格也会一并隐藏。
+    /// </summary>
+    public bool ShowSyncColumn
+    {
+        get => _showSyncColumn;
+        set
+        {
+            if (!SetProperty(ref _showSyncColumn, value))
+            {
+                return;
+            }
+
+            _rendered[SyncStateIndex] = value ? _requested[SyncStateIndex] : 0;
+            NotifyRendered();
+        }
+    }
 
     /// <summary>整体自适应窗格宽度（默认开启；拖动过列宽后关闭，双击列边界可恢复）。</summary>
     public bool AutoFit
@@ -108,10 +145,11 @@ public sealed class ColumnLayout : ObservableObject
     /// <summary>列头显示名（用于拖动把手的无障碍名称）。</summary>
     public static string GetColumnName(int index) => index switch
     {
-        0 => "名称",
-        1 => "修改日期",
-        2 => "类型",
-        3 => "大小",
+        0 => "状态",
+        1 => "名称",
+        2 => "修改日期",
+        3 => "类型",
+        4 => "大小",
         _ => "列",
     };
 
@@ -138,7 +176,7 @@ public sealed class ColumnLayout : ObservableObject
         _requested[index] = clamped;
 
         // 手动拖过名称列边界后就不再自动填满，整体也不再自适应（与资源管理器一致）
-        if (index == 0)
+        if (index == NameIndex)
         {
             AutoFillName = false;
         }
@@ -158,7 +196,7 @@ public sealed class ColumnLayout : ObservableObject
 
         _requested[index] = Defaults[index];
 
-        if (index == 0)
+        if (index == NameIndex)
         {
             AutoFillName = true;
         }
@@ -189,6 +227,7 @@ public sealed class ColumnLayout : ObservableObject
         OnPropertyChanged(nameof(AutoFit));
 
         Array.Copy(_requested, _rendered, ColumnCount);
+        _rendered[SyncStateIndex] = _showSyncColumn ? _requested[SyncStateIndex] : 0;
         NotifyRendered();
     }
 
@@ -205,13 +244,19 @@ public sealed class ColumnLayout : ObservableObject
 
         var rendered = (double[])_requested.Clone();
 
-        if (_autoFillName || _autoFit)
+        // 隐藏的同步状态列不占宽度（其余计算都建立在它之后）
+        if (!_showSyncColumn)
         {
-            var others = rendered[1] + rendered[2] + rendered[3];
-            rendered[0] = Math.Max(rendered[0], availableWidth - others);
+            rendered[SyncStateIndex] = 0;
         }
 
-        var total = rendered[0] + rendered[1] + rendered[2] + rendered[3];
+        if (_autoFillName || _autoFit)
+        {
+            var others = rendered[2] + rendered[3] + rendered[4] + rendered[SyncStateIndex];
+            rendered[NameIndex] = Math.Max(rendered[NameIndex], availableWidth - others);
+        }
+
+        var total = rendered[0] + rendered[1] + rendered[2] + rendered[3] + rendered[4];
         if (_autoFit && total > availableWidth)
         {
             ShrinkColumns(rendered, total - availableWidth);
@@ -267,6 +312,7 @@ public sealed class ColumnLayout : ObservableObject
 
     private void NotifyRendered()
     {
+        OnPropertyChanged(nameof(SyncStateWidth));
         OnPropertyChanged(nameof(NameWidth));
         OnPropertyChanged(nameof(DateWidth));
         OnPropertyChanged(nameof(TypeWidth));
