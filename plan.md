@@ -27,7 +27,7 @@
     移除 MSIX 清单与 `EnableMsixTooling`；`Assets\exdir.ico` 由脚本生成并设为应用图标。
   - 外壳布局：`TitleBar` 控件（菜单栏 + 当前目录名 + 原生窗口按钮）/ 工具条（磁盘 + 固定目录 + 快捷菜单）/ 侧边栏文件夹树 / 1~2 个窗格。
   - `PaneSplitter`（WinUI 无 GridSplitter）、Mica 背景、紧凑密度（标题栏 36、列表行 24）。
-  - 窗格：导航条（后退/前进/上一级/刷新 + 可编辑路径框）+ TabView 多标签。
+  - `PaneView`：TabView 多标签，**每个标签页内部自带导航条**（`NavigationBarView`：后退/前进/上一级/刷新 + 可编辑路径框）。
   - 列表：详细信息布局，列 名称/修改日期/类型/大小，点列头排序、多选、双击进入目录 / 打开文件、空目录与错误提示、选中摘要。
   - 侧边栏：主目录（含桌面/文档/下载/图片/音乐/视频）、云存储（注册表探测同步根）、此电脑（各磁盘）；展开时懒加载子目录。
   - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%LOCALAPPDATA%\exdir\settings.json`。
@@ -42,8 +42,8 @@
 
 这些会影响后续步骤的写法，**动手前先问清楚**（一次问完，不要在多个会话里反复问）：
 
-1. **每个窗格是否保留“导航条 + 路径框”？** 目前是我按 DOpus 习惯加的（需求里只写了“每个窗口可以有单独的 tab”）。
-   若不要，可以改成只靠面包屑 + 工具栏前进后退。
+1. ~~**每个窗格是否保留“导航条 + 路径框”？**~~ **已决定（2026-09）：导航条 + 路径框放在每个标签页内部**，
+   即每个 tab 各自拥有后退/前进/上一级/刷新与地址栏（实现见 `Views/NavigationBarView`）。
 2. **文件操作的实现路线**：
    - (A) 调用系统 `IFileOperation`（资源管理器同款进度/冲突/撤销对话框，代码最少，行为最“Windows”）；
    - (B) 自研复制/移动引擎（可完全控制 UI、支持队列、可暂停，但工作量大很多）。
@@ -138,7 +138,7 @@
 
 - [ ] **S9 地址面包屑**
   - 目标：导航条上的路径框旁边/替代品：可点击的路径分段，支持 `\\server\share`、`C:\`、WSL 路径。
-  - 涉及：新增 `Views/PathBreadcrumb.xaml(.cs)`、`ViewModels/FolderTabViewModel.cs`、`Views/PaneView.xaml(.cs)`。
+  - 涉及：新增 `Views/PathBreadcrumb.xaml(.cs)`、`ViewModels/FolderTabViewModel.cs`、`Views/NavigationBarView.xaml(.cs)`。
   - 内容：分段点击跳转、每段右侧下拉显示同级目录、点击空白处切换回可编辑 TextBox（保留现有回车行为）。
   - 验收：深层路径渲染正确不溢出（超长时中间段省略）；截图确认高度不超过导航条。
   - 预估：~450 行，4 个文件。
@@ -165,7 +165,7 @@
 
 - [ ] **S13 图标 / 紧凑 / 缩略图视图**
   - 目标：落地已预留的 `ViewLayout` 枚举，导航条加视图切换按钮，每个标签页独立记住布局。
-  - 涉及：新增 `Views/IconsView.xaml(.cs)`、`Views/CompactView.xaml(.cs)`；`Views/PaneView.xaml(.cs)`；`Services/IImageCacheService`（缩略图 `IThumbnailProvider`）。
+  - 涉及：新增 `Views/IconsView.xaml(.cs)`、`Views/CompactView.xaml(.cs)`；`Views/NavigationBarView.xaml(.cs)`；`Services/IImageCacheService`（缩略图 `IThumbnailProvider`）。
   - 验收：切换布局即时生效并持久化；1000 张图片目录滚动流畅（缩略图异步加载 + 缓存）。
   - 预估：~500 行（缩略图另算一步）。
   - 建议拆分为 S13a（图标/紧凑，无缩略图）与 S13b（缩略图）。

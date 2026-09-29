@@ -5,11 +5,10 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Windows.System;
 
 namespace Exdir.Views;
 
-/// <summary>一个文件管理窗格：导航条 + 标签页集合。</summary>
+/// <summary>一个文件管理窗格：标签页集合，每个标签页内部自带导航条。</summary>
 public sealed partial class PaneView : UserControl
 {
     public static readonly DependencyProperty ViewModelProperty = DependencyProperty.Register(
@@ -89,27 +88,6 @@ public sealed partial class PaneView : UserControl
         if (ViewModel is not null && args.Item is FolderTabViewModel tab)
         {
             ViewModel.RemoveTab(tab);
-        }
-    }
-
-    private void PathBox_KeyDown(object sender, KeyRoutedEventArgs e)
-    {
-        if (ViewModel?.ActiveTab is not { } tab)
-        {
-            return;
-        }
-
-        switch (e.Key)
-        {
-            case VirtualKey.Enter:
-                e.Handled = true;
-                tab.NavigatePathCommand.Execute(null);
-                break;
-
-            case VirtualKey.Escape:
-                e.Handled = true;
-                tab.PathInput = tab.CurrentPath;
-                break;
         }
     }
 }

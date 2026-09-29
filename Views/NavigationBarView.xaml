@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Exdir.Views.NavigationBarView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!-- 每个标签页独占一份：历史与路径输入都跟着标签页走 -->
+    <Grid
+        Height="30"
+        Padding="4,0,6,0"
+        Background="{ThemeResource LayerFillColorDefaultBrush}"
+        BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+        BorderThickness="0,0,0,1"
+        ColumnSpacing="2">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
+            <Button
+                Width="28"
+                Height="26"
+                Padding="0"
+                AutomationProperties.Name="后退"
+                Background="Transparent"
+                BorderThickness="0"
+                Command="{x:Bind ViewModel.GoBackCommand, Mode=OneWay}"
+                ToolTipService.ToolTip="后退 (Alt+←)">
+                <FontIcon FontSize="13" Glyph="&#xE72B;" />
+            </Button>
+            <Button
+                Width="28"
+                Height="26"
+                Padding="0"
+                AutomationProperties.Name="前进"
+                Background="Transparent"
+                BorderThickness="0"
+                Command="{x:Bind ViewModel.GoForwardCommand, Mode=OneWay}"
+                ToolTipService.ToolTip="前进 (Alt+→)">
+                <FontIcon FontSize="13" Glyph="&#xE72A;" />
+            </Button>
+            <Button
+                Width="28"
+                Height="26"
+                Padding="0"
+                AutomationProperties.Name="上一级"
+                Background="Transparent"
+                BorderThickness="0"
+                Command="{x:Bind ViewModel.GoUpCommand, Mode=OneWay}"
+                ToolTipService.ToolTip="上一级 (Alt+↑)">
+                <FontIcon FontSize="13" Glyph="&#xE74A;" />
+            </Button>
+            <Button
+                Width="28"
+                Height="26"
+                Padding="0"
+                AutomationProperties.Name="刷新"
+                Background="Transparent"
+                BorderThickness="0"
+                Command="{x:Bind ViewModel.RefreshCommand, Mode=OneWay}"
+                ToolTipService.ToolTip="刷新 (F5)">
+                <FontIcon FontSize="13" Glyph="&#xE72C;" />
+            </Button>
+        </StackPanel>
+
+        <TextBox
+            x:Name="PathBox"
+            Grid.Column="1"
+            Height="24"
+            Padding="8,0,8,0"
+            VerticalAlignment="Center"
+            VerticalContentAlignment="Center"
+            AutomationProperties.Name="路径"
+            FontSize="12"
+            IsSpellCheckEnabled="False"
+            KeyDown="PathBox_KeyDown"
+            PlaceholderText="输入路径后按回车"
+            Text="{x:Bind ViewModel.PathInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+            ToolTipService.ToolTip="{x:Bind ViewModel.TooltipText, Mode=OneWay}" />
+    </Grid>
+</UserControl>

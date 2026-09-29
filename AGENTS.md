@@ -102,7 +102,7 @@ exdir/
 │   ├─ SidebarViewModel       文件夹树（懒加载）
 │   ├─ FileItemViewModel      列表一行（不可变）
 │   └─ PinnedFolderViewModel  title 栏上的固定目录
-├─ Views/                     UserControl：SidebarView / DriveBarView / PaneView / DetailsView
+├─ Views/                     UserControl：SidebarView / DriveBarView / PaneView / NavigationBarView / DetailsView
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 ├─ Helpers/                   ColumnLayout(列宽) / DpiHelper / FileTypeHelper / SizeFormatter
 ├─ Converters/CommonConverters.cs
@@ -122,8 +122,8 @@ exdir/
 ├─────────────────────────────────────────────────────────────────┤
 │ 行1 工具条:  左=磁盘/网络盘/可移动盘      右=固定目录 + 快捷菜单⋯  │
 ├────────────┬───┬────────────────────────────────────────────────┤
-│ 行2 侧边栏 │ ║ │ 窗格（1 或 2 个）：每个含导航条(← → ↑ ⟳ + 路径框) │
-│ 文件夹树   │ ║ │ 与 TabView，标签内为详细信息列表                │
+│ 行2 侧边栏 │ ║ │ 窗格（1 或 2 个）：TabView，每个标签页内部自上而下为   │
+│ 文件夹树   │ ║ │ 导航条(← → ↑ ⟳ + 路径框) + 详细信息列表            │
 └────────────┴───┴────────────────────────────────────────────────┘
 ```
 
@@ -142,6 +142,10 @@ exdir/
   `TitleBarExpandedHeight=36`、`ListViewItemMinHeight=24`、`TreeViewItemMinHeight=24`。
   **只覆盖数值/颜色类资源键**，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
 * 活动窗格的边框用强调色（`PaneView.UpdateActiveVisual`），点击窗格会把自己设为活动窗格。
+* **导航条属于标签页，不属于窗格**：`Views/NavigationBarView` 是 `TabView.TabItemTemplate` 里
+  `TabViewItem` 内容的第 0 行（第 1 行是 `DetailsView`），VM 类型是 `FolderTabViewModel`。
+  因此每个标签页各自拥有后退/前进/上一级/刷新按钮与路径输入框（历史和 `PathInput` 都跟着标签页走）。
+  要加“导航条上的新东西”（面包屑、视图切换、过滤器），改 `NavigationBarView.xaml` 而不是 `PaneView.xaml`。
 
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
@@ -200,6 +204,11 @@ exdir/
    模板根必须是 `TabViewItem`；`TreeView` 的分层绑定同理（模板根为 `TreeViewItem`，其 `ItemsSource` 绑子集合）。
 9. **`PanelViewModel.NewTabAsync` 必须先取 `CurrentPath` 再 `CreateTab()`**，
    因为创建标签会切换活动标签，之后再读就是空路径（曾导致新标签页导航到空路径报“无法打开:”）。
+10. **`TextBox.Text` 的 `{x:Bind ..., Mode=TwoWay}` 默认在失焦时才回写**（和 `{Binding}` 一样是 `LostFocus`）。
+    路径框曾因此“回车没反应”：`KeyDown` 里读到的 `PathInput` 还是上一个路径，实际导航到的是原目录。
+    凡是“按回车/按钮就要读输入框内容”的场合，必须写 `UpdateSourceTrigger=PropertyChanged`。
+11. **`DataTemplate` 内部的 `x:Name` 在 code-behind 里访问不到**：模板里需要事件处理或
+    自己的状态时，用 `UserControl` 包一层（例：`NavigationBarView`），再把数据用 DP 传进去。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -219,6 +228,7 @@ exdir/
 * 非打包工程改造、单实例主窗口、Mica 背景、自定义标题栏、图标与窗口位置持久化；
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
 * 1/2 窗格 + 自研分隔条、TabView 多标签、详细信息列表（名称/修改日期/类型/大小、点列头排序、多选、双击进入）；
+* 导航条（← → ↑ ⟳ + 路径框）在**每个标签页内部**（`Views/NavigationBarView`），标签页之间历史与输入互不影响；
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
 * 快捷键、右键菜单尚未实现；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。

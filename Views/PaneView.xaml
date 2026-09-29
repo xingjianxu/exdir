@@ -16,87 +16,9 @@
         BorderThickness="1"
         GotFocus="PaneRoot_GotFocus"
         PointerPressed="PaneRoot_PointerPressed">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <!-- ================= 导航条 ================= -->
-        <Grid
-            Grid.Row="0"
-            Height="30"
-            Padding="4,0,6,0"
-            Background="{ThemeResource LayerFillColorDefaultBrush}"
-            BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
-            BorderThickness="0,0,0,1"
-            ColumnSpacing="2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
-                <Button
-                    Width="28"
-                    Height="26"
-                    Padding="0"
-                    Background="Transparent"
-                    BorderThickness="0"
-                    Command="{x:Bind ViewModel.ActiveTab.GoBackCommand, Mode=OneWay}"
-                    ToolTipService.ToolTip="后退 (Alt+←)">
-                    <FontIcon FontSize="13" Glyph="&#xE72B;" />
-                </Button>
-                <Button
-                    Width="28"
-                    Height="26"
-                    Padding="0"
-                    Background="Transparent"
-                    BorderThickness="0"
-                    Command="{x:Bind ViewModel.ActiveTab.GoForwardCommand, Mode=OneWay}"
-                    ToolTipService.ToolTip="前进 (Alt+→)">
-                    <FontIcon FontSize="13" Glyph="&#xE72A;" />
-                </Button>
-                <Button
-                    Width="28"
-                    Height="26"
-                    Padding="0"
-                    Background="Transparent"
-                    BorderThickness="0"
-                    Command="{x:Bind ViewModel.ActiveTab.GoUpCommand, Mode=OneWay}"
-                    ToolTipService.ToolTip="上一级 (Alt+↑)">
-                    <FontIcon FontSize="13" Glyph="&#xE74A;" />
-                </Button>
-                <Button
-                    Width="28"
-                    Height="26"
-                    Padding="0"
-                    Background="Transparent"
-                    BorderThickness="0"
-                    Command="{x:Bind ViewModel.ActiveTab.RefreshCommand, Mode=OneWay}"
-                    ToolTipService.ToolTip="刷新 (F5)">
-                    <FontIcon FontSize="13" Glyph="&#xE72C;" />
-                </Button>
-            </StackPanel>
-
-            <TextBox
-                x:Name="PathBox"
-                Grid.Column="1"
-                Height="24"
-                Padding="8,0,8,0"
-                VerticalAlignment="Center"
-                VerticalContentAlignment="Center"
-                FontSize="12"
-                IsSpellCheckEnabled="False"
-                KeyDown="PathBox_KeyDown"
-                PlaceholderText="输入路径后按回车"
-                Text="{x:Bind ViewModel.ActiveTab.PathInput, Mode=TwoWay}"
-                ToolTipService.ToolTip="{x:Bind ViewModel.ActiveTab.TooltipText, Mode=OneWay}" />
-        </Grid>
-
-        <!-- ================= 标签页 ================= -->
+        <!-- ================= 标签页（每个标签页自带导航条） ================= -->
         <TabView
             x:Name="Tabs"
-            Grid.Row="1"
             AddTabButtonClick="Tabs_AddTabButtonClick"
             CanDragTabs="False"
             CanReorderTabs="True"
@@ -114,7 +36,14 @@
                         <TabViewItem.IconSource>
                             <FontIconSource FontSize="13" Glyph="&#xE8B7;" />
                         </TabViewItem.IconSource>
-                        <views:DetailsView ViewModel="{x:Bind}" />
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <views:NavigationBarView Grid.Row="0" ViewModel="{x:Bind}" />
+                            <views:DetailsView Grid.Row="1" ViewModel="{x:Bind}" />
+                        </Grid>
                     </TabViewItem>
                 </DataTemplate>
             </TabView.TabItemTemplate>
