@@ -4,8 +4,8 @@
 #   pwsh -NoProfile -File tools\test-settings.ps1
 #   pwsh -NoProfile -File tools\test-settings.ps1 -Exe dist\win-x64\exdir.exe
 #
-# 六个用例：
-#   1. 窗口结构：左侧 4 个分类（文件列表 / 外观 / 布局 / 右键菜单）、默认停在「文件列表」，
+# 八个用例：
+#   1. 窗口结构：左侧 5 个分类（文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单）、默认停在「文件列表」，
 #      右侧只有当前分类的项（切分类真的换页），初始值与 settings.json 一致；
 #   2. 即时生效：拨一下开关，settings.json 立刻变（没有「保存 / 取消」按钮）；
 #   3. 生效到界面：关掉「显示文件扩展名」，文件列表行名里的 ".xxx" 立刻消失；
@@ -13,7 +13,11 @@
 #   5. 「右键菜单」页：列出系统右键菜单项（默认全开），菜单风格开关默认开（内置），
 #      关掉「属性」后立即落盘 verb:properties，重新打开窗口时它仍是关的，再拨回来就清空；
 #   6. 「文件列表」页的「行高」滑块：初值与 settings.json 一致、切到别的分类就读不到，
-#      拖动后立即落盘，并且文件列表的数据行**真的**变高（UIA 量 ListItem 的高度，取中位数）。
+#      拖动后立即落盘，并且文件列表的数据行**真的**变高（UIA 量 ListItem 的高度，取中位数）；
+#   7. 「侧边栏」页的四个分组开关：关掉「云存储」分组后侧边栏树里真的读不到它（其它分组不受影响），
+#      再拨回来又回来；
+#   8. 「外观」页的「标签页使用直角」（默认开）：拨一下就立即落盘并当场应用
+#      （exdir.log 里记下「标签页=圆角 / 直角」），关窗重开仍是新值。
 #
 # 说明：开关类配置项是社区工具包 SettingsCard 里的 ToggleSwitch（Windows 11 设置的那种卡片行），
 #       UIA 里的类型是 Button（不是 CheckBox），所以要靠 TogglePattern 认它；
@@ -51,6 +55,7 @@ if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
 $repoDir = [System.IO.Path]::GetFullPath("$PSScriptRoot\..")
 $settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+$logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
 $failures = 0
@@ -66,11 +71,16 @@ $KeyMap = [ordered]@{
     '显示隐藏文件'           = 'hidden'
     '显示文件扩展名'         = 'extension'
     '文件夹排在文件前面'     = 'foldersFirst'
+    '标签页使用直角'         = 'squareTabCorners'
     '过渡动画'               = 'animations'
     '列宽自动适应窗格宽度'   = 'columnAutoFit'
     '显示工具条'             = 'toolbar'
     '显示侧边栏'             = 'sidebar'
     '双窗格模式'             = 'dualPane'
+    '显示「主目录」分组'     = 'sidebarHome'
+    '显示「收藏夹」分组'     = 'sidebarFavorites'
+    '显示「云存储」分组'     = 'sidebarCloud'
+    '显示「此电脑」分组'     = 'sidebarComputer'
     '使用内置的轻量右键菜单' = 'builtInContextMenu'
 }
 
@@ -80,8 +90,9 @@ $KeyMap = [ordered]@{
 #       它不是开关、也不参与“这一页有几个开关”的计数，单独在用例 6 里断言。
 $CategoryMap = [ordered]@{
     '文件列表' = @('hidden', 'extension', 'foldersFirst')
-    '外观'     = @('animations')
+    '外观'     = @('squareTabCorners', 'animations')
     '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
+    '侧边栏'   = @('sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer')
     '右键菜单' = $null
 }
 
@@ -418,6 +429,30 @@ function Get-DotRowCount {
     return @((Get-Rows -Session $Session) | Where-Object { $_ -match '\.' }).Count
 }
 
+# 侧边栏树里某个分组节点是否真的显示（侧边栏节点的 UIA 类型是 TreeItem）。
+# 只认“在、且有大小的”元素：树控件把滚出视口的行也留在 UIA 树里（IsOffscreen=true），
+# 被隐藏的分组则完全不在树里。
+function Test-SidebarGroupVisible {
+    param($Session, [string]$Name)
+    foreach ($el in (Find-Elements -From $Session.Root -Name $Name)) {
+        if ($el.Current.ControlType -ne [System.Windows.Automation.ControlType]::TreeItem) { continue }
+        if ($el.Current.IsOffscreen) { continue }
+        $r = $el.Current.BoundingRectangle
+        if ($r.Width -gt 0 -and $r.Height -gt 0) { return $true }
+    }
+    return $false
+}
+
+# exdir.log 末尾几行里有没有出现过某个片段。
+# 界面上的“标签页直角 / 圆角”没有 UIA 属性可读（四角不暴露在自动化树里），
+# 所以“拨一下真的应用了”只能靠 ApplySettings 写下的那行日志来断言
+# （视觉上真的变直角 / 圆角由 tools/capture.ps1 的截图人工确认，见 AGENTS.md）。
+function Test-LogContains {
+    param([string]$Pattern, [int]$Tail = 80)
+    if (-not (Test-Path $script:logPath)) { return $false }
+    return @((Get-Content $script:logPath -Tail $Tail) | Where-Object { $_ -like "*$Pattern*" }).Count -gt 0
+}
+
 # ================================================================== 用例 1：结构 + 初始状态
 
 Write-Host '--- 用例 1：设置窗口结构（左导航 / 右卡片）与初始状态 ---'
@@ -428,6 +463,13 @@ Set-Setting 'ShowExtensions' $true
 Set-Setting 'IsDualPane' $false
 # 行高也要先归位：用例 6 要断言“滑块初值 = settings.json”，历史值（或被手改过）会让它不可控
 Set-Setting 'RowHeight' 28
+# 标签页默认是直角：用例 8 要断言“拨一下就变圆角”，历史值同样会让它不可控
+Set-Setting 'SquareTabCorners' $true
+# 侧边栏四个分组默认全部显示：不先归位的话，用例 1 的“初始值一致”与用例 7 都会被历史值干扰
+Set-Setting 'SidebarShowHome' $true
+Set-Setting 'SidebarShowFavorites' $true
+Set-Setting 'SidebarShowCloud' $true
+Set-Setting 'SidebarShowComputer' $true
 # 右键菜单默认全部开启，且默认用内置菜单：不先归位的话，用例 5 的断言会被历史值干扰
 Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
 Set-Setting 'UseBuiltInContextMenu' $true
@@ -438,7 +480,7 @@ $settings = Open-Settings -Session $session
 $navNames = Get-NavNames -Settings $settings
 Write-Host ("  左侧导航: {0}" -f ($navNames -join ' / '))
 Assert ($navNames.Count -eq $CategoryMap.Count) "左侧有 $($CategoryMap.Count) 个分类（实际 $($navNames.Count)）"
-Assert (($navNames -join '/') -eq (($CategoryMap.Keys) -join '/')) '左侧分类就是「文件列表 / 外观 / 布局 / 右键菜单」且顺序一致'
+Assert (($navNames -join '/') -eq (($CategoryMap.Keys) -join '/')) '左侧分类就是「文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单」且顺序一致'
 Assert ((Get-CurrentCategoryKey -Settings $settings) -eq '文件列表') '默认选中的是第一个分类「文件列表」'
 Assert ($null -eq (Find-First -From $settings.Window -Name '保存' -ControlType ([System.Windows.Automation.ControlType]::Button))) '设置窗口里没有「保存」按钮（改了就生效）'
 Assert ($null -eq (Find-First -From $settings.Window -Name '取消' -ControlType ([System.Windows.Automation.ControlType]::Button))) '设置窗口里没有「取消」按钮'
@@ -619,6 +661,49 @@ Assert ([Math]::Abs($rowPxAfter - ($newRowHeight * $session.Scale)) -le 2) "文�
 # 改回默认值，后面的脚本 / 人手看界面都回到原样
 Set-SliderValue -Element (Find-Slider -Settings $settings -Name '行高') -Value $defaultRowHeight
 Assert ((Get-Setting 'RowHeight') -eq $defaultRowHeight) '把行高改回默认值也立即落盘'
+
+# ================================================================== 用例 7：侧边栏分组开关
+
+Write-Host '--- 用例 7：「侧边栏」页的分组开关真的作用于侧边栏 ---'
+Assert (Test-SidebarGroupVisible -Session $session -Name '云存储') '「云存储」分组默认显示在侧边栏树里'
+Assert (Test-SidebarGroupVisible -Session $session -Name '此电脑') '「此电脑」分组默认显示在侧边栏树里'
+
+Invoke-ToggleByKey -Settings $settings -Category '侧边栏' -Key 'sidebarCloud'
+Start-Sleep -Seconds 1
+Assert ((Get-Setting 'SidebarShowCloud') -eq $false) '关掉「显示「云存储」分组」就立即落盘（SidebarShowCloud=false）'
+Assert (-not (Test-SidebarGroupVisible -Session $session -Name '云存储')) '关掉后侧边栏树里真的读不到「云存储」分组了'
+Assert (Test-SidebarGroupVisible -Session $session -Name '此电脑') '其它分组不受影响（「此电脑」还在）'
+
+Invoke-ToggleByKey -Settings $settings -Category '侧边栏' -Key 'sidebarCloud'
+Start-Sleep -Seconds 1
+Assert ((Get-Setting 'SidebarShowCloud') -eq $true) '再拨回来立即落盘（SidebarShowCloud=true）'
+Assert (Test-SidebarGroupVisible -Session $session -Name '云存储') '「云存储」分组又回到侧边栏树里了'
+
+Close-Settings -Settings $settings
+Stop-Session -Session $session
+
+# ================================================================== 用例 8：标签页直角
+
+Write-Host '--- 用例 8：「外观」页的「标签页使用直角」（默认开） ---'
+Set-Setting 'SquareTabCorners' $true
+
+$session = Start-Session
+$settings = Open-Settings -Session $session
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'squareTabCorners') -eq 'On') '默认用直角（settings.json 里为 true）'
+
+Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'squareTabCorners'
+Assert ((Get-Setting 'SquareTabCorners') -eq $false) '拨一下「标签页使用直角」就立即落盘（SquareTabCorners=false）'
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'squareTabCorners') -eq 'Off') '窗口里的开关状态也变了'
+Assert (Test-LogContains -Pattern '标签页=圆角') '改动当场应用到了所有标签页（exdir.log：标签页=圆角）'
+
+# 关窗重开：值应该还在（读回来仍是圆角）
+Close-Settings -Settings $settings
+$settings = Open-Settings -Session $session
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'squareTabCorners') -eq 'Off') '关窗重开设置窗口时仍是圆角'
+
+Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'squareTabCorners'
+Assert ((Get-Setting 'SquareTabCorners') -eq $true) '再拨回来立即落盘（SquareTabCorners=true）'
+Assert (Test-LogContains -Pattern '标签页=直角') '再拨回来也当场应用到了所有标签页（exdir.log：标签页=直角）'
 
 Close-Settings -Settings $settings
 Stop-Session -Session $session

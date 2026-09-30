@@ -6,7 +6,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%LOCALAPPDATA%\exdir\settings.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -23,6 +23,19 @@ public sealed class AppSettings
     public bool IsSidebarVisible { get; set; } = true;
     public double? PrimaryPaneWidth { get; set; }
 
+    // ---------- 侧边栏 ----------
+    /// <summary>侧边栏「主目录」分组（主目录入口 + 桌面 / 文档 / 下载等标准文件夹）是否显示。</summary>
+    public bool SidebarShowHome { get; set; } = true;
+
+    /// <summary>侧边栏「收藏夹」分组（工具条固定目录的镜像，也是拖拽收藏的落点）是否显示。</summary>
+    public bool SidebarShowFavorites { get; set; } = true;
+
+    /// <summary>侧边栏「云存储」分组（OneDrive / WPS 等同步根）是否显示。</summary>
+    public bool SidebarShowCloud { get; set; } = true;
+
+    /// <summary>侧边栏「此电脑」分组（各磁盘）是否显示。</summary>
+    public bool SidebarShowComputer { get; set; } = true;
+
     // ---------- 视图 ----------
     public bool ShowHiddenFiles { get; set; }
     public bool ShowExtensions { get; set; } = true;
@@ -31,6 +44,13 @@ public sealed class AppSettings
 
     /// <summary>文件列表是否播放过渡动画（换目录的入场、插行/排序时的重排动画）。</summary>
     public bool EnableListAnimations { get; set; } = true;
+
+    /// <summary>
+    /// 标签页（<c>TabView</c> 的标签头）是否用直角，默认 true。
+    /// 关掉则回到 WinUI 默认的圆角（<c>OverlayCornerRadius</c> 只保留上面两个角）。
+    /// 值由 <c>FolderTabViewModel.TabCornerRadius</c> 推给每个标签页，见 AGENTS.md 第 4 节“标签条”。
+    /// </summary>
+    public bool SquareTabCorners { get; set; } = true;
 
     /// <summary>
     /// 详细信息列表的列宽（状态/名称/修改日期/类型/大小），单位 DIP；空表示用默认值。

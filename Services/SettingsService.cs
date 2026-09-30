@@ -100,6 +100,9 @@ public sealed class SettingsService : ISettingsService
         // v4 新增“系统右键菜单”的两份清单（已知项 / 被关掉的项），默认都是空：
         // 空 = 全部开启，打开设置页时会用样本目标把清单填满，不需要迁移旧数据。
 
+        // v5 新增侧边栏四个分组的显示开关（SidebarShowHome / Favorites / Cloud / Computer）：
+        // 默认全部显示；旧设置里没有这些字段，反序列化会保留属性初始值 true，同样不需要迁移。
+
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }
 

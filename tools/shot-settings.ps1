@@ -15,7 +15,7 @@
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe",
     [string]$OutDir = "$PSScriptRoot\..\.artifacts",
-    [string[]]$Categories = @('文件列表', '外观', '布局', '右键菜单')
+    [string[]]$Categories = @('文件列表', '外观', '布局', '侧边栏', '右键菜单')
 )
 
 $ErrorActionPreference = 'Stop'

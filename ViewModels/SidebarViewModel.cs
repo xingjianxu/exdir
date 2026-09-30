@@ -115,8 +115,24 @@ public sealed partial class SidebarViewModel : ObservableObject
 
     private readonly Dictionary<string, SidebarNodeViewModel> _index = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 四个分组的节点引用（每次 BuildTree 重建）。
+    /// 分组本身始终存在，显示 / 隐藏只改它们在不不在 <see cref="Roots" /> 里，
+    /// 这样重新打开一个分组时它之前展开的子节点与展开状态都还在。
+    /// </summary>
+    private SidebarNodeViewModel? _homeGroup;
+
     /// <summary>「收藏夹」分组的节点引用（每次 BuildTree 重建；内容由 <see cref="SyncFavorites" /> 填充）。</summary>
     private SidebarNodeViewModel? _favoritesGroup;
+
+    private SidebarNodeViewModel? _cloudGroup;
+    private SidebarNodeViewModel? _computerGroup;
+
+    // 分组显示开关（由 MainViewModel 在启动与设置改动时推过来，见 ApplyGroupVisibility）
+    private bool _showHome = true;
+    private bool _showFavorites = true;
+    private bool _showCloud = true;
+    private bool _showComputer = true;
 
     public SidebarViewModel(
         IFileSystemService fileSystem,
@@ -150,17 +166,32 @@ public sealed partial class SidebarViewModel : ObservableObject
         Roots.Clear();
         _index.Clear();
 
-        Roots.Add(BuildHomeGroup());
+        _homeGroup = BuildHomeGroup();
         _favoritesGroup = BuildFavoritesGroup();
-        Roots.Add(_favoritesGroup);
-        Roots.Add(BuildCloudGroup());
-        Roots.Add(BuildComputerGroup());
+        _cloudGroup = BuildCloudGroup();
+        _computerGroup = BuildComputerGroup();
 
         // 顶层默认展开
-        foreach (var root in Roots)
+        foreach (var root in AllGroups())
         {
             root.IsExpanded = true;
         }
+
+        RefreshRoots();
+    }
+
+    /// <summary>
+    /// 按设置显示 / 隐藏侧边栏的四个分组（设置窗口「侧边栏」页）。
+    /// 启动时与设置改动时各调一次。
+    /// </summary>
+    public void ApplyGroupVisibility(bool home, bool favorites, bool cloud, bool computer)
+    {
+        _showHome = home;
+        _showFavorites = favorites;
+        _showCloud = cloud;
+        _showComputer = computer;
+
+        RefreshRoots();
     }
 
     /// <summary>展开节点时加载其子目录。</summary>
@@ -271,6 +302,49 @@ public sealed partial class SidebarViewModel : ObservableObject
         => _index.TryGetValue(path, out var node) ? node : null;
 
     // ------------------------------------------------------------------ 构建
+
+    private IEnumerable<SidebarNodeViewModel> AllGroups()
+    {
+        if (_homeGroup is not null) { yield return _homeGroup; }
+        if (_favoritesGroup is not null) { yield return _favoritesGroup; }
+        if (_cloudGroup is not null) { yield return _cloudGroup; }
+        if (_computerGroup is not null) { yield return _computerGroup; }
+    }
+
+    /// <summary>
+    /// 按显示开关重组 <see cref="Roots" />：只增删差异项，不整表重建。
+    /// 分组对象始终是同一批，所以折叠 / 展开状态与已懒加载的子节点都留着；
+    /// 整表重建会让树控件重建容器，把已展开的分组全部折回去。
+    /// </summary>
+    private void RefreshRoots()
+    {
+        var desired = new List<SidebarNodeViewModel>(4);
+        if (_showHome && _homeGroup is not null) { desired.Add(_homeGroup); }
+        if (_showFavorites && _favoritesGroup is not null) { desired.Add(_favoritesGroup); }
+        if (_showCloud && _cloudGroup is not null) { desired.Add(_cloudGroup); }
+        if (_showComputer && _computerGroup is not null) { desired.Add(_computerGroup); }
+
+        foreach (var node in Roots.ToList())
+        {
+            if (!desired.Contains(node))
+            {
+                Roots.Remove(node);
+            }
+        }
+
+        // 剩下的已经是 desired 的子序列，按位置把缺的补回去即可保持分组顺序
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i >= Roots.Count)
+            {
+                Roots.Add(desired[i]);
+            }
+            else if (!ReferenceEquals(Roots[i], desired[i]))
+            {
+                Roots.Insert(i, desired[i]);
+            }
+        }
+    }
 
     private SidebarNodeViewModel BuildHomeGroup()
     {

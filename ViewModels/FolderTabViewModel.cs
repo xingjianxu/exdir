@@ -11,6 +11,7 @@ using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.Models;
 using Exdir.Services;
+using Microsoft.UI.Xaml;
 
 namespace Exdir.ViewModels;
 
@@ -56,6 +57,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private bool _foldersFirst;
     private bool _showExtensions = true;
     private bool _enableListAnimations = true;
+    private CornerRadius _tabCornerRadius;
 
     public FolderTabViewModel(
         IFileSystemService fileSystem,
@@ -73,6 +75,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         _foldersFirst = settings.Current.FoldersFirst;
         _showExtensions = settings.Current.ShowExtensions;
         _enableListAnimations = settings.Current.EnableListAnimations;
+        _tabCornerRadius = CornerRadiusFor(settings.Current.SquareTabCorners);
 
         Columns = new ColumnLayout();
         Columns.Apply(
@@ -249,6 +252,17 @@ public sealed partial class FolderTabViewModel : ObservableObject
     {
         get => _enableListAnimations;
         private set => SetProperty(ref _enableListAnimations, value);
+    }
+
+    /// <summary>
+    /// 标签头的圆角：视图把它绑到 <c>TabViewItem.CornerRadius</c> 上。
+    /// 为什么不直接在 XAML 里写死 / 用资源：它得能在设置改动后立即生效（每个标签页各自的属性，
+    /// 赋同样的值不会重排），而 WinUI 模板里那个 <c>CornerRadius</c> 是 <c>TemplateBinding</c>，会跟着这个属性变。
+    /// </summary>
+    public CornerRadius TabCornerRadius
+    {
+        get => _tabCornerRadius;
+        private set => SetProperty(ref _tabCornerRadius, value);
     }
 
     public bool CanGoBack => _backStack.Count > 0;
@@ -725,6 +739,17 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// （动画是纯视图行为，刷新一次目录只会白白闪一下）。
     /// </summary>
     public void ApplyAnimationSettings() => EnableListAnimations = _settings.Current.EnableListAnimations;
+
+    /// <summary>“标签页直角”开关变化：只更新圆角，不动目录与选择。</summary>
+    public void ApplyTabCornerSettings() => TabCornerRadius = CornerRadiusFor(_settings.Current.SquareTabCorners);
+
+    /// <summary>
+    /// 两种标签圆角。圆角值抄的是 WinUI 标签的默认值：<c>OverlayCornerRadius</c>(8) 经
+    /// <c>TopCornerRadiusFilterConverter</c> 只保留上面两个角，下面两个角始终是直角
+    /// （标签下面就是窗格内容，圆角会把背景露出来）。
+    /// </summary>
+    private static CornerRadius CornerRadiusFor(bool squareTabs)
+        => squareTabs ? new CornerRadius(0) : new CornerRadius(8, 8, 0, 0);
 
     // ------------------------------------------------------------------ 树形展开
 

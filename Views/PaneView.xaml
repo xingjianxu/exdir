@@ -34,6 +34,7 @@
             <TabView.TabItemTemplate>
                 <DataTemplate x:DataType="vm:FolderTabViewModel">
                     <TabViewItem
+                        CornerRadius="{x:Bind TabCornerRadius, Mode=OneWay}"
                         Header="{x:Bind TabHeader, Mode=OneWay}"
                         HorizontalContentAlignment="Stretch"
                         ToolTipService.ToolTip="{x:Bind TooltipText, Mode=OneWay}"

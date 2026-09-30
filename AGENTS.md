@@ -65,9 +65,10 @@ pwsh -NoProfile -File tools\make-icon.ps1
 #    需要交互桌面；当前 shell 提权时会自动改用 explorer.exe 以普通权限启动 exdir（见第 6 节第 21 条）
 pwsh -NoProfile -File tools\test-pin-drag.ps1
 
-# 7) 设置窗口回归（左导航四个分类 / 每页只显示本分类的项 / 拨一下就立即生效并落盘 /
+# 7) 设置窗口回归（左导航五个分类 / 每页只显示本分类的项 / 拨一下就立即生效并落盘 /
 #    跨分类读回 / 关窗重开仍是新值 / 「右键菜单」页的系统菜单项默认全开且能逐项关掉 /
-#    「行高」滑块拖完列表行真的变高）
+#    「行高」滑块拖完列表行真的变高 / 「侧边栏」页的分组开关关掉后树里真的少一个分组 /
+#    「标签页使用直角」拨一下就落盘并当场应用（exdir.log 里能看到 标签页=圆角/直角））
 #    全程走 UIA 模式，不需要真鼠标、不需要前台窗口；跑完还原 settings.json
 pwsh -NoProfile -File tools\test-settings.ps1
 
@@ -184,7 +185,8 @@ exdir/
 │   ├─ PanelViewModel         一个窗格（标签页集合）
 │   ├─ FolderTabViewModel     一个标签页（当前目录、条目、选中、历史、排序、地址栏编辑态）
 │   ├─ PathSegmentViewModel   地址栏面包屑里的一段路径（显示名 + 完整路径 + 是否当前段）
-│   ├─ SidebarViewModel       文件夹树（懒加载；含镜像工具条固定目录的「收藏夹」分组）
+│   ├─ SidebarViewModel       文件夹树（懒加载；含镜像工具条固定目录的「收藏夹」分组；
+│   │                         四个分组的显示开关由 ApplyGroupVisibility 控制）
 │   ├─ FileItemViewModel      列表一行（带 Depth/IsExpanded/Children，可展开）
 │   ├─ PinnedFolderViewModel  title 栏上的固定目录
 │   ├─ StatusBarViewModel     文件列表区底部状态栏（项数 / 选中摘要 + 合计大小 / 卷容量）
@@ -237,6 +239,12 @@ exdir/
   `收藏夹`（工具条固定目录的镜像，可从文件列表/侧边栏拖目录进来收藏，见下面“固定目录”那条）、
   `云存储`（注册表探测到的同步根）、`此电脑`（各磁盘）。分组节点本身可导航当且仅当它有路径
   （`SidebarNodeViewModel.IsNavigable`）。
+
+  四个分组各自可以在设置窗口「侧边栏」页里关掉不显示（`AppSettings.SidebarShowHome` /
+  `SidebarShowFavorites` / `SidebarShowCloud` / `SidebarShowComputer`，默认全开）：
+  `MainViewModel.ApplySidebarGroups()` 把设置推给 `SidebarViewModel.ApplyGroupVisibility()`，
+  后者只增删 `Roots` 里的差异项、不整表重建，所以重新打开一个分组时它之前折叠/展开的状态
+  与已懒加载的子节点全都还在（整表重建会把这些全丢掉）。
 * 紧凑密度靠 `Themes/ExdirTheme.xaml` 里覆盖 WinUI 数值型资源实现：
   `TitleBarExpandedHeight=36`、`ListViewItemMinHeight=24`、`TreeViewItemMinHeight=24`。
   **只覆盖数值/颜色类资源键**，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
@@ -253,6 +261,12 @@ exdir/
   在 24 高的标签里只剩 8 DIP 长，改成 4 后是 16 DIP）。
   标签内的文字/图标仍是 16 DIP，上下各留 4 DIP；关闭按钮变成 32×16（宽度不动，点得中）。
   新增“标签条上的东西”时请沿用这组尺寸，不要往回调。
+  * **标签的圆角是直角（默认，可配）**：`AppSettings.SquareTabCorners`（默认 true = 直角），
+    设置窗口「外观 → 标签页使用直角」里改，关掉就回到 WinUI 默认的圆角（只圆上面两个角）。
+    实现在 `Views/PaneView.xaml` 的 `TabViewItem` 上绑 `CornerRadius="{x:Bind TabCornerRadius, Mode=OneWay}"`
+    （值由 `FolderTabViewModel` 从设置算出来），WinUI 模板里 `TabBackground.CornerRadius` 是
+    `TemplateBinding`，所以设置一改就会当场重画，不需要重建标签页；
+    上面那个“圆角顶边贴住窗格上边框”的描述在默认的直角模式下就是一条水平直线。
 * **扁平控件的悬停/按下/选中底色全部是强调色**（`Themes/ExdirTheme.xaml`）：
   WinUI 默认都是“灰底上叠 8% 白”（`ButtonBackgroundPointerOver`、`MenuBarItemBackgroundPointerOver`、
   `ListViewItemBackgroundPointerOver`…），几乎看不出鼠标停在哪里。现在统一换成强调色，
@@ -562,13 +576,14 @@ exdir/
 * **Windows 11 风格**：左侧 `NavigationView` 选分类，右侧一列设置卡片 ——
   每行是社区工具包的 `SettingsCard`（`CommunityToolkit.WinUI.Controls.SettingsControls` 8.2.251219），
   标题 + 灰色说明在左、控件在右、悬停/圆角/高对比主题全跟系统走，**不再自己写行模板**。
-  当前四个分类：
+  当前五个分类：
 
   | 分类 | 配置项 |
   | --- | --- |
   | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高（滑块，默认 28） |
-  | 外观 | 过渡动画 |
+  | 外观 | 过渡动画 / 标签页使用直角（默认开） |
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
+  | 侧边栏 | 显示「主目录」分组 / 显示「收藏夹」分组 / 显示「云存储」分组 / 显示「此电脑」分组（各分组的显示开关，默认全开） |
   | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 系统右键菜单项逐项开关（动态清单，见第 4 节“右键菜单”） |
 
   * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`（列表顺序即导航顺序），
@@ -576,8 +591,8 @@ exdir/
     切换分类**用 `SelectionChanged` 而不是 `ItemInvoked`**：后者只在“用户点了 / 按了”时触发，
     键盘方向键与程序化选中（自动化脚本的 `SelectionItemPattern`、直接赋 `SelectedItem`）都不触发，
     那样右侧页面不会跟着换（已踩过）。
-  * 右侧四页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible` /
-    `IsShellMenuPageVisible`（`SelectedCategory` 的 setter 里一次性通知这四个，省得每页各写一个枚举转换器）。
+  * 右侧五页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible` /
+    `IsSidebarPageVisible` / `IsShellMenuPageVisible`（`SelectedCategory` 的 setter 里一次性通知这五个，省得每页各写一个枚举转换器）。
     非当前页是 `Visibility=Collapsed`，**UIA 树里根本没有它们**：所以回归脚本
     “切到某分类后只看得到该分类的开关”本身就是“切页真的生效”的验证。
   * 每一行用 `{x:Bind}` 把 VM 属性绑到卡片里的控件上（`ToggleSwitch.IsOn` / `Slider.Value` 都是 TwoWay）；
@@ -999,6 +1014,25 @@ exdir/
     行上接受不等于最终接受，必须再在 `TreeView` 上 `AddHandler(..., handledEventsToo: true)`
     接一次 `DragOver`（在路由最后重新赋 `Copy`）与 `Drop`，否则拖过去高亮会亮、松手却什么都不发生。
 
+55. **标签的圆角要改 `TabViewItem.CornerRadius`，不要去改 `OverlayCornerRadius`**：
+    当前 WinAppSDK 的 `TabViewItem` 模板里，标签底色那个 `TabBackground` 写的是
+    `CornerRadius="{TemplateBinding CornerRadius}"`（旧版模板是 `Binding ... ThemeResource OverlayCornerRadius`），
+    所以给 `TabViewItem` 设 `CornerRadius`（本仓库是从 `FolderTabViewModel.TabCornerRadius` 用
+    `{x:Bind}` 绑上去的 `Control.CornerRadius`）就能把上面两个角变成直角，而且属性一变当场重画，
+    不用重建标签页；改 `OverlayCornerRadius` 会影响所有弹层（圆角是全局共用的一份）。
+    * “圆角”应当填 `(8,8,0,0)`：模板默认值就是 `OverlayCornerRadius`(8) 经
+      `TopCornerRadiusFilterConverter` 只保留上面两角；下面两角始终是直角（标签下面就是窗格内容）。
+      实测“标签左上角最大内缩”在直角下 3.5 DIP、在 `(8,8,0,0)` 下 6.5 DIP，与改动前的默认外观完全一致。
+    * 模板里标签下方那对“倒角”`LeftRadiusRender`/`RightRadiusRender` 靠一份 **`StaticResource`**
+      （`TabViewItemRadiusRenderCornerRadius`）驱动，框架字典里的 `StaticResource` 不受 App 级
+      同名键影响（第 29/38 条那套只适用于 `ThemeResource`），所以**改不了也无需改**：
+      直角模式下它只是把标签条底部那条边接平，肉眼看不到残留圆弧。
+    * 验证手段：四角半径不在 UIA 里，所以自动化只能靠截图量像素。在标签页的 UIA 矩形左上角
+      取一小块，逐行找“第一个标签底色像素”（lum ≥ 246）相对左边缘的内缩，取最大值：
+      直角 ≈ 3.5 DIP、圆角 ≈ 6.5 DIP（那 3.5 是标签顶边 1 DIP 那条淡线与抗锯齿，不是圆角）。
+      UIA 只能读到标签的矩形（圆角与否它一样），所以 `tools/test-settings.ps1` 用例 8 只断言
+      “拨一下就落盘 + exdir.log 里当场应用了”，真变直角/圆角靠截图人工确认。
+
 ## 7. 非打包模式下的 API 限制
 
 没有 Package Identity，因此**不要**使用：`Windows.Storage.KnownFolders`、
@@ -1045,20 +1079,22 @@ exdir/
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
 * **所有配置项集中在设置窗口**（2026-09 从 ContentDialog 改成独立窗口，S17d）：菜单栏「配置 → 设置…」
   打开 `Views/SettingsWindow`（`Window`，默认 860×800、工作区居中，同一时刻只开一个）。
-  左侧 `NavigationView` 四个分类（文件列表 / 外观 / 布局 / 右键菜单），右侧一列 Windows 11 风格设置卡片
+  左侧 `NavigationView` 五个分类（文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单），右侧一列 Windows 11 风格设置卡片
   （社区工具包 `SettingsCard`，不再自己写行模板），只显示当前分类那一页；
-  前三个分类共 9 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / **行高**）、
-  外观（过渡动画）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）；
+  前四个分类共 14 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / **行高**）、
+  外观（过渡动画 / **标签页使用直角**，默认开）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）、
+  侧边栏（显示「主目录」/「收藏夹」/「云存储」/「此电脑」四个分组，均默认开）；
   「右键菜单」页除了「使用内置的轻量右键菜单」这一个开关（默认开）之外，
   还是系统菜单项的动态清单（见下面那条与第 4 节）。
   **改动即时生效并立即落盘**（没有「保存 / 取消」）：`SettingsViewModel.Changed` →
   `MainViewModel.ApplySettings`（写 `AppSettings` + 刷界面 + `Save()`）。
   新增固定配置项要同时改 `AppSettings`、`SettingsViewModel`、`SettingsView.xaml`、`ApplySettings`
   与 `tools/test-settings.ps1` 的 `$KeyMap` / `$CategoryMap`（见第 4 节）。
-  回归：`tools/test-settings.ps1`（6 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
+  回归：`tools/test-settings.ps1`（8 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
   拨一下立即落盘并作用到文件列表 / 跨分类与关窗重开读回 / 同一时刻只开一个窗口 /
   菜单风格开关默认开（内置）且拨一下就落盘、系统菜单项默认全开且能逐项关闭 /
-  行高滑块改完列表行真的变高），全程走 UIA 模式（不需要前台窗口）；
+  行高滑块改完列表行真的变高 / 侧边栏分组开关改完树里真的少一个分组 /
+  标签页直角默认开、拨一下就当场应用），全程走 UIA 模式（不需要前台窗口）；
   布局截图：`tools/shot-settings.ps1`（.artifacts\settings-<分类名>.png，需要交互桌面）。
   原先的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）已移除，
   「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与设置窗口共享同一份设置）；
@@ -1112,6 +1148,12 @@ exdir/
   见第 4 节“标签条紧凑”与第 6 节第 36 条；双窗格（含标签溢出时的 ◀ ▶）两边标签栏高度一致。
   验证：`tools/capture.ps1` 截图后量像素（标签条上边紧贴窗格上边框、总高 48 物理像素 @200%），
   `tools/inspect-ui.ps1 -Filter <标签名>`（`TabItem` 高 48 物理像素 = 24 DIP）。
+* **标签页默认是直角**（2026-09，见第 4 节“标签的圆角是直角”与第 6 节第 55 条）：
+  标签头上面两个角不再用 WinUI 默认的 8 DIP 圆角，而是直角（与紧凑的 24 DIP 标签条更协调）；
+  想回到系统默认的圆角就在「设置 → 外观 → 标签页使用直角」里关掉（`AppSettings.SquareTabCorners`，
+  默认 true），改完当场重画、无需重启；
+  验证：`tools/capture.ps1` 截图量像素（标签左上角最大内缩：直角 ≈ 3.5 DIP、圆角 ≈ 6.5 DIP），
+  回归：`tools/test-settings.ps1` 用例 8。
 * **选择**（2026-09）：单击文件列表空白处（列头以下、任何一行之外）取消选择并把焦点留在列表上；
   `Ctrl+A` 全选列表里当前可见的行（就地展开出来的子行也算）；文件列表里**双击行的任意位置**
   （不只是名称文字 / 图标那一小块）都进入目录 / 打开文件——行内空白处命中的是 `ListViewItem`，

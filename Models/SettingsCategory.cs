@@ -17,6 +17,9 @@ public enum SettingsCategory
     /// <summary>布局：工具条 / 侧边栏 / 双窗格 / 列宽。</summary>
     Layout,
 
+    /// <summary>侧边栏：四个分组（主目录 / 收藏夹 / 云存储 / 此电脑）各自的显示开关。</summary>
+    Sidebar,
+
     /// <summary>右键菜单：逐项开关系统（含第三方扩展）的右键菜单项。</summary>
     ShellMenu,
 }

@@ -79,6 +79,10 @@ public sealed partial class MainViewModel : ObservableObject
         ReloadDrives();
         LoadPinnedFolders();
         LoadQuickCommands();
+
+        // 侧边栏四个分组的显示开关来自设置，必须在窗口首次渲染前生效（InitializeAsync 在 Loaded 里，
+        // 那时窗口已经可见，不在这里先应用的话会先闪一下全部四个分组）
+        ApplySidebarGroups();
     }
 
     // ------------------------------------------------------------------ 集合
@@ -597,6 +601,13 @@ public sealed partial class MainViewModel : ObservableObject
         settings.FoldersFirst = edited.FoldersFirst;
         settings.ColumnAutoFit = edited.ColumnAutoFit;
         settings.RowHeight = ColumnLayout.NormalizeRowHeight(edited.RowHeight);
+        settings.SquareTabCorners = edited.SquareTabCorners;
+
+        // 侧边栏四个分组的显示开关（设置窗口「侧边栏」页）
+        settings.SidebarShowHome = edited.SidebarShowHome;
+        settings.SidebarShowFavorites = edited.SidebarShowFavorites;
+        settings.SidebarShowCloud = edited.SidebarShowCloud;
+        settings.SidebarShowComputer = edited.SidebarShowComputer;
 
         OnPropertyChanged(nameof(ShowHiddenFiles));
         OnPropertyChanged(nameof(ShowExtensions));
@@ -612,6 +623,7 @@ public sealed partial class MainViewModel : ObservableObject
                 tab.FoldersFirst = edited.FoldersFirst;
                 tab.Columns.AutoFit = edited.ColumnAutoFit;
                 tab.Columns.RowHeight = settings.RowHeight;
+                tab.ApplyTabCornerSettings();
             }
         }
 
@@ -623,6 +635,8 @@ public sealed partial class MainViewModel : ObservableObject
         IsToolbarVisible = edited.ShowToolbar;
         IsSidebarVisible = edited.ShowSidebar;
         IsDualPane = edited.DualPane;
+
+        ApplySidebarGroups();
 
         // 右键菜单：风格（系统 / 内置）与清单。
         // 风格是视图在每次右键时现读的（见 FolderTabViewModel.UseBuiltInContextMenu），
@@ -642,8 +656,10 @@ public sealed partial class MainViewModel : ObservableObject
         Log.Write(
             $"设置已应用：隐藏文件={edited.ShowHiddenFiles} 扩展名={edited.ShowExtensions} "
             + $"文件夹优先={edited.FoldersFirst} 动画={edited.EnableListAnimations} 列宽自适应={edited.ColumnAutoFit} "
-            + $"行高={settings.RowHeight:0} "
+            + $"行高={settings.RowHeight:0} 标签页={(settings.SquareTabCorners ? "直角" : "圆角")} "
             + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane} "
+            + $"侧边栏分组（主目录/收藏夹/云存储/此电脑）="
+            + $"{edited.SidebarShowHome}/{edited.SidebarShowFavorites}/{edited.SidebarShowCloud}/{edited.SidebarShowComputer} "
             + $"右键菜单={(edited.UseBuiltInContextMenu ? "内置" : "系统")} "
             + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
     }
@@ -670,6 +686,21 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(IsDualPane));
         OnPropertyChanged(nameof(IsToolbarVisible));
         OnPropertyChanged(nameof(IsSidebarVisible));
+
+        ApplySidebarGroups();
+    }
+
+    /// <summary>
+    /// 把设置里的侧边栏分组显示开关推给 <see cref="Sidebar" />（启动与设置改动时都走这里）。
+    /// 侧边栏自己只负责“显示哪几个分组”，不读设置。
+    /// </summary>
+    private void ApplySidebarGroups()
+    {
+        Sidebar.ApplyGroupVisibility(
+            _settings.Current.SidebarShowHome,
+            _settings.Current.SidebarShowFavorites,
+            _settings.Current.SidebarShowCloud,
+            _settings.Current.SidebarShowComputer);
     }
 
     private void ReloadDrives()

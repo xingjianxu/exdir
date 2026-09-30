@@ -96,6 +96,14 @@
                         Style="{ThemeResource TitleTextBlockStyle}"
                         Text="外观" />
 
+                    <controls:SettingsCard Description="标签页顶部两个角用直角（更紧凑整齐）；关掉则用 Windows 默认的圆角" Header="标签页使用直角">
+                        <ToggleSwitch
+                            AutomationProperties.Name="标签页使用直角"
+                            IsOn="{x:Bind ViewModel.SquareTabCorners, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
                     <controls:SettingsCard Description="换目录与排序时播放列表入场 / 重排动画" Header="过渡动画">
                         <ToggleSwitch
                             AutomationProperties.Name="过渡动画"
@@ -140,6 +148,53 @@
                         <ToggleSwitch
                             AutomationProperties.Name="双窗格模式"
                             IsOn="{x:Bind ViewModel.DualPane, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+                </StackPanel>
+
+                <!-- ============================ 侧边栏 ============================ -->
+                <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.IsSidebarPageVisible, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock
+                        Margin="4,0,0,12"
+                        Style="{ThemeResource TitleTextBlockStyle}"
+                        Text="侧边栏" />
+
+                    <TextBlock
+                        Margin="4,0,4,8"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Text="选择左侧文件夹树里显示哪几个分组（关掉只是不显示，不会丢掉已展开的目录与收藏）。"
+                        TextWrapping="Wrap" />
+
+                    <controls:SettingsCard Description="用户主目录，以及桌面 / 文档 / 下载 / 图片等标准文件夹" Header="显示「主目录」分组">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「主目录」分组"
+                            IsOn="{x:Bind ViewModel.SidebarShowHome, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="工具条上固定目录的镜像，也是把目录拖进侧边栏收藏的落点" Header="显示「收藏夹」分组">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「收藏夹」分组"
+                            IsOn="{x:Bind ViewModel.SidebarShowFavorites, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="OneDrive / WPS 等同步根目录" Header="显示「云存储」分组">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「云存储」分组"
+                            IsOn="{x:Bind ViewModel.SidebarShowCloud, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="本机各磁盘与其他已挂载的卷" Header="显示「此电脑」分组">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「此电脑」分组"
+                            IsOn="{x:Bind ViewModel.SidebarShowComputer, Mode=TwoWay}"
                             OffContent=""
                             OnContent="" />
                     </controls:SettingsCard>

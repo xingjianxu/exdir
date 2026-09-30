@@ -33,12 +33,17 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _showExtensions;
     private bool _foldersFirst;
     private bool _enableListAnimations;
+    private bool _squareTabCorners;
     private bool _columnAutoFit;
     private bool _showToolbar;
     private bool _showSidebar;
     private bool _dualPane;
     private double _rowHeight;
     private bool _useBuiltInContextMenu;
+    private bool _sidebarShowHome;
+    private bool _sidebarShowFavorites;
+    private bool _sidebarShowCloud;
+    private bool _sidebarShowComputer;
 
     /// <summary>按当前设置生成一份编辑模型。</summary>
     public SettingsViewModel(AppSettings settings, IShellContextMenuService contextMenu)
@@ -50,6 +55,7 @@ public sealed class SettingsViewModel : ObservableObject
             new(SettingsCategory.FileList, "文件列表"),
             new(SettingsCategory.Appearance, "外观"),
             new(SettingsCategory.Layout, "布局"),
+            new(SettingsCategory.Sidebar, "侧边栏"),
             new(SettingsCategory.ShellMenu, "右键菜单"),
         };
 
@@ -65,10 +71,15 @@ public sealed class SettingsViewModel : ObservableObject
         _showExtensions = settings.ShowExtensions;
         _foldersFirst = settings.FoldersFirst;
         _enableListAnimations = settings.EnableListAnimations;
+        _squareTabCorners = settings.SquareTabCorners;
         _columnAutoFit = settings.ColumnAutoFit;
         _showToolbar = settings.ShowToolbar;
         _showSidebar = settings.IsSidebarVisible;
         _dualPane = settings.IsDualPane;
+        _sidebarShowHome = settings.SidebarShowHome;
+        _sidebarShowFavorites = settings.SidebarShowFavorites;
+        _sidebarShowCloud = settings.SidebarShowCloud;
+        _sidebarShowComputer = settings.SidebarShowComputer;
         _useBuiltInContextMenu = settings.UseBuiltInContextMenu;
 
         // 行高：settings.json 可能被手改过，夹进可用区间再填给滑条
@@ -101,10 +112,11 @@ public sealed class SettingsViewModel : ObservableObject
                 return;
             }
 
-            // 四个页面各自绑一个 bool（比让 XAML 去比枚举省事，也不用给每个页面写转换器参数）
+            // 五个页面各自绑一个 bool（比让 XAML 去比枚举省事，也不用给每个页面写转换器参数）
             OnPropertyChanged(nameof(IsFileListPageVisible));
             OnPropertyChanged(nameof(IsAppearancePageVisible));
             OnPropertyChanged(nameof(IsLayoutPageVisible));
+            OnPropertyChanged(nameof(IsSidebarPageVisible));
             OnPropertyChanged(nameof(IsShellMenuPageVisible));
         }
     }
@@ -117,6 +129,9 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>右侧是否显示「布局」页。</summary>
     public bool IsLayoutPageVisible => _selectedCategory.Key == SettingsCategory.Layout;
+
+    /// <summary>右侧是否显示「侧边栏」页。</summary>
+    public bool IsSidebarPageVisible => _selectedCategory.Key == SettingsCategory.Sidebar;
 
     /// <summary>右侧是否显示「右键菜单」页。</summary>
     public bool IsShellMenuPageVisible => _selectedCategory.Key == SettingsCategory.ShellMenu;
@@ -270,6 +285,13 @@ public sealed class SettingsViewModel : ObservableObject
         set => SetAndNotify(ref _enableListAnimations, value);
     }
 
+    /// <summary>标签页顶部两个角用直角（关掉 = WinUI 默认的圆角）。</summary>
+    public bool SquareTabCorners
+    {
+        get => _squareTabCorners;
+        set => SetAndNotify(ref _squareTabCorners, value);
+    }
+
     // ------------------------------------------------------------------ 布局
 
     /// <summary>列宽自动适应窗格宽度（关掉 = 固定列宽 + 横向滚动）。</summary>
@@ -298,6 +320,36 @@ public sealed class SettingsViewModel : ObservableObject
     {
         get => _dualPane;
         set => SetAndNotify(ref _dualPane, value);
+    }
+
+    // ------------------------------------------------------------------ 侧边栏
+
+    /// <summary>显示「主目录」分组（主目录入口 + 桌面 / 文档 / 下载等标准文件夹）。</summary>
+    public bool SidebarShowHome
+    {
+        get => _sidebarShowHome;
+        set => SetAndNotify(ref _sidebarShowHome, value);
+    }
+
+    /// <summary>显示「收藏夹」分组（工具条固定目录的镜像，也是拖拽收藏的落点）。</summary>
+    public bool SidebarShowFavorites
+    {
+        get => _sidebarShowFavorites;
+        set => SetAndNotify(ref _sidebarShowFavorites, value);
+    }
+
+    /// <summary>显示「云存储」分组（OneDrive / WPS 等同步根）。</summary>
+    public bool SidebarShowCloud
+    {
+        get => _sidebarShowCloud;
+        set => SetAndNotify(ref _sidebarShowCloud, value);
+    }
+
+    /// <summary>显示「此电脑」分组（各磁盘）。</summary>
+    public bool SidebarShowComputer
+    {
+        get => _sidebarShowComputer;
+        set => SetAndNotify(ref _sidebarShowComputer, value);
     }
 
     // ------------------------------------------------------------------ 内部
