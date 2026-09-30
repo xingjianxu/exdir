@@ -79,6 +79,7 @@ public partial class App : Application
         // 基础设施
         services.AddSingleton<ISettingsService, SettingsService>();
         services.AddSingleton<IKnownFolderService, KnownFolderService>();
+        services.AddSingleton<INetworkLocationService, NetworkLocationService>();
         services.AddSingleton<ICloudSyncService, CloudSyncService>();
         services.AddSingleton<IFileSystemService, FileSystemService>();
         services.AddSingleton<IDriveService, DriveService>();
@@ -86,6 +87,8 @@ public partial class App : Application
         services.AddSingleton<IShellIconService, ShellIconService>();
         services.AddSingleton<IShellContextMenuService, ShellContextMenuService>();
         services.AddSingleton<IDeviceChangeService, DeviceChangeService>();
+        services.AddSingleton<IClipboardService, ClipboardService>();
+        services.AddSingleton<IFileOperationService, FileOperationService>();
 
         // ViewModel
         services.AddSingleton<MainViewModel>();

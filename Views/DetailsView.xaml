@@ -10,12 +10,21 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <Grid x:Name="DetailsRoot" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+    <Grid x:Name="DetailsRoot"
+          AllowDrop="True"
+          Background="{ThemeResource SolidBackgroundFillColorBaseBrush}"
+          DragStarting="DetailsRoot_DragStarting"
+          PreviewKeyDown="DetailsRoot_PreviewKeyDown">
         <!-- Ctrl+A 全选本列表的行（就地展开出来的子行也算，它们就是列表里的行）。
              挂在这一层而不是 ListView 上，是为了让焦点在列头按钮 / 行内展开箭头时也生效；
              地址栏在 NavigationBarView 里，不在本控件内，所以那里的 Ctrl+A 仍然是文本框全选。 -->
         <Grid.KeyboardAccelerators>
             <KeyboardAccelerator Key="A" Modifiers="Control" Invoked="SelectAllAccelerator_Invoked" />
+            <!-- 复制 / 剪切 / 粘贴。同样挂在这一层：焦点在地址栏（不在本控件里）时
+                 Ctrl+C/X/V 仍然是文本框自己的行为。 -->
+            <KeyboardAccelerator Key="C" Modifiers="Control" Invoked="CopyAccelerator_Invoked" />
+            <KeyboardAccelerator Key="X" Modifiers="Control" Invoked="CutAccelerator_Invoked" />
+            <KeyboardAccelerator Key="V" Modifiers="Control" Invoked="PasteAccelerator_Invoked" />
         </Grid.KeyboardAccelerators>
 
         <Grid.RowDefinitions>
@@ -140,10 +149,9 @@
             x:Name="EntryList"
             Grid.Row="1"
             Padding="0"
-            CanDragItems="True"
+            CanDragItems="False"
             CanReorderItems="False"
             ContainerContentChanging="EntryList_ContainerContentChanging"
-            DragItemsStarting="EntryList_DragItemsStarting"
             ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}"
             Loaded="EntryList_Loaded"
             SelectionChanged="EntryList_SelectionChanged"
@@ -160,6 +168,13 @@
                         列头行（ExListHeaderHeight=26）不跟着变，仍然是紧凑表头。
                     -->
                     <Setter Property="MinHeight" Value="0" />
+                    <!--
+                        拖放落点统一交给最外层的 DetailsRoot（整个文件列表区就它一个 AllowDrop）：
+                        ListViewItem 默认也是拖放目标，指针在行间移动时目标一直在变，
+                        而 ListViewBase 自己会把 Drop 吃掉（CanReorderItems=False 时既不重排也不冒泡），
+                        实测会出现“行高亮着、松手却什么都没发生”。这里把容器排除出去。
+                    -->
+                    <Setter Property="AllowDrop" Value="False" />
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 </Style>
             </ListView.ItemContainerStyle>
@@ -324,6 +339,18 @@
                             FontSize="12"
                             Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                             Text="{x:Bind SizeText}" />
+
+                        <!-- 拖拽经过整行时画一圈强调色（只有目录行才是有效的拖放入口，见 code-behind）：
+                             放在最后一个子元素上所以盖在内容之上，半透明背景不遮住文字；
+                             IsHitTestVisible=False 才能不抢行内那些按钮的指针事件。 -->
+                        <Border
+                            Grid.Column="0"
+                            Grid.ColumnSpan="6"
+                            Background="{ThemeResource ExSurfaceBackgroundSelected}"
+                            BorderBrush="{ThemeResource AccentFillColorDefaultBrush}"
+                            BorderThickness="1"
+                            IsHitTestVisible="False"
+                            Visibility="{x:Bind IsDropTarget, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
                     </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>

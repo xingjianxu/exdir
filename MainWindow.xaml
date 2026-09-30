@@ -51,16 +51,36 @@
                 <x:Double x:Key="TitleBarCompactHeight">30</x:Double>
             </TitleBar.Resources>
 
-            <TitleBar.IconSource>
-                <FontIconSource FontSize="14" Glyph="&#xE8B7;" />
-            </TitleBar.IconSource>
+            <!-- 不设 IconSource：TitleBar 模板里那个图标槽（列 5）在 LeftHeader 之后、
+                 当前目录名之前，会渲染成一个文件夹字形，夹在「帮助」菜单和目录名中间。
+                 窗口/任务栏图标由 AppWindow.SetIcon(Assets\exdir.ico) 单独负责，删掉它不影响。 -->
 
             <TitleBar.LeftHeader>
-                <MenuBar
-                    x:Name="MainMenuBar"
-                    VerticalAlignment="Center"
-                    Background="Transparent">
-                    <MenuBarItem
+                <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="2"
+                    VerticalAlignment="Center">
+                    <!-- 主题开关（太阳 / 月亮），放在「文件」菜单左边：
+                         浅色主题显示太阳（点一下变深），深色主题显示月亮；
+                         字形与悬停提示由 MainWindow.SyncThemeToggle 按**实际画出来的**主题刷新
+                         （「跟随系统」时也要显示得跟画面一致）。 -->
+                    <ToggleButton
+                        x:Name="ThemeToggle"
+                        Width="30"
+                        Height="26"
+                        Padding="0"
+                        AutomationProperties.Name="深色模式"
+                        Click="ThemeToggle_Click"
+                        Style="{StaticResource ExToolbarToggleButtonStyle}"
+                        ToolTipService.ToolTip="切换到深色模式">
+                        <FontIcon x:Name="ThemeGlyph" FontSize="14" Glyph="&#xE706;" />
+                    </ToggleButton>
+
+                    <MenuBar
+                        x:Name="MainMenuBar"
+                        VerticalAlignment="Center"
+                        Background="Transparent">
+                        <MenuBarItem
                         Height="30"
                         Padding="10,0"
                         MinHeight="0"
@@ -87,6 +107,23 @@
                         Padding="10,0"
                         MinHeight="0"
                         Title="编辑">
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.CopySelectionCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+C"
+                            Text="复制" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.CutSelectionCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+X"
+                            Text="剪切" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.PasteCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+V"
+                            Text="粘贴" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.DeleteSelectionCommand}"
+                            KeyboardAcceleratorTextOverride="Del"
+                            Text="删除" />
+                        <MenuFlyoutSeparator />
                         <MenuFlyoutItem
                             Command="{x:Bind ViewModel.EditActivePathCommand}"
                             KeyboardAcceleratorTextOverride="Ctrl+L"
@@ -181,6 +218,7 @@
                         <MenuFlyoutItem Click="About_Click" Text="关于 exdir" />
                     </MenuBarItem>
                 </MenuBar>
+                </StackPanel>
             </TitleBar.LeftHeader>
 
             <TitleBar.Content>

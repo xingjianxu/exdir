@@ -40,10 +40,17 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _dualPane;
     private double _rowHeight;
     private bool _useBuiltInContextMenu;
+    private int _themeIndex;
     private bool _sidebarShowHome;
     private bool _sidebarShowFavorites;
     private bool _sidebarShowCloud;
     private bool _sidebarShowComputer;
+    private bool _sidebarHomeDesktop;
+    private bool _sidebarHomeDocuments;
+    private bool _sidebarHomeDownloads;
+    private bool _sidebarHomePictures;
+    private bool _sidebarHomeMusic;
+    private bool _sidebarHomeVideos;
 
     /// <summary>按当前设置生成一份编辑模型。</summary>
     public SettingsViewModel(AppSettings settings, IShellContextMenuService contextMenu)
@@ -80,7 +87,16 @@ public sealed class SettingsViewModel : ObservableObject
         _sidebarShowFavorites = settings.SidebarShowFavorites;
         _sidebarShowCloud = settings.SidebarShowCloud;
         _sidebarShowComputer = settings.SidebarShowComputer;
+        _sidebarHomeDesktop = settings.SidebarHomeDesktop;
+        _sidebarHomeDocuments = settings.SidebarHomeDocuments;
+        _sidebarHomeDownloads = settings.SidebarHomeDownloads;
+        _sidebarHomePictures = settings.SidebarHomePictures;
+        _sidebarHomeMusic = settings.SidebarHomeMusic;
+        _sidebarHomeVideos = settings.SidebarHomeVideos;
         _useBuiltInContextMenu = settings.UseBuiltInContextMenu;
+
+        // 主题下拉框：0 = 跟随系统 / 1 = 浅色 / 2 = 深色（见 ThemeHelper，与 SettingsView.xaml 里的项顺序一致）
+        _themeIndex = ThemeHelper.ToIndex(settings.Theme);
 
         // 行高：settings.json 可能被手改过，夹进可用区间再填给滑条
         _rowHeight = ColumnLayout.NormalizeRowHeight(settings.RowHeight);
@@ -278,6 +294,32 @@ public sealed class SettingsViewModel : ObservableObject
 
     // ------------------------------------------------------------------ 外观
 
+    /// <summary>
+    /// 主题下拉框的选中下标：0 = 跟随系统、1 = 浅色、2 = 深色。
+    /// 用下标而不是枚举，是因为 XAML 里 ComboBox 的项就是按这个顺序写死的。
+    /// </summary>
+    public int ThemeIndex
+    {
+        get => _themeIndex;
+        set => SetAndNotify(ref _themeIndex, ThemeHelper.ToIndex(ThemeHelper.FromIndex(value)));
+    }
+
+    /// <summary>
+    /// 把下拉框同步到外部改动的主题（用户点了标题栏那个太阳 / 月亮开关）。
+    /// 故意不发 <see cref="Changed" />：那会反过来再走一轮 ApplySettings，纯属白做。
+    /// </summary>
+    public void SyncTheme(AppTheme theme)
+    {
+        var index = ThemeHelper.ToIndex(theme);
+        if (_themeIndex == index)
+        {
+            return;
+        }
+
+        _themeIndex = index;
+        OnPropertyChanged(nameof(ThemeIndex));
+    }
+
     /// <summary>列表过渡动画（换目录入场 / 插行重排）。</summary>
     public bool EnableListAnimations
     {
@@ -350,6 +392,52 @@ public sealed class SettingsViewModel : ObservableObject
     {
         get => _sidebarShowComputer;
         set => SetAndNotify(ref _sidebarShowComputer, value);
+    }
+
+    // ------------------------------------------------------------------ 侧边栏：主目录里的标准文件夹
+    // 侧边栏「主目录」分组里显示哪几个标准文件夹（默认只开桌面与下载）。
+    // 按 UserFolderKey 匹配，不依赖显示名（见 SidebarViewModel.ApplyHomeFolders）。
+
+    /// <summary>「主目录」里显示“桌面”。</summary>
+    public bool SidebarHomeDesktop
+    {
+        get => _sidebarHomeDesktop;
+        set => SetAndNotify(ref _sidebarHomeDesktop, value);
+    }
+
+    /// <summary>「主目录」里显示“文档”。</summary>
+    public bool SidebarHomeDocuments
+    {
+        get => _sidebarHomeDocuments;
+        set => SetAndNotify(ref _sidebarHomeDocuments, value);
+    }
+
+    /// <summary>「主目录」里显示“下载”。</summary>
+    public bool SidebarHomeDownloads
+    {
+        get => _sidebarHomeDownloads;
+        set => SetAndNotify(ref _sidebarHomeDownloads, value);
+    }
+
+    /// <summary>「主目录」里显示“图片”。</summary>
+    public bool SidebarHomePictures
+    {
+        get => _sidebarHomePictures;
+        set => SetAndNotify(ref _sidebarHomePictures, value);
+    }
+
+    /// <summary>「主目录」里显示“音乐”。</summary>
+    public bool SidebarHomeMusic
+    {
+        get => _sidebarHomeMusic;
+        set => SetAndNotify(ref _sidebarHomeMusic, value);
+    }
+
+    /// <summary>「主目录」里显示“视频”。</summary>
+    public bool SidebarHomeVideos
+    {
+        get => _sidebarHomeVideos;
+        set => SetAndNotify(ref _sidebarHomeVideos, value);
     }
 
     // ------------------------------------------------------------------ 内部

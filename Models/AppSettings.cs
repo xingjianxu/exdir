@@ -6,7 +6,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%LOCALAPPDATA%\exdir\settings.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 7;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -35,6 +35,38 @@ public sealed class AppSettings
 
     /// <summary>侧边栏「此电脑」分组（各磁盘）是否显示。</summary>
     public bool SidebarShowComputer { get; set; } = true;
+
+    // ---------- 侧边栏：主目录里显示哪些标准文件夹 ----------
+    // 侧边栏「主目录」分组本身（SidebarShowHome）控制的是这个分组在不在；
+    // 下面六个开关控制分组里有哪些子项。默认只开「桌面」与「下载」（其余默认关）。
+    // 不用显示名匹配（系统语言会变），实际筛选按 UserFolderKey 做，见 SidebarViewModel.ApplyHomeFolders。
+
+    /// <summary>「主目录」分组里是否显示“桌面”。</summary>
+    public bool SidebarHomeDesktop { get; set; } = true;
+
+    /// <summary>「主目录」分组里是否显示“文档”。</summary>
+    public bool SidebarHomeDocuments { get; set; }
+
+    /// <summary>「主目录」分组里是否显示“下载”。</summary>
+    public bool SidebarHomeDownloads { get; set; } = true;
+
+    /// <summary>「主目录」分组里是否显示“图片”。</summary>
+    public bool SidebarHomePictures { get; set; }
+
+    /// <summary>「主目录」分组里是否显示“音乐”。</summary>
+    public bool SidebarHomeMusic { get; set; }
+
+    /// <summary>「主目录」分组里是否显示“视频”。</summary>
+    public bool SidebarHomeVideos { get; set; }
+
+    // ---------- 外观 ----------
+
+    /// <summary>
+    /// 应用主题：跟随系统（默认）/ 浅色 / 深色。
+    /// 两个入口共用这一个值：标题栏左侧的太阳 / 月亮图标按钮（只在浅 / 深之间切）与
+    /// 设置窗口「外观 → 主题」下拉框（三态）。视图侧的实际应用见 <c>MainWindow.ApplyTheme</c>。
+    /// </summary>
+    public AppTheme Theme { get; set; } = AppTheme.System;
 
     // ---------- 视图 ----------
     public bool ShowHiddenFiles { get; set; }

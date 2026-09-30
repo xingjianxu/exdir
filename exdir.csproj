@@ -46,15 +46,48 @@
   <!--
     Publish 相关
     ============
-    PublishTrimmed / PublishReadyToRun 必须关闭：
-      * 裁剪会让 XAML 反射查找控件类型失败；
-      * ReadyToRun 则会让生成的 XamlTypeInfo 在启动时抛 XamlParseException
-        （实测 Release 直接构建可用，但 publish 出 R2R 后无法启动）。
+    裁剪（PublishTrimmed）：开——只影响 publish，Debug/Release 的日常 build 不受影响。
+    未裁剪时 exdir 要带一整套用不到的 BCL（System.Private.Xml 7.6MB、System.Private.CoreLib
+    12.6MB、System.Linq.Expressions 3.5MB、coreclr/clrjit…），dist 里光托管部分就有几十 MB。
+    裁剪后 180.7MB → 83.8MB（去 pdb，实测），代价是必须同时满足下面三个条件，否则一启动就炸：
+
+      * CsWinRTAotWarningLevel=2 —— 关键。它让 CsWinRT 源生成器跑在 Auto 模式，为「会跨
+        WinRT ABI 的泛型实例化」生成 vtable（例如 ItemsControl.ItemsSource 绑一个
+        ObservableCollection<T>）。只给默认的 level 1（PublishAot 时会自动设）时生成器可能
+        停在 OptIn 模式，CCW 查 vtable 拿到 null 直接 NullReferenceException
+        （栈：WinRT.TypeExtensions.GetAbiToProjectionVftblPtr → ComWrappersSupport.GetInterfaceTableEntries）；
+      * AllowUnsafeBlocks=true —— 上面生成出来的代码用 unsafe；
+      * BuiltInComInteropSupport=true —— 老式 COM interop 在裁剪/AOT 下默认关闭，
+        而 剪贴板 IDropTarget/OLE、外壳右键菜单（IShellFolder/IContextMenu）、
+        云占位符属性存储（IPropertyStore）、.lnk 解析（IShellLinkW）全靠它。
+
+    PublishReadyToRun 仍然必须关：实测 publish 出 R2R 后 XamlTypeInfo 会在启动时抛
+    XamlParseException。
+
+    裁掉的那几个 CS/IL 警告（IL2026/IL3050）来自 SettingsService 用反射版 JsonSerializer，
+    实测 settings.json 读写仍正常（AppSettings 的属性被 XamlTypeInfo 与序列化互相吊住），
+    但改设置模型后要跑 tools\test-settings.ps1 复验。
   -->
   <PropertyGroup>
-    <PublishTrimmed>false</PublishTrimmed>
+    <PublishTrimmed>true</PublishTrimmed>
+    <!--
+      TrimMode 必须是 partial，不能用 full。
+      full 会连 CommunityToolkit 的 SettingsControls 与 WinAppSDK 的托管层一起裁，
+      实测症状：主窗口一切正常，但“配置 → 设置…”一打开进程就 0xC0000005 崩在 coreclr.dll
+      （访问冲突，没有托管异常、也没进 exdir.log），因为设置卡片/NavigationView 那边
+      有东西是按名字/反射拿的，裁掉后 vtable 是空的。
+      partial 只裁带 [AssemblyMetadata("IsTrimmable","True")] 的程序集（BCL 的那些），
+      工具包/第三方库原样保留 —— 省下来的体积绝大部份本来就来自用不到的 BCL
+      （System.Private.Xml、System.Private.CoreLib、Linq.Expressions、DataContractSerialization…）。
+    -->
+    <TrimMode>partial</TrimMode>
+    <CsWinRTAotWarningLevel>2</CsWinRTAotWarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <PublishReadyToRun>false</PublishReadyToRun>
     <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
+    <!-- 交付包里不要原生调试符号；托管 PDB 只有几百 KB，保留以便 exdir.log 里有行号 -->
+    <DebugType>portable</DebugType>
   </PropertyGroup>
 
   <!-- 非打包部署下资源文件需要显式复制到输出目录 -->
@@ -104,23 +137,80 @@
 
   <!--
     ===========================================================================
-    为什么不用 dotnet publish
+    语言资源（*.mui）只留中文 / 英文
     ===========================================================================
-    实测在本项目（WinUI 3 + 非打包）下 `dotnet publish` 会丢掉 XAML 编译器生成的
-    .xbf（编译后的 XAML）和应用资源索引 exdir.pri：它们只有 CopyToOutputDirectory，
-    没有被加入发布文件列表。缺了它们，发布版启动时
-    MainWindow.InitializeComponent() 会抛 XamlParseException（“XAML parsing failed”）。
-    尝试用自定义 target 手动补进 ResolvedFileToPublish 反而把整个发布目录写坏
-    （所有文件都被写成同一个 xbf 的内容），因此不用 publish。
+    WinAppSDK 的每个原生组件都为 85 种语言各带一份 .mui（Microsoft.ui.xaml.dll.mui、
+    Microsoft.UI.Xaml.Phone.dll.mui …），自包含部署会照单全收，一共 85 个目录、3.3 MB，
+    而运行中的机器最多只会读到自己那一种。exdir 的界面文案是简体中文硬编码，
+    所以框架资源只要中文（zh-*）与英文（en-*，兑底，不依赖显示语言）就够。
 
-    正确的发布流程见 tools\publish.ps1：
-    先用 dotnet build 做 Release 构建（带 -r win-x64 与 self-contained 开关），
-    再把构建输出镜像到 dist\win-x64。构建输出里这些文件是齐全的，可直接双击运行。
+    用 MicrosoftWindowsAppSDKFilesExcluded 这个钩子剔除，而不是事后删目录：
+    SelfContained.targets 就是拿它在把组件负载挂成 None/ReferenceCopyLocalPaths 之前
+    Remove 一次（见 Microsoft.WindowsAppSDK.SelfContained.targets 里
+    <MicrosoftWindowsAppSDKFiles Remove="@(MicrosoftWindowsAppSDKFilesExcluded)" />），
+    所以 bin 与 dist 两边都干净，不用在发布脚本里做“删目录”这种事后补救。
+    新增语言时改下面 Exclude 里的两个通配即可（比如以后想留繁体就加 zh-TW）。
+  -->
+  <Target Name="ExcludeUnneededWinAppSdkLanguageResources"
+          DependsOnTargets="GetWindowsAppSDKNativePlatform"
+          BeforeTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents">
+    <ItemGroup>
+      <MicrosoftWindowsAppSDKFilesExcluded
+          Include="%(WindowsAppSdkComponentPackages.Identity)runtimes-framework\win-$(NativePlatform)\native\**\*.mui"
+          Exclude="%(WindowsAppSdkComponentPackages.Identity)runtimes-framework\win-$(NativePlatform)\native\zh-*\**\*.mui;%(WindowsAppSdkComponentPackages.Identity)runtimes-framework\win-$(NativePlatform)\native\en-*\**\*.mui" />
+    </ItemGroup>
+  </Target>
+
+  <!--
+    ===========================================================================
+    发布为什么要“publish + 补文件”
+    ===========================================================================
+    dotnet publish 会丢掉 XAML 编译器产出的 .xbf（编译后的 XAML）与应用资源索引 exdir.pri：
+    它们只有 CopyToOutputDirectory，没进发布文件列表。缺了它们，发布版启动时
+    MainWindow.InitializeComponent() 会抛 XamlParseException（“XAML parsing failed”）。
+    以前尝试用自定义 target 手动补进 ResolvedFileToPublish 反而把整个发布目录写坏
+    （所有文件都被写成同一个 xbf 的内容），所以不在项目文件里做这件事。
+
+    现在的流程在 tools\publish.ps1：
+      1) dotnet publish（开裁剪，这是裁剪唯一生效的方式）到 .artifacts\publish-win-x64；
+      2) 从构建输出 bin\... 把 exdir.pri 与每个 .xbf 补进发布目录；
+      3) 逐个校验（每个 .xaml 都有对应 .xbf、Assets\exdir.ico 在、语言目录只剩 zh-*/en-*）；
+      4) 镜像到 dist\win-x64（交付给用户的就是它，双击即跑）。
   -->
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <!--
+      ===========================================================================
+      Windows App SDK：剔掉 exdir 一行代码都没用的 AI / ML / Search / Widgets 组件
+      ===========================================================================
+      Microsoft.WindowsAppSDK 2.5.1 是个元包，它把 10 个组件包全拉进来（见它的 nuspec）。其中
+      AI(2.5.5) / ML(2.1.94) / Search(2.5.5) / Widgets(2.0.5) 只服务于 Windows AI Foundry 那一套
+      （语义索引、Windows ML、小组件、感知流），exdir 完全用不上，但自包含部署会把它们的原生负载
+      原封不动拷进产物：onnxruntime.dll(20MB) + DirectML.dll(18MB) + Microsoft.Windows.Search.dll(3MB)
+      + Microsoft.Windows.Widgets.dll(2MB) + Microsoft.Asg.SemanticIndex.AiFabric.* + NPUDetect /
+      PerceptiveStreaming + 一堆 Microsoft.Windows.AI.*.dll，合计约 55 MB。
+
+      做法：元包照旧引用（H.NotifyIcon 与 CommunityToolkit 的 SettingsCard 都声明了
+      Microsoft.WindowsAppSDK >= 1.6，没有这份直接引用 NuGet 就会去装那份 1.6 的旧包，
+      它的 props 会和 WinUI 2.3.9 重复导入、构建直接报错），然后把这四个组件包的
+      **全部资产** 排除掉：组件的 props 不再被导入 → 它们不会往 WindowsAppSdkComponentPackages
+      里登记 → 自包含部署也就不会拷它们的负载，它们提供的投影 DLL / winmd 也一样不会进输出。
+      注意：ML 是 AI 的依赖，两份都要写，只排除 AI 的话 ML 依旧会被拖进来。
+      升级 WinAppSDK 时这四个版本号要跟着元包改（反正 ExcludeAssets 下不会被校验，但写对更清楚）。
+    -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.AI" Version="2.5.5" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.ML" Version="2.1.94" ExcludeAssets="all" PrivateAssets="all" />
+    <!--
+      Microsoft.Windows.AI.MachineLearning 是 ML 组件拖来的（不是 Windows App SDK 家族的包名，
+      所以容易被忽略），onnxruntime.dll(20MB) 与 DirectML.dll(18MB) 就是它 runtimes\win-x64\native 里的。
+      它自己的 targets 会因为 _WindowsAppSDKML 没被置位而报「需要 19H1+」的错，
+      所以这份排除不是可选优化，而是必须的。
+    -->
+    <PackageReference Include="Microsoft.Windows.AI.MachineLearning" Version="2.1.74" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Search" Version="2.5.5" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Widgets" Version="2.0.5" ExcludeAssets="all" PrivateAssets="all" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <!--
       设置窗口里的 SettingsCard / SettingsExpander —— Windows 11 设置界面的卡片式行布局。

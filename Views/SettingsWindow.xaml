@@ -16,5 +16,12 @@
     mc:Ignorable="d"
     Title="设置">
 
+    <!-- Mica 背板：不只为好看 —— NavigationView 的窗格（左侧导航）用的是半透明的应用内亚克力，
+         窗口背后没有背板时它采样到的是窗口自身的黑色底，浅色主题下就成了一块黑底 + 深色文字。
+         加上背板后窗格跟主窗口的侧边栏一样是 Mica（深 / 浅都跟着主题走）。 -->
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="Base" />
+    </Window.SystemBackdrop>
+
     <views:SettingsView x:Name="View" />
 </Window>

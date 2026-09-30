@@ -7,8 +7,9 @@ using Windows.ApplicationModel.DataTransfer;
 namespace Exdir.Helpers;
 
 /// <summary>
-/// 内部拖放（文件列表 / 侧边栏树 → 工具条“固定目录”）共用的数据交换格式。
-/// 自定义格式只放一串目录路径、用 <c>'\n'</c> 分隔：Windows 文件名不允许出现控制字符，
+/// 内部拖放共用的数据交换格式（文件列表 → 工具条“固定目录”/ 另一目录行 / 另一个窗格，
+/// 侧边栏树 → 工具条“固定目录” / 侧边栏「收藏夹」）。
+/// 自定义格式只放一串路径、用 <c>'\n'</c> 分隔：Windows 文件名不允许出现控制字符，
 /// 所以这个分隔符不会和路径本身冲突（不用 JSON 是为了让拖放数据同时也是一段可读纯文本）。
 /// </summary>
 public static class DragDropHelper
@@ -23,8 +24,22 @@ public static class DragDropHelper
     /// </summary>
     public const string PinnedReorderFormat = "exdir/pinned-reorder";
 
+    /// <summary>
+    /// 数据包属性：这一拖是不是“只有目录”（工具条固定目录区据此决定要不要显示“固定到工具条”）。
+    /// 拖放数据本身只能同步判断格式，读不了内容，所以由拖拽源在开始拖的时候把这个结论一起写上。
+    /// </summary>
+    public const string FoldersOnlyProperty = "exdir/folders-only";
+
     /// <summary>把一批路径写进拖放数据包。</summary>
-    public static void SetPaths(DataPackage data, IEnumerable<string> paths)
+    /// <param name="data">拖放数据包。</param>
+    /// <param name="paths">要拖的路径。</param>
+    /// <param name="operations">允许的拖放效果（默认只允许复制 / 链接，避免拖到资源管理器时把源删掉）。</param>
+    /// <param name="foldersOnly">这批路径是不是全是目录（用于“固定到工具条”的提示）。</param>
+    public static void SetPaths(
+        DataPackage data,
+        IEnumerable<string> paths,
+        DataPackageOperation operations = DataPackageOperation.Copy | DataPackageOperation.Link,
+        bool foldersOnly = true)
     {
         var payload = string.Join('\n', paths.Where(p => !string.IsNullOrWhiteSpace(p)));
         if (payload.Length == 0)
@@ -35,9 +50,11 @@ public static class DragDropHelper
         data.SetData(PathsFormat, payload);
         data.SetText(payload);
 
+        data.Properties[FoldersOnlyProperty] = foldersOnly;
+
         // 目标是“固定一个链接”，所以要允许 Link；带上 Copy 是为了让接受方（例如资源管理器）
         // 在不支持 Link 时仍有可选项，否则拖拽会直接被系统判为“不可放置”。
-        data.RequestedOperation = DataPackageOperation.Copy | DataPackageOperation.Link;
+        data.RequestedOperation = operations;
     }
 
     /// <summary>
@@ -46,7 +63,33 @@ public static class DragDropHelper
     /// 真正是不是目录留到 <see cref="GetPathsAsync"/> 之后再筛。
     /// </summary>
     public static bool MayContainFolder(DataPackageView view)
-        => view.Contains(PathsFormat) || view.Contains(StandardDataFormats.StorageItems);
+    {
+        if (view.Contains(StandardDataFormats.StorageItems))
+        {
+            return true;
+        }
+
+        if (!view.Contains(PathsFormat))
+        {
+            return false;
+        }
+
+        // 同进程内的拖拽带着拖拽源写下的结论（见 FoldersOnlyProperty）；
+        // 别的程序恰好也用了这个格式名时读不到属性，按“可能有目录”处理
+        try
+        {
+            if (view.Properties.TryGetValue(FoldersOnlyProperty, out var value) && value is bool foldersOnly)
+            {
+                return foldersOnly;
+            }
+        }
+        catch (Exception)
+        {
+            // 属性读不到就当没有
+        }
+
+        return true;
+    }
 
     /// <summary>读出数据包里的路径（本应用的格式 + 来自资源管理器的存储项），已按大小写去重。</summary>
     public static async Task<IReadOnlyList<string>> GetPathsAsync(DataPackageView view)

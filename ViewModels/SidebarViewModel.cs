@@ -28,6 +28,12 @@ public enum SidebarNodeKind
     /// <summary>驱动器。</summary>
     Drive,
 
+    /// <summary>
+    /// 「网络位置」：<c>%APPDATA%\Microsoft\Windows\Network Shortcuts</c> 下的快捷方式目录，
+    /// 目标是 UNC 共享（见 <see cref="INetworkLocationService" />）。
+    /// </summary>
+    NetworkLocation,
+
     /// <summary>「收藏夹」分组标题（内容镜像工具条上的固定目录，可折叠，本身不可导航）。</summary>
     FavoritesGroup,
 
@@ -112,6 +118,7 @@ public sealed partial class SidebarViewModel : ObservableObject
     private readonly IFileSystemService _fileSystem;
     private readonly IKnownFolderService _knownFolders;
     private readonly IDriveService _driveService;
+    private readonly INetworkLocationService _networkLocations;
 
     private readonly Dictionary<string, SidebarNodeViewModel> _index = new(StringComparer.OrdinalIgnoreCase);
 
@@ -134,14 +141,23 @@ public sealed partial class SidebarViewModel : ObservableObject
     private bool _showCloud = true;
     private bool _showComputer = true;
 
+    /// <summary>
+    /// 「主目录」分组里当前显示哪几个标准文件夹（由设置推过来，见 <see cref="ApplyHomeFolders" />）。
+    /// 默认与 <c>AppSettings</c> 的默认值一致（只开桌面与下载）；
+    /// 真正构建 / 刷新时按 <see cref="UserFolderKey" /> 匹配，不依赖显示名。
+    /// </summary>
+    private HashSet<UserFolderKey> _homeFolders = new() { UserFolderKey.Desktop, UserFolderKey.Downloads };
+
     public SidebarViewModel(
         IFileSystemService fileSystem,
         IKnownFolderService knownFolders,
-        IDriveService driveService)
+        IDriveService driveService,
+        INetworkLocationService networkLocations)
     {
         _fileSystem = fileSystem;
         _knownFolders = knownFolders;
         _driveService = driveService;
+        _networkLocations = networkLocations;
 
         BuildTree();
     }
@@ -167,6 +183,7 @@ public sealed partial class SidebarViewModel : ObservableObject
         _index.Clear();
 
         _homeGroup = BuildHomeGroup();
+        SyncHomeFolders(_homeGroup);
         _favoritesGroup = BuildFavoritesGroup();
         _cloudGroup = BuildCloudGroup();
         _computerGroup = BuildComputerGroup();
@@ -210,6 +227,22 @@ public sealed partial class SidebarViewModel : ObservableObject
             else
             {
                 desired.Add(CreateDriveNode(drive));
+            }
+        }
+
+        // 「网络位置」也挂在「此电脑」下（排在磁盘之后），这里必须一并带上：
+        // 下面“摘掉不在 desired 里的节点”那一步会把它们全删掉。
+        foreach (var location in _networkLocations.GetNetworkLocations())
+        {
+            if (existing.TryGetValue(location.Path, out var node)
+                && node.Kind == SidebarNodeKind.NetworkLocation
+                && string.Equals(node.Name, location.Name, StringComparison.Ordinal))
+            {
+                desired.Add(node);
+            }
+            else
+            {
+                desired.Add(CreateNetworkLocationNode(location));
             }
         }
 
@@ -261,7 +294,37 @@ public sealed partial class SidebarViewModel : ObservableObject
         RefreshRoots();
     }
 
-    /// <summary>展开节点时加载其子目录。</summary>
+    /// <summary>
+    /// 指定「主目录」分组里显示哪几个标准文件夹（设置窗口「侧边栏」页）。
+    /// 只更新这一个分组的子节点，不重建整棵树：没被取消的文件夹会复用同一个节点对象，
+    /// 所以它们已展开的子目录与展开状态都留着。
+    /// </summary>
+    public void ApplyHomeFolders(bool desktop, bool documents, bool downloads, bool pictures, bool music, bool videos)
+    {
+        var enabled = new HashSet<UserFolderKey>();
+        if (desktop) { enabled.Add(UserFolderKey.Desktop); }
+        if (documents) { enabled.Add(UserFolderKey.Documents); }
+        if (downloads) { enabled.Add(UserFolderKey.Downloads); }
+        if (pictures) { enabled.Add(UserFolderKey.Pictures); }
+        if (music) { enabled.Add(UserFolderKey.Music); }
+        if (videos) { enabled.Add(UserFolderKey.Videos); }
+
+        if (_homeFolders.SetEquals(enabled))
+        {
+            return;
+        }
+
+        _homeFolders = enabled;
+
+        if (_homeGroup is not null)
+        {
+            SyncHomeFolders(_homeGroup);
+        }
+    }
+
+    /// <summary>
+    /// 展开节点时加载其子目录。
+    /// </summary>
     public async Task ExpandAsync(SidebarNodeViewModel node)
     {
         if (node.ChildrenLoaded || node.Kind == SidebarNodeKind.Group)
@@ -372,8 +435,9 @@ public sealed partial class SidebarViewModel : ObservableObject
 
     private IEnumerable<SidebarNodeViewModel> AllGroups()
     {
-        if (_homeGroup is not null) { yield return _homeGroup; }
+        // 顺序与 RefreshRoots 里的 desired 一致：收藏夹排在最上面（用户最常用）
         if (_favoritesGroup is not null) { yield return _favoritesGroup; }
+        if (_homeGroup is not null) { yield return _homeGroup; }
         if (_cloudGroup is not null) { yield return _cloudGroup; }
         if (_computerGroup is not null) { yield return _computerGroup; }
     }
@@ -386,8 +450,9 @@ public sealed partial class SidebarViewModel : ObservableObject
     private void RefreshRoots()
     {
         var desired = new List<SidebarNodeViewModel>(4);
-        if (_showHome && _homeGroup is not null) { desired.Add(_homeGroup); }
+        // 「收藏夹」放最上面（与 AllGroups 的顺序保持一致）
         if (_showFavorites && _favoritesGroup is not null) { desired.Add(_favoritesGroup); }
+        if (_showHome && _homeGroup is not null) { desired.Add(_homeGroup); }
         if (_showCloud && _cloudGroup is not null) { desired.Add(_cloudGroup); }
         if (_showComputer && _computerGroup is not null) { desired.Add(_computerGroup); }
 
@@ -418,16 +483,69 @@ public sealed partial class SidebarViewModel : ObservableObject
         // 分组节点自身就是“主目录”的入口（有路径 → 可点击导航），子节点为其中的标准文件夹
         var group = new SidebarNodeViewModel("主目录", _knownFolders.UserProfile, FileTypeHelper.HomeGlyph, SidebarNodeKind.Group);
         group.ChildrenLoaded = true;
+        _index[_knownFolders.UserProfile] = group;
 
-        foreach (var folder in _knownFolders.GetUserFolders())
+        // 子节点由 SyncHomeFolders 按显示开关填充（不在这里写死全部）
+        return group;
+    }
+
+    /// <summary>
+    /// 把「主目录」分组的子节点对齐到“当前开启的标准文件夹”清单。
+    /// 只增删差异项、复用未变化的节点：关掉一个文件夹再打开，它之前展开的子目录与展开状态都还在。
+    /// </summary>
+    private void SyncHomeFolders(SidebarNodeViewModel group)
+    {
+        var existing = new Dictionary<string, SidebarNodeViewModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in group.Children)
         {
-            var node = new SidebarNodeViewModel(folder.Name, folder.Path, folder.Glyph, SidebarNodeKind.UserFolder);
-            group.Children.Add(node);
-            _index[folder.Path] = node;
+            existing[node.FullPath] = node;
         }
 
-        _index[_knownFolders.UserProfile] = group;
-        return group;
+        var desired = new List<SidebarNodeViewModel>(existing.Count);
+        foreach (var folder in _knownFolders.GetUserFolders())
+        {
+            if (!_homeFolders.Contains(folder.Key))
+            {
+                continue;
+            }
+
+            desired.Add(existing.TryGetValue(folder.Path, out var node)
+                ? node
+                : new SidebarNodeViewModel(folder.Name, folder.Path, folder.Glyph, SidebarNodeKind.UserFolder));
+        }
+
+        // 被关掉（或已不存在）的标准文件夹先摘掉，顺手清索引
+        for (var i = group.Children.Count - 1; i >= 0; i--)
+        {
+            var node = group.Children[i];
+            if (!desired.Contains(node))
+            {
+                Unindex(node);
+                group.Children.RemoveAt(i);
+            }
+        }
+
+        // 再按 GetUserFolders 的顺序补齐 / 挪位（多出一个节点时才需要建索引）
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i < group.Children.Count && ReferenceEquals(group.Children[i], desired[i]))
+            {
+                continue;
+            }
+
+            var at = group.Children.IndexOf(desired[i]);
+            if (at < 0)
+            {
+                group.Children.Insert(i, desired[i]);
+                _index[desired[i].FullPath] = desired[i];
+            }
+            else
+            {
+                // 不用 ObservableCollection.Move：ItemsControl 对 Move 通知的支持依版本而异
+                group.Children.RemoveAt(at);
+                group.Children.Insert(i, desired[i]);
+            }
+        }
     }
 
     private SidebarNodeViewModel BuildFavoritesGroup()
@@ -471,6 +589,14 @@ public sealed partial class SidebarViewModel : ObservableObject
             _index[drive.RootPath] = node;
         }
 
+        // 「网络位置」（资源管理器里「添加一个网络位置」造出来的 UNC 快捷方式）排在磁盘之后
+        foreach (var location in _networkLocations.GetNetworkLocations())
+        {
+            var node = CreateNetworkLocationNode(location);
+            group.Children.Add(node);
+            _index[location.Path] = node;
+        }
+
         return group;
     }
 
@@ -481,6 +607,13 @@ public sealed partial class SidebarViewModel : ObservableObject
             drive.Glyph,
             SidebarNodeKind.Drive,
             canExpand: drive.IsReady);
+
+    private static SidebarNodeViewModel CreateNetworkLocationNode(NetworkLocationModel location)
+        => new(
+            location.Name,
+            location.Path,
+            location.Glyph,
+            SidebarNodeKind.NetworkLocation);
 
     private static string DriveDisplayName(DriveModel drive)
         => string.IsNullOrEmpty(drive.VolumeLabel)

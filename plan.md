@@ -39,7 +39,7 @@
     独立窗口（`Views/SettingsWindow`，默认 860×800），左侧 `NavigationView` 五个分类
     （文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单），右侧一列 Windows 11 风格设置卡片（社区工具包 `SettingsCard`，
     标题 + 说明 + 右侧控件），只显示当前分类那一页；
-    前四类共十四项（过渡动画 / **标签页使用直角（默认开）** / 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高 / 列宽自适应 /
+    前四类共十五项（主题（跟随系统 / 浅色 / 深色，默认跟随系统）/ 过渡动画 / **标签页使用直角（默认开）** / 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高 / 列宽自适应 /
     工具条 / 侧边栏 / 双窗格 / 侧边栏四个分组的显示开关），「右键菜单」类是系统菜单项的逐项开关（默认全开，见 S8b）；
     **改任何一项都即时生效并立即落盘**（没有「保存 / 取消」）；
     回归脚本 `tools/test-settings.ps1`（全程 UIA 模式），布局截图 `tools/shot-settings.ps1`。
@@ -54,9 +54,24 @@
   - 磁盘热插拔实时刷新（2026-09，S24）：U 盘 / 光驱换盘 / 网络盘映射变化后，工具条磁盘区与侧边栏
     「此电脑」分组立即更新（窗口藏在托盘里也照样），且只做差量刷新（不重建整棵树、不影响展开状态与收藏夹）；
     回归脚本 `tools/test-drive-hotplug.ps1`，见 AGENTS.md 第 4 节与第 6 节第 56 条。
+  - 侧边栏「此电脑」里显示 Windows「网络位置」（2026-09，S27）：读
+    `%APPDATA%\Microsoft\Windows\Network Shortcuts` 下的快捷方式（`IShellLinkW` 解析 `target.lnk`），
+    以目录名显示、点击进入其目标（UNC 也能走现有导航与面包屑）；离线的照样列出，打开时才报错；
+    差量刷新（设备变化）会一并带上它们（不把网络位置算进期望清单就会被刷新误删）；
+    回归脚本 `tools/test-network-locations.ps1`，见 AGENTS.md 第 4 节与第 6 节第 63 条。
   - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
     松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
     `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
+  - 复制 / 剪切 / 粘贴 + 拖动移动（2026-09，S25）：内置右键菜单里多了剪切 / 复制 / 粘贴
+    （快捷键 `Ctrl+X/C/V`），剪贴板用系统标准格式 `CF_HDROP` + `Preferred DropEffect`，
+    与资源管理器 / 7-Zip 双向互通；真正的复制 / 移动交给外壳 `SHFileOperation`（有进度对话框与同名冲突询问）；
+    文件 / 目录拖到某个目录行、列表空白处或另一个窗格即移动，`Ctrl` 是复制；
+    回归脚本 `tools/test-file-ops.ps1`，见 AGENTS.md 第 4 节同名小节与第 6 节第 57—60 条。
+  - 删除到回收站 / 永久删除（2026-09，S26）：内置右键菜单里多了「删除」（`Delete`），
+    `Shift+Delete` 是永久删除；收归外壳 `SHFileOperation(FO_DELETE)`（`FOF_ALLOWUNDO` 进回收站，
+    `FOF_WANTNUKEWARNING` 保证“装不进回收站就只能永久删”时仍警告一次），确认框由外壳弹；
+    删除后受影响的标签页刷新，被删目录里开着的标签页退到上一级；
+    回归脚本 `tools/test-file-ops.ps1` 用例 H / I，见 AGENTS.md 第 6 节第 61 条。
   - 工具条“固定目录”支持**拖拽排序**（2026-09，S7b）：按住固定目录按钮横向拖到兄弟按钮上就换位，
     拖动时有插入位置提示条，松手立即写 `settings.json`（也是“工具条上的拖拽是由应用自己识别手势的”首个实现）。
   - 侧边栏“收藏夹”分组（2026-09，S7c）：`主目录` 下面多一个 `收藏夹` 分组，子项与工具条固定目录
@@ -64,7 +79,14 @@
   - 云文件夹的同步状态列（2026-09，S23）：云同步目录（OneDrive / WPS 云盘 / 其它 CFAPI 同步根）
     的列表最前面多出一列状态图标（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步），
     可点列头排序；非云目录整列隐藏。
-  - 侧边栏：主目录（含桌面/文档/下载/图片/音乐/视频）、云存储（注册表探测同步根）、此电脑（各磁盘）；展开时懒加载子目录。
+  - 侧边栏：主目录（含桌面/文档/下载/图片/音乐/视频，**哪几个显示可在设置里逐项开关，默认只开桌面与下载**，见 S28）、云存储（注册表探测同步根）、此电脑（各磁盘 + Windows「网络位置」快捷方式）；展开时懒加载子目录。
+  - 深色 / 浅色主题（2026-09，S29）：标题栏左侧（「文件」菜单左边）多了一个太阳 / 月亮图标开关，
+    点一下就在浅色 / 深色之间切；设置窗口「外观 → 主题」里还有三态的「跟随系统 / 浅色 / 深色」
+    （`AppSettings.Theme`，默认跟随系统 = 保持原有行为）。两个入口共用同一个值，改完当场重画、无需重启，
+    并立即落盘。实现只有一处：给根元素设 `RequestedTheme`（菜单栏 / 工具条 / 侧边栏 / 窗格 / 状态栏 / 弹层一起换）；
+    系统窗口按钮（最小-最大-关闭）要自己按主题上色；设置窗口是另一个 `Window`，自己接一份主题，
+    并顺带修掉了它在浅色主题下左侧导航“黑底黑字”的问题（加 Mica 背板）；
+    回归脚本 `tools/test-settings.ps1` 用例 9，见 AGENTS.md 第 4 节“主题”与第 6 节第 68 条。
   - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%LOCALAPPDATA%\exdir\settings.json`。
   - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
   - 工具脚本：`capture.ps1`（截图）、`inspect-ui.ps1`（UIA 控件树 / 点击）、`publish.ps1`（Release 产物）、`make-icon.ps1`。
@@ -91,7 +113,7 @@
    - 系统菜单（把「设置 → 右键菜单 → 使用内置的轻量右键菜单」关掉才用）：
      `IShellContextMenuService`，菜单项从系统读出来后在设置页逐项开关（默认全开），
      关掉的项在 `TrackPopupMenu` 之前从 HMENU 里删掉。
-   仍未做：压缩 / 复制粘贴删除重命名这类文件操作（见 S4–S6）。
+   仍未做：压缩 / 重命名这类文件操作（复制粘贴与删除已完成，见 S4–S6 / S25 / S26）。
 4. **视图形态**：目前只有“详细信息列表”。后续要不要 图标/缩略图/紧凑 三种？优先级如何？
 5. **快捷菜单**首批要内置哪些命令（当前按需求留空，只保留了数据驱动的框架）。
 6. **是否需要单元测试工程**（`exdir.Tests`，xUnit）？如果要，建议在第 3 步之前建立，之后每步补测试。
@@ -152,7 +174,9 @@
 
 ### Phase 2 — 文件操作基础设施（本项目的核心，务必先建底座）
 
-- [ ] **S4 剪贴板与文件操作服务（只读骨架）**
+- [x] **S4 剪贴板与文件操作服务**（2026-09 完成：改用系统标准格式 `CF_HDROP` + `Preferred DropEffect`
+  与外壳 `SHFileOperation`，不是原计划里的“自建快照 + 抛 NotImplemented 的骨架”。
+  详细交付见本 Phase 末尾的 **S25**；下面保留的是当初的计划文本）
   - 目标：搭好 `IFileOperationService` / `IClipboardService` 抽象与实现，先只接通“复制路径/复制文件列表到剪贴板（CF_HDROP + Preferred DropEffect）”，不做真正的拷贝。
   - 涉及：新增 `Services/IClipboardService.cs(.cs)`、`Services/IFileOperationService.cs(.cs)`、`Services/Native/ShellInterop.cs`、`App.xaml.cs`（注册）。
   - 内容：
@@ -162,7 +186,8 @@
   - 验收：在资源管理器里复制若干文件 → exdir 粘贴按钮能读出版本正确的列表（先用日志/状态栏显示）。
   - 预估：~350 行，5 个文件。
 
-- [ ] **S5 删除 / 重命名 / 新建（第一批真实写操作）**
+- [~] **S5 删除 / 重命名 / 新建（第一批真实写操作）**（2026-09：删除部分已完成，见 **S26**；
+  重命名与新建仍未做，下面保留的是当初的计划文本）
   - 目标：`Delete`（进回收站）、`Shift+Delete`（永久删除）、`F2` 就地重命名、新建文件夹/文本文档。
   - 涉及：`Services/IFileOperationService.cs` + 实现、`ViewModels/FolderTabViewModel.cs`、`Views/DetailsView.xaml(.cs)`、`Views/RenameBox`（就地编辑用 `TextBox` 覆盖行）。
   - 内容：
@@ -173,7 +198,7 @@
   - 验收：删到回收站能在资源管理器“回收站”里看到；重命名后选中项跟随；无权限时报 `InfoBar` 错误而不是崩溃。
   - 预估：~500 行，5 个文件。
 
-- [ ] **S6 复制 / 移动（含跨窗格与冲突处理）**
+- [x] **S6 复制 / 移动（含跨窗格与冲突处理）**（2026-09 完成，交付见 **S25**；下面保留的是当初的计划文本）
   - 目标：剪贴板驱动的复制/剪切/粘贴，以及跨窗格直接复制/移动。
   - 涉及：`Services/IFileOperationService.cs` + 实现、`ViewModels/MainViewModel.cs`、`ViewModels/PanelViewModel.cs`、新增 `Views/OperationProgressDialog.xaml(.cs)`。
   - 内容：优先走系统 `IFileOperation`（获得标准进度/冲突/撤销对话框）；
@@ -217,6 +242,59 @@
     验收：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `settings.json` 一致）、
     用例 5（拖 `音乐` 到收藏夹 → `settings.json` 新增 `…\Music`，侧边栏同步出现）。
   - [ ] 其余（文件本身可拖出到资源管理器、拖到目录行上悬停进入目录）仍未做。
+
+- [x] **S25 复制 / 剪切 / 粘贴 + 拖动移动**（2026-09，新增 6 个文件 / 改 10 个，~900 行）
+  - 目标：内置右键菜单里能剪切 / 复制 / 粘贴（带常用快捷键），并要求“拖文件到目录上即移动”。
+  - 涉及：新增 `Services/IClipboardService.cs(.cs)`、`Services/IFileOperationService.cs(.cs)`、
+    `Services/Native/ClipboardInterop.cs`、`Services/Native/FileOperationInterop.cs`、
+    `tools/test-file-ops.ps1`；改 `App.xaml.cs`、`Helpers/DragDropHelper.cs`、`Helpers/DpiHelper.cs`、
+    `ViewModels/FileItemViewModel.cs`、`FolderTabViewModel.cs`、`PanelViewModel.cs`、`MainViewModel.cs`、
+    `Views/DetailsView.xaml(.cs)`、`MainWindow.xaml`。
+  - 做法：
+    * 剪贴板用**系统标准格式**：写 `CF_HDROP` + `Preferred DropEffect`（1 复制 / 2 剪切），
+      读先 Win32 `GetClipboardData`、再退 OLE `OleGetClipboard` + `IDataObject`。
+      因此与资源管理器 / 7-Zip **双向互通**（内部格式不是必需的）——原来的“自建快照”方案作废。
+      注意 `Preferred DropEffect` 必须 `RegisterClipboardFormat`（`0x000C` 是 `CF_WAVE`）。
+    * 复制 / 移动走外壳 `SHFileOperation`（`FO_COPY` / `FO_MOVE`）：进度对话框、同名冲突询问、
+      自动建目标目录都是资源管理器同款；`SHFileOperation` 要 STA，所以开专用 STA 线程跑，
+      完成后用事件按“源目录 + 目标目录”刷新受影响的标签页。
+    * 命令：`FolderTabViewModel.CopySelectionCommand` / `CutSelectionCommand` / `PasteCommand`；
+      `Ctrl+C/X/V` 是挂在 `DetailsView` 根 Grid 上的 `KeyboardAccelerator`（地址栏里仍是文本框行为）；
+      内置菜单的文件行 = 打开 / 在资源管理器中显示 / 剪切 / 复制 / 粘贴 / 复制路径 / 属性，
+      空白处 = 粘贴 / 新建文件夹 / 刷新 / 全选 / 复制当前路径 / 在此处打开终端。
+    * 拖动移动：文件列表拖到**目录行**（命中行整条强调色高亮）/ 列表空白处 / 另一个窗格 = 移动，
+      `Ctrl` = 复制，外部拖入默认复制（`Shift` = 移动）。手势是自己识别的
+      （`CanDragItems=False` + `StartDragAsync`），落点只有 `DetailsRoot` 一个（容器 `AllowDrop=False`）、
+      鼠标下哪一行用光标位置 + 容器矩形算，并在 `StartDragAsync` 返回后留了一道兜底。
+  - 坑（已记入 `AGENTS.md` 第 6 节第 57—60 条）：`CF_PREFERREDDROPEFFECT` 不是 `0x000C`；
+    `ListView.CanDragItems` 的拖拽在模拟鼠标下走不完（且 `PointerCaptureLost` 不能当松手、
+    行容器要用 `ItemFromContainer` 取数据项）；拖拽期间 `e.GetPosition` 坐标不可靠；
+    拖放落点不能用 `e.OriginalSource`，且框架有时不冒泡 `Drop`（所以留了兜底）。
+  - 验收：`tools/test-file-ops.ps1` 7 个用例全绿（菜单项 / WinForms 读回 exdir 写的剪贴板且
+    `DropEffect=1` / `Ctrl+C`+`Ctrl+V` 复制 / `Ctrl+X`+`Ctrl+V` 移动且 `DropEffect=2` /
+    拖到目录行真的移动 / 外部复制的文件能粘进来且源还在 / 外部剪切的粘完源没了）；
+    同时重跑了 `test-list-selection` / `test-context-menu` / `test-row-dblclick` / `test-pin-drag`
+    （后两个脚本各有 4 / 2 条**改动前就存在**的失败：环境相关，已用 `git stash` 在 HEAD 上复现）。
+
+- [x] **S26 删除（进回收站 / Shift+Delete 永久删除）**（2026-09，新增 0 个文件 / 改 8 个，~200 行）
+  - 目标：内置右键菜单与 `Delete` 键能把选中项丢进回收站（可恢复），`Shift+Delete` 才永久删除。
+  - 涉及：`Services/Native/FileOperationInterop.cs`（`FO_DELETE`）、
+    `Services/IFileOperationService.cs` + `Services/FileOperationService.cs`（`DeleteAsync`，
+    事件多了 `IsDelete`、`DestinationDirectory` 变成可空）、`ViewModels/FolderTabViewModel.cs`
+    （`DeleteSelectionCommand` / `DeleteSelectionPermanentlyCommand`）、`ViewModels/MainViewModel.cs`
+    （转发命令 + 删除后刷新 / 退上一级）、`Views/DetailsView.xaml(.cs)`（`PreviewKeyDown` 里收 `Delete` /
+    `Shift+Delete` + 内置菜单的「删除」）、`MainWindow.xaml`（编辑菜单）、`tools/test-file-ops.ps1`。
+  - 做法：删除也交给外壳 ——不会再自己写递归删除。`FOF_ALLOWUNDO` 才是“进回收站”，
+    再配 `FOF_WANTNUKEWARNING`（超大文件 / 没有回收站的卷只能真删时先警告）；
+    `FO_DELETE` 的 `pTo` 传 `null`；确认框（“确实要将其移至回收站吗？”）由外壳弹，
+    用户点“否”时 `SHFileOperation` 报 `fAnyOperationsAborted`，界面什么都不做。
+  - 坑（已记入 `AGENTS.md` 第 6 节第 61—62 条）：`pTo` 传空串而不是 `null` 会被当成非法参数；
+    确认框是**本进程**的 `#32770` 模态窗口，但它不在桌面 UIA 子窗口那一层（只在主窗口的
+    `Descendants` 里），用 `Children` 找会“看不到确认框”而让删除卡在 STA 线程；
+    回收站要用 `Shell.Application` 的 `NameSpace(10)` 读（别去翻 `$Recycle.Bin`）；
+    带 `Shift` 的 `KeyboardAccelerator` 对 `Delete` 根本不触发，删除的键盘入口改用 `PreviewKeyDown` + `GetKeyState`。
+  - 验收：`tools/test-file-ops.ps1` 用例 H / I（菜单里有「删除」/ `Delete` 后文件真的进了回收站、
+    日志有“文件操作：删除到回收站”/ `Shift+Delete` 后文件既不在磁盘也不在回收站、日志有“永久删除”）。
 
 ### Phase 3 — 交互增强
 
@@ -507,6 +585,21 @@
   - 验收：`tools/test-drive-hotplug.ps1` 3 个用例 12 条断言全绿（插入前两处都没有该盘符 →
     `subst` + 发消息后两处都出现（并从 exdir.log 确认消息真的被处理）→ `subst /d` + 发消息后两处都消失 →
     侧边栏节点清单与插入前完全一致、收藏夹仍与 settings.json 一致）。
+
+- [x] **S28 侧边栏「主目录」里显示哪些标准文件夹可配**（2026-09，改 8 个文件 + 更新回归脚本，~200 行）
+  - 目标：设置窗口能把「主目录」分组里的桌面 / 文档 / 下载 / 图片 / 音乐 / 视频逐项关掉，
+    **默认只开「桌面」与「下载」**。
+  - 涉及：`Models/AppSettings.cs`（6 个 `SidebarHome*` 开关 + 结构版本 6）、
+    `Services/IKnownFolderService.cs`（新增 `UserFolderKey` + `SpecialFolderModel.Key`）、
+    `Services/KnownFolderService.cs`（给六个标准文件夹打 Key）、
+    `ViewModels/SidebarViewModel.cs`（`ApplyHomeFolders` + `SyncHomeFolders`）、
+    `ViewModels/SettingsViewModel.cs`、`Views/SettingsView.xaml`（六个开关卡片）、
+    `ViewModels/MainViewModel.cs`（`ApplySettings` / `ApplySidebarGroups`）、`tools/test-settings.ps1`。
+  - 做法：筛选按 `UserFolderKey`（稳定标识，不受系统语言 / 路径重定向影响）而不是显示名；
+    `SyncHomeFolders()` 只增删「主目录」分组的差异子项、复用未变化的节点，
+    所以关掉再打开一个文件夹时它已展开的子目录与展开状态都还在（与分组开关同一个理由）。
+  - 验收：`tools/test-settings.ps1` 用例 7 追加了相应断言（默认只有桌面 / 下载；
+    打开「文档」后树里真的出现；关掉「桌面」后真的消失；用完还原）。
 
 ---
 

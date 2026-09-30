@@ -31,6 +31,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IShellService _shell;
     private readonly IShellIconService _icons;
     private readonly IShellContextMenuService _contextMenu;
+    private readonly IFileOperationService _fileOperations;
 
     private PanelViewModel _activePane = null!;
     private bool _isDualPane;
@@ -40,11 +41,14 @@ public sealed partial class MainViewModel : ObservableObject
     public MainViewModel(
         ISettingsService settings,
         IDriveService driveService,
+        INetworkLocationService networkLocations,
         IKnownFolderService knownFolders,
         IFileSystemService fileSystem,
         IShellService shell,
         IShellIconService icons,
-        IShellContextMenuService contextMenu)
+        IShellContextMenuService contextMenu,
+        IClipboardService clipboard,
+        IFileOperationService fileOperations)
     {
         _settings = settings;
         _driveService = driveService;
@@ -53,8 +57,12 @@ public sealed partial class MainViewModel : ObservableObject
         _shell = shell;
         _icons = icons;
         _contextMenu = contextMenu;
+        _fileOperations = fileOperations;
 
-        Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService);
+        // 复制 / 移动完成后要让受影响的目录重新枚举（可能是另一个窗格、另一个标签页）
+        _fileOperations.Completed += OnFileOperationCompleted;
+
+        Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService, networkLocations);
         Sidebar.NavigateRequested += OnSidebarNavigateRequested;
         Sidebar.PinRequested += OnSidebarPinRequested;
         Sidebar.UnpinRequested += OnSidebarUnpinRequested;
@@ -62,8 +70,8 @@ public sealed partial class MainViewModel : ObservableObject
         // 侧边栏的「收藏夹」分组是工具条固定目录的镜像：增删、拖拽排序都立刻同步过去
         PinnedFolders.CollectionChanged += (_, _) => Sidebar.SyncFavorites(PinnedFolders);
 
-        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu);
-        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu);
+        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations);
+        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations);
 
         PrimaryPane.Navigated += OnPaneNavigated;
         SecondaryPane.Navigated += OnPaneNavigated;
@@ -231,6 +239,39 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    // ------------------------------------------------------------------ 主题
+
+    /// <summary>
+    /// 主题：跟随系统 / 浅色 / 深色（设置窗口「外观 → 主题」，也是标题栏那个太阳 / 月亮开关）。
+    /// ViewModel 只负责“值”与落盘，真正换主题是 <c>MainWindow.ApplyTheme</c>
+    /// （给根元素设 RequestedTheme；<c>Application.RequestedTheme</c> 启动后不允许再改）。
+    /// </summary>
+    public AppTheme Theme
+    {
+        get => _settings.Current.Theme;
+        set
+        {
+            var theme = ThemeHelper.Normalize(value);
+            if (_settings.Current.Theme == theme)
+            {
+                return;
+            }
+
+            _settings.Current.Theme = theme;
+            OnPropertyChanged();
+
+            // 换主题是个“明确动作”（拨开关 / 选下拉框），当场落盘，不必等到退出
+            _settings.Save();
+            Log.Write($"主题：{ThemeHelper.ToDisplayName(theme)}");
+        }
+    }
+
+    /// <summary>
+    /// 标题栏那个太阳 / 月亮开关：true = 深色。
+    /// 不管当前是不是「跟随系统」，拨一下就固定成显式的浅色 / 深色（与市面上大多数应用的开关一致）。
+    /// </summary>
+    public void SetDarkMode(bool dark) => Theme = dark ? AppTheme.Dark : AppTheme.Light;
+
     // ------------------------------------------------------------------ 标题
 
     /// <summary>窗口标题栏中间显示的当前目录名。</summary>
@@ -322,6 +363,46 @@ public sealed partial class MainViewModel : ObservableObject
 
     [RelayCommand]
     private void CopyCurrentPath() => ActivePane.ActiveTab?.CopyCurrentPathCommand.Execute(null);
+
+    /// <summary>编辑菜单「复制」/ Ctrl+C：复制活动窗格里选中的项。</summary>
+    [RelayCommand]
+    private void CopySelection()
+    {
+        if (ActivePane.ActiveTab is { } tab && tab.CopySelectionCommand.CanExecute(null))
+        {
+            tab.CopySelectionCommand.Execute(null);
+        }
+    }
+
+    /// <summary>编辑菜单「剪切」/ Ctrl+X。</summary>
+    [RelayCommand]
+    private void CutSelection()
+    {
+        if (ActivePane.ActiveTab is { } tab && tab.CutSelectionCommand.CanExecute(null))
+        {
+            tab.CutSelectionCommand.Execute(null);
+        }
+    }
+
+    /// <summary>编辑菜单「粘贴」/ Ctrl+V：粘贴到活动窗格的当前目录。</summary>
+    [RelayCommand]
+    private async Task PasteAsync()
+    {
+        if (ActivePane.ActiveTab is { } tab)
+        {
+            await tab.PasteCommand.ExecuteAsync(null).ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>编辑菜单「删除」/ Del：把活动窗格里选中的项丢进回收站。</summary>
+    [RelayCommand]
+    private async Task DeleteSelectionAsync()
+    {
+        if (ActivePane.ActiveTab is { } tab && tab.DeleteSelectionCommand.CanExecute(null))
+        {
+            await tab.DeleteSelectionCommand.ExecuteAsync(null).ConfigureAwait(true);
+        }
+    }
 
     [RelayCommand]
     private void RevealInExplorer() => ActivePane.ActiveTab?.RevealInExplorerCommand.Execute(null);
@@ -602,6 +683,7 @@ public sealed partial class MainViewModel : ObservableObject
         settings.ColumnAutoFit = edited.ColumnAutoFit;
         settings.RowHeight = ColumnLayout.NormalizeRowHeight(edited.RowHeight);
         settings.SquareTabCorners = edited.SquareTabCorners;
+        settings.Theme = ThemeHelper.Normalize(ThemeHelper.FromIndex(edited.ThemeIndex));
 
         // 侧边栏四个分组的显示开关（设置窗口「侧边栏」页）
         settings.SidebarShowHome = edited.SidebarShowHome;
@@ -609,8 +691,19 @@ public sealed partial class MainViewModel : ObservableObject
         settings.SidebarShowCloud = edited.SidebarShowCloud;
         settings.SidebarShowComputer = edited.SidebarShowComputer;
 
+        // 「主目录」分组里显示哪几个标准文件夹
+        settings.SidebarHomeDesktop = edited.SidebarHomeDesktop;
+        settings.SidebarHomeDocuments = edited.SidebarHomeDocuments;
+        settings.SidebarHomeDownloads = edited.SidebarHomeDownloads;
+        settings.SidebarHomePictures = edited.SidebarHomePictures;
+        settings.SidebarHomeMusic = edited.SidebarHomeMusic;
+        settings.SidebarHomeVideos = edited.SidebarHomeVideos;
+
         OnPropertyChanged(nameof(ShowHiddenFiles));
         OnPropertyChanged(nameof(ShowExtensions));
+
+        // 主题：主窗口与设置窗口都在听这个属性（重设同一个 RequestedTheme 是无害的，不必先比一遍）
+        OnPropertyChanged(nameof(Theme));
 
         // 动画开关自带“应用到所有标签页”的逻辑，而且只改视图行为不重载目录，直接走属性设置器
         EnableListAnimations = edited.EnableListAnimations;
@@ -657,9 +750,13 @@ public sealed partial class MainViewModel : ObservableObject
             $"设置已应用：隐藏文件={edited.ShowHiddenFiles} 扩展名={edited.ShowExtensions} "
             + $"文件夹优先={edited.FoldersFirst} 动画={edited.EnableListAnimations} 列宽自适应={edited.ColumnAutoFit} "
             + $"行高={settings.RowHeight:0} 标签页={(settings.SquareTabCorners ? "直角" : "圆角")} "
+            + $"主题={ThemeHelper.ToDisplayName(settings.Theme)} "
             + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane} "
             + $"侧边栏分组（主目录/收藏夹/云存储/此电脑）="
             + $"{edited.SidebarShowHome}/{edited.SidebarShowFavorites}/{edited.SidebarShowCloud}/{edited.SidebarShowComputer} "
+            + $"主目录文件夹（桌面/文档/下载/图片/音乐/视频）="
+            + $"{edited.SidebarHomeDesktop}/{edited.SidebarHomeDocuments}/{edited.SidebarHomeDownloads}/"
+            + $"{edited.SidebarHomePictures}/{edited.SidebarHomeMusic}/{edited.SidebarHomeVideos} "
             + $"右键菜单={(edited.UseBuiltInContextMenu ? "内置" : "系统")} "
             + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
     }
@@ -701,6 +798,15 @@ public sealed partial class MainViewModel : ObservableObject
             _settings.Current.SidebarShowFavorites,
             _settings.Current.SidebarShowCloud,
             _settings.Current.SidebarShowComputer);
+
+        // 「主目录」分组里显示哪几个标准文件夹（默认只开桌面与下载）
+        Sidebar.ApplyHomeFolders(
+            _settings.Current.SidebarHomeDesktop,
+            _settings.Current.SidebarHomeDocuments,
+            _settings.Current.SidebarHomeDownloads,
+            _settings.Current.SidebarHomePictures,
+            _settings.Current.SidebarHomeMusic,
+            _settings.Current.SidebarHomeVideos);
     }
 
     private void ReloadDrives()
@@ -898,6 +1004,72 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private void OnSidebarUnpinRequested(object? sender, string path) => UnpinFolderByPath(path);
+
+    /// <summary>
+    /// 一次复制 / 移动 / 删除完成后，把“源所在目录”与“目标目录”那几个标签页重新枚举一遍。
+    /// 不按发起操作的标签页刷新，而是按路径找：拖到另一个窗格、粘到另一个标签页都要跟着变；
+    /// 删除时如果某个标签页正开在被删掉的目录里，就退到上一级（刷新它只会得到一条错误）。
+    /// </summary>
+    private void OnFileOperationCompleted(object? sender, FileOperationCompletedEventArgs e)
+    {
+        var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrEmpty(e.DestinationDirectory))
+        {
+            affected.Add(Normalize(e.DestinationDirectory));
+        }
+
+        foreach (var source in e.SourcePaths)
+        {
+            if (_fileSystem.GetParentDirectory(source) is { } parent)
+            {
+                affected.Add(Normalize(parent));
+            }
+        }
+
+        foreach (var pane in new[] { PrimaryPane, SecondaryPane })
+        {
+            foreach (var tab in pane.Tabs.ToList())
+            {
+                var current = Normalize(tab.CurrentPath);
+
+                if (e.IsDelete && DeletedAncestorOf(e.SourcePaths, current) is { } deleted)
+                {
+                    if (_fileSystem.GetParentDirectory(deleted) is { } parent)
+                    {
+                        _ = tab.NavigateAsync(parent);
+                    }
+
+                    continue;
+                }
+
+                if (affected.Contains(current))
+                {
+                    _ = tab.RefreshAsync();
+                }
+            }
+        }
+    }
+
+    /// <summary>被删掉的那批里，有没有 <paramref name="current" /> 本身或它的祖先（返回那个被删路径）。</summary>
+    private static string? DeletedAncestorOf(IReadOnlyList<string> deleted, string current)
+    {
+        foreach (var path in deleted)
+        {
+            var root = Normalize(path);
+            if (current.Length >= root.Length
+                && current.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                && (current.Length == root.Length || current[root.Length] == '\\' || current[root.Length] == '/'))
+            {
+                return path;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>比路径是否同一个目录时忽略末尾分隔符与大小写（`C:\` 与 `C:\` 这种根路径也要相等）。</summary>
+    private static string Normalize(string path) => path.TrimEnd('\\', '/');
 
     private void OnPaneNavigated(object? sender, string path)
     {

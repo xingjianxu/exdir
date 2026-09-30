@@ -92,6 +92,56 @@ public static class DpiHelper
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
 
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    /// <summary>
+    /// 鼠标当前落在某个元素内的 DIP 坐标（元素左上角为原点）。
+    ///
+    /// 用于拖放：<c>DragEventArgs.GetPosition()</c> 在拖拽过程中给出的坐标实测并不可靠
+    /// （与 <c>GetCursorPos</c> 换算出的一致结果差几十个 DIP，鼠标压在第二行上报的却是第一行上面），
+    /// 而拖动期间鼠标指针就是拖放位置，所以直接用 <c>GetCursorPos</c> 反算：
+    /// 屏幕物理像素 → <c>ScreenToClient</c> → 除以缩放 → 减去元素在客户区里的原点。
+    /// 拿不到时返回 <c>NaN</c>，调用方当作“不在元素内”。
+    /// </summary>
+    public static Windows.Foundation.Point GetCursorPosition(FrameworkElement element, IntPtr hwnd)
+    {
+        var invalid = new Windows.Foundation.Point(double.NaN, double.NaN);
+
+        try
+        {
+            if (!GetCursorPos(out var point))
+            {
+                return invalid;
+            }
+
+            if (hwnd != IntPtr.Zero && !ScreenToClient(hwnd, ref point))
+            {
+                return invalid;
+            }
+
+            var scale = element.XamlRoot?.RasterizationScale ?? 1.0;
+            if (scale <= 0)
+            {
+                scale = 1.0;
+            }
+
+            var origin = element.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(0, 0));
+            return new Windows.Foundation.Point(
+                (point.X / scale) - origin.X,
+                (point.Y / scale) - origin.Y);
+        }
+        catch (Exception)
+        {
+            return invalid;
+        }
+    }
+
     /// <summary>
     /// 把“元素内的 DIP 坐标”换算成屏幕物理像素，用来给原生菜单定位。
     ///

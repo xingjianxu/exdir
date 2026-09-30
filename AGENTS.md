@@ -43,7 +43,7 @@ cd D:\prj\exdir
 # 1) 日常开发构建（Debug）
 dotnet build exdir.csproj -c Debug -p:Platform=x64 --nologo
 
-# 2) 出 Release（构建 + 镜像到 dist\win-x64）
+# 2) 出 Release（dotnet publish + 裁剪，再镜像到 dist\win-x64）
 pwsh -NoProfile -File tools\publish.ps1
 
 # 3) 启动 + 截图（验证 UI 渲染）
@@ -58,7 +58,10 @@ pwsh -NoProfile -File tools\inspect-ui.ps1 -Click "快捷菜单"      # 真实�
 pwsh -NoProfile -File tools\inspect-ui.ps1 -Hover "Documents"   # 真鼠标移上去（不点击）并截图，看悬停高亮
 pwsh -NoProfile -File tools\inspect-ui.ps1 -HoverAt "157,37"    # 同上，但按窗口内坐标悬停（中文名不好传参时用）
 
-# 5) 重新生成应用图标（Assets\exdir.ico）
+# 5) 重新生成应用图标：从仓库根的 icon.svg 渲染出 Assets\exdir.ico（exe / 标题栏 / 任务栏 / 托盘
+#    图标都用它）以及 Assets 下的各尺寸徽标 PNG；每个尺寸都按原尺寸单独栅格化，
+#    栅格化用 Windows 自带的 Edge（headless 截图，透明底），找不到脑 Edge 用 -Edge 或 EXDIR_EDGE 指定
+#    改了 icon.svg 之后跑一次，然后要重新 build/publish 才会换掉 exe 里的图标
 pwsh -NoProfile -File tools\make-icon.ps1
 
 # 6) 拖放回归（文件列表 / 侧边栏 → 工具条固定目录，含右键取消固定）
@@ -68,7 +71,9 @@ pwsh -NoProfile -File tools\test-pin-drag.ps1
 # 7) 设置窗口回归（左导航五个分类 / 每页只显示本分类的项 / 拨一下就立即生效并落盘 /
 #    跨分类读回 / 关窗重开仍是新值 / 「右键菜单」页的系统菜单项默认全开且能逐项关掉 /
 #    「行高」滑块拖完列表行真的变高 / 「侧边栏」页的分组开关关掉后树里真的少一个分组 /
-#    「标签页使用直角」拨一下就落盘并当场应用（exdir.log 里能看到 标签页=圆角/直角））
+#    「侧边栏」页里「主目录」的标准文件夹开关（桌面 / 文档 / 下载…）关掉后树里真的少一个 /
+#    「标签页使用直角」拨一下就落盘并当场应用（exdir.log 里能看到 标签页=圆角/直角） /
+#    「主题」下拉框选浅色 / 深色 / 跟随系统都会落盘并当场应用，标题栏的太阳 / 月亮开关改的是同一个设置）
 #    全程走 UIA 模式，不需要真鼠标、不需要前台窗口；跑完还原 settings.json
 pwsh -NoProfile -File tools\test-settings.ps1
 
@@ -118,6 +123,27 @@ pwsh -NoProfile -File tools\test-tray.ps1
 #      而且不重建整棵树（节点清单前后一致）、不动收藏夹）
 #      全程 UIA + SendMessage，不需要交互桌面；跑完删掉 subst 映射并还原 settings.json
 pwsh -NoProfile -File tools\test-drive-hotplug.ps1
+
+# 12f) 复制 / 剪切 / 粘贴 / 删除 与“拖到目录里移动”回归（真鼠标 + 真键盘 + 真实剪贴板）
+#      A. 内置右键菜单的文件行有「剪切/复制/粘贴/删除」、空白处有「粘贴」
+#      B. Ctrl+C 之后剪贴板上真的出现 CF_HDROP（用 System.Windows.Forms 读回来，
+#         与资源管理器读剪贴板是同一条路），Preferred DropEffect = 1（复制）
+#      C. 进子目录 Ctrl+V → 文件被复制过去（源还在）
+#      D. Ctrl+X（DropEffect = 2）→ 进子目录 Ctrl+V → 文件被移动过去（源没了）
+#      E. 把文件行拖到目录行上 → 文件被移动过去（拖拽中有整行强调色高亮，截图 .artifacts\file-ops-drag.png）
+#      F/G. 外部来源（脚本往剪贴板放的 CF_HDROP，分别带复制 / 剪切标志）→ Ctrl+V 能复制 / 移动进来
+#      H. Delete → 点掉外壳确认框 → 文件真的进了回收站（用 Shell.Application 的回收站名字空间读回来），
+#         Shift+Delete 的同名文件则不在回收站里（永久删除）
+#      需要交互桌面；当前 shell 是管理员时脚本会自动改用 explorer.exe 以普通权限启动 exdir
+#      —— Windows 直接禁止提权进程参与拖放（见第 6 节第 21 条），否则用例 E 永远过不了
+#      跑完还原 settings.json 并删掉测试目录
+pwsh -NoProfile -File tools\test-file-ops.ps1
+
+# 12g) 侧边栏「此电脑」里的 Windows「网络位置」回归（自己造一个指向临时目录的假网络位置：
+#      启动时它出现在「此电脑」里、排在磁盘之后；点它导航到 target.lnk 的目标目录；
+#      收到 WM_DEVICECHANGE 刷新后它还在（差量刷新不误删）；删掉目录再刷新它就消失）
+#      全程 UIA + SendMessage，不需要交互桌面；跑完删掉假网络位置并还原 settings.json
+pwsh -NoProfile -File tools\test-network-locations.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -132,11 +158,18 @@ pwsh -NoProfile -File tools\publish.ps1
 
 * **只出 win-x64**，不要生成 x86 / ARM64（未验证）。
 * `dist\win-x64\exdir.exe` 自包含，双击即可运行（目标机无需预装 .NET / Windows App Runtime）。
-* 交付前确认 `dist` 是最新的：看 `dist\win-x64\build-info.txt`（记录源码提交、构建时间、文件数），
-  并与 `bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\exdir.exe` 的时间戳对照；
+* 产物是**裁剪过的**（2026-09 起）：管线 = `dotnet publish`（PublishTrimmed + TrimMode=partial）
+  → 从构建输出补回 publish 丢掉的 `exdir.pri` / `*.xbf` → 镜像到 dist。
+  交付体积 **225 MB → 83 MB**（548 个文件 → 165 个），其中：
+  AI/ML/Search/Widgets 组件约 55 MB、语言资源 3.2 MB（只留 zh-* / en-*）、裁剪约 97 MB。
+  细节与“为什么不能开 NativeAOT”见“踩过的坑”第 63～66 条。
+* 交付前确认 `dist` 是最新的：看 `dist\win-x64\build-info.txt`（记录源码提交、构建时间、文件数、
+  总大小），并与 `bin\x64\Release\net8.0-windows10.0.19041.0\win-x64\exdir.exe` 的时间戳对照；
   两者不一致说明忘了 publish。
-* `publish.ps1` 会自动校验 `exdir.pri` 与每个 `.xaml` 对应的 `.xbf` 都在产物里，缺了就报错。
-* **不要用 `dotnet publish`**（见“踩过的坑”第 3 条）。
+* `publish.ps1` 会校验：`exdir.exe` / `exdir.dll` / `exdir.pri` 都在、源码里每个 `.xaml` 都有
+  对应 `.xbf`、`Assets\exdir.ico` 在、语言目录只剩 `zh-*` / `en-*`。任一条不满足直接报错。
+* **日常 `dotnet build` 不受影响**（裁剪只在 publish 生效），但 **`dotnet publish` 现在就是发布流程本身**，
+  不要再改回“build + 镜像”（见“踩过的坑”第 3 条）。
 
 **测试范围（2026-09）**：改完只跑与本次改动直接相关的交互式回归脚本（改托盘就只跑 `tools\test-tray.ps1`，改列宽就只跑 `tools\test-column-resize.ps1`），
 **不要每次把 `tools\test-*.ps1` 全跑一遍**；只有用户明确要求“全部测试”时才全跑。
@@ -173,28 +206,36 @@ exdir/
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
 ├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格 + 托盘图标（关闭即隐藏）
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
-├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / ShellMenuItem / IconBitmap / 枚举（含 SettingsCategory）
+├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / AppTheme / QuickCommand / CloudSyncState / ShellMenuItem / IconBitmap / 枚举（含 SettingsCategory）
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
 │   ├─ IDriveService          DriveInfo 枚举
 │   ├─ IKnownFolderService    用户标准目录 + 云存储同步根（注册表探测）
+│   ├─ INetworkLocationService  Windows「网络位置」快捷方式（%APPDATA%\Microsoft\Windows\Network Shortcuts）枚举
 │   ├─ ICloudSyncService      云同步根判定 + 单个条目的同步状态（状态列）
 │   ├─ IShellIconService      系统外壳图标（SHGetFileInfo 提取 + 两级缓存，见第 4 节“名称列图标”）
-│   ├─ ISettingsService       settings.json 读写（含结构版本迁移）
-│   ├─ IShellService          默认程序打开 / 终端 / 剪贴板 / 命令行
+│   ├─ ISettingsService       settings.json 读写（含结构版本迁移）+ 源生成序列化上下文
+│   │                          （SettingsJsonContext：裁剪过的发布版不能靠反射式 JsonSerializer）
+│   ├─ IShellService          默认程序打开 / 终端 / 剪贴板文本 / 命令行
+│   ├─ IClipboardService      文件剪贴板（写/读 CF_HDROP + Preferred DropEffect，与资源管理器互通）
+│   ├─ IFileOperationService  复制 / 移动（外壳 SHFileOperation：进度对话框 + 同名冲突询问）
 │   ├─ IShellContextMenuService  系统右键菜单（IContextMenu：弹出真菜单 + 枚举菜单项供设置页，见第 4 节“右键菜单”）
 │   ├─ IDeviceChangeService  卷（驱动器 / U 盘 / 光驱）插拔通知：侧边栏与工具条磁盘区实时刷新
 │   └─ Native/                Win32 互操作（ShellPropertyStore：属性系统 + 占位符兼容模式；
 │                             ShellIconExtractor：图标提取 / HICON → BGRA 像素；
 │                             ShellContextMenuInterop：IShellFolder / IContextMenu(2/3) + HMENU 操作；
-│                             VolumeChangeWatcher：WM_DEVICECHANGE 的卷插拔监听）
+│                             VolumeChangeWatcher：WM_DEVICECHANGE 的卷插拔监听；
+│                             ClipboardInterop：CF_HDROP / Preferred DropEffect；
+│                             FileOperationInterop：SHFileOperation 的 FO_COPY / FO_MOVE）
+│                             ShellLinkInterop：.lnk 快捷方式目标解析（IShellLinkW + IPersistFile）
 ├─ ViewModels/
 │   ├─ MainViewModel          磁盘、固定目录、快捷命令、侧边栏、两个窗格、全局命令
 │   ├─ PanelViewModel         一个窗格（标签页集合）
 │   ├─ FolderTabViewModel     一个标签页（当前目录、条目、选中、历史、排序、地址栏编辑态）
 │   ├─ PathSegmentViewModel   地址栏面包屑里的一段路径（显示名 + 完整路径 + 是否当前段）
 │   ├─ SidebarViewModel       文件夹树（懒加载；含镜像工具条固定目录的「收藏夹」分组；
-│   │                         四个分组的显示开关由 ApplyGroupVisibility 控制）
+│   │                         四个分组的显示开关由 ApplyGroupVisibility 控制，
+│   │                         「主目录」里显示哪些标准文件夹由 ApplyHomeFolders 控制）
 │   ├─ FileItemViewModel      列表一行（带 Depth/IsExpanded/Children，可展开）
 │   ├─ PinnedFolderViewModel  title 栏上的固定目录
 │   ├─ StatusBarViewModel     文件列表区底部状态栏（项数 / 选中摘要 + 合计大小 / 卷容量）
@@ -202,18 +243,20 @@ exdir/
 │   ├─ ShellMenuItemViewModel 设置窗口「右键菜单」页里的一行（包着 ShellMenuItem + 开关状态）
 │   └─ SettingsViewModel      设置窗口的编辑模型（绑到界面，任何改动发 Changed → 即时生效 + 落盘）
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
+│                             （DetailsView 还负责文件列表的拖放：拖到目录行 / 空白处即移动或复制）
 │                             StatusBarView（文件列表区底部一行）
 │                             SettingsWindow（设置窗口外壳：默认 860×800、居中、即时生效的接线）
 │                             SettingsView（设置窗口正文：NavigationView 左导航 + Windows 11 设置卡片）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / SingleInstance(托盘驻留的单实例闸门)
+├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / ThemeHelper(三态主题 ⇄ ElementTheme) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / SingleInstance(托盘驻留的单实例闸门)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
-├─ Assets/                    图标等（exdir.ico 由脚本生成）
+├─ icon.svg                   程序图标的唯一源文件（改图标就改它，再跑 tools\make-icon.ps1）
+├─ Assets/                    图标等（exdir.ico 与各尺寸徽标 PNG 都由 tools\make-icon.ps1 从 icon.svg 生成）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
                               test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray / test-drive-hotplug /
-                              measure-row-align / publish / make-icon 脚本
+                              test-file-ops / test-network-locations / measure-row-align / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -222,7 +265,7 @@ exdir/
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ 行0 TitleBar 控件:  ☰ |MenuBar(文件/编辑/查看/转到/工具/配置/帮助)| … │ 系统窗口按钮 ─┐
+│ 行0 TitleBar 控件:  ☰ ☀|MenuBar(文件/编辑/查看/转到/工具/配置/帮助)| … │ 系统窗口按钮 ─┐
 │                              中间: 当前目录名                     │  (AppWindow)  │
 ├─────────────────────────────────────────────────────────────────┤
 │ 行1 工具条:  左=磁盘/网络盘/可移动盘      右=固定目录 + 快捷菜单⋯  │
@@ -243,9 +286,12 @@ exdir/
 * `TitleBar` 的分区属性是 **`LeftHeader` / `Content` / `RightHeader`**。
   `ContentBefore` / `ContentAfter` 虽然在 winmd 里存在，但被标记为 experimental，
   XAML 编译器会报 `WMC0011: Unknown member`，**不要用**。
-* 侧边栏分组：`主目录`（可点击，指向 %USERPROFILE%，子项为桌面/文档/下载/图片/音乐/视频）、
-  `收藏夹`（工具条固定目录的镜像，可从文件列表/侧边栏拖目录进来收藏，见下面“固定目录”那条）、
-  `云存储`（注册表探测到的同步根）、`此电脑`（各磁盘）。分组节点本身可导航当且仅当它有路径
+* `LeftHeader` 里是一个 `StackPanel`：**主题开关（太阳/月亮）在「文件」菜单左边**，然后才是 `MenuBar`；
+  整个程序的深浅主题见下面“主题（深色 / 浅色）”那一条。
+* 侧边栏分组（自上而下）：`收藏夹`（工具条固定目录的镜像，可从文件列表/侧边栏拖目录进来收藏，见下面“固定目录”那条；
+  排在最上面，`AllGroups()` 与 `RefreshRoots()` 里的 `desired` 顺序必须保持一致）、
+  `主目录`（可点击，指向 %USERPROFILE%，子项为桌面/文档/下载/图片/音乐/视频）、
+  `云存储`（注册表探测到的同步根）、`此电脑`（各磁盘 + 「网络位置」快捷方式，见下面“网络位置”那条）。分组节点本身可导航当且仅当它有路径
   （`SidebarNodeViewModel.IsNavigable`）。
 
   四个分组各自可以在设置窗口「侧边栏」页里关掉不显示（`AppSettings.SidebarShowHome` /
@@ -253,6 +299,14 @@ exdir/
   `MainViewModel.ApplySidebarGroups()` 把设置推给 `SidebarViewModel.ApplyGroupVisibility()`，
   后者只增删 `Roots` 里的差异项、不整表重建，所以重新打开一个分组时它之前折叠/展开的状态
   与已懒加载的子节点全都还在（整表重建会把这些全丢掉）。
+
+  「主目录」分组里显示哪几个标准文件夹也可以单独配（`AppSettings.SidebarHomeDesktop` /
+  `SidebarHomeDocuments` / `SidebarHomeDownloads` / `SidebarHomePictures` / `SidebarHomeMusic` /
+  `SidebarHomeVideos`，**默认只开「桌面」与「下载」**）：`ApplySidebarGroups()` 同时推给
+  `SidebarViewModel.ApplyHomeFolders()`。筛选按 `SpecialFolderModel.Key`（`UserFolderKey`，稳定标识，
+  不依赖会随系统语言变的显示名）做，而不是按显示名或路径匹配；
+  `SyncHomeFolders()` 只增删这一个分组的差异子项、复用未变化的节点对象，
+  所以关掉再打开一个文件夹时它已展开的子目录与展开状态都还在（与分组开关同一个理由）。
 * 紧凑密度靠 `Themes/ExdirTheme.xaml` 里覆盖 WinUI 数值型资源实现：
   `TitleBarExpandedHeight=36`、`ListViewItemMinHeight=24`、`TreeViewItemMinHeight=24`。
   **只覆盖数值/颜色类资源键**，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
@@ -275,6 +329,25 @@ exdir/
     （值由 `FolderTabViewModel` 从设置算出来），WinUI 模板里 `TabBackground.CornerRadius` 是
     `TemplateBinding`，所以设置一改就会当场重画，不需要重建标签页；
     上面那个“圆角顶边贴住窗格上边框”的描述在默认的直角模式下就是一条水平直线。
+* **主题（跟随系统 / 浅色 / 深色）**（2026-09）：`AppSettings.Theme`（枚举 `Models/AppTheme`，默认 `System`），
+  两个入口共用同一个值：标题栏左侧那个太阳 / 月亮图标（`MainWindow` 的 `ThemeToggle`，
+  `ExToolbarToggleButtonStyle`）与设置窗口「外观 → 主题」下拉框（三态）。
+  * 真正换主题只有一处：`MainWindow.ApplyTheme()` 给 `RootGrid` 设 `RequestedTheme`
+    （`Application.RequestedTheme` 启动后不允许再改）。根元素一变，菜单栏 / 工具条 / 侧边栏 /
+    窗格 / 状态栏连同弹层（`MenuFlyout`、`ContentDialog` 的 XamlRoot 都是它）一起换。
+  * 图标与悬停提示按 **`RootGrid.ActualTheme`** 刷（`SyncThemeToggle` + `ActualThemeChanged`），
+    所以「跟随系统」时图标与画面永远一致；标题栏那个开关不带勾选底色，状态由字形表达
+    （`ExToolbarToggleButtonStyle` 的 `CheckStates` 故意全空，避免与悬停色抢 `Background`）。
+    拨动时总是固定成**显式**的浅 / 深（`MainViewModel.SetDarkMode`），不会停在「跟随系统」。
+  * **系统窗口按钮（最小化/最大化/关闭）不跟着 ElementTheme 走**：系统主题与 exdir 主题不一致时
+    要自己给 `AppWindow.TitleBar.Button*Color` 上色（`UpdateCaptionButtons`），否则“深色系统 + 浅色 exdir”
+    下那三个按钮会是白的、几乎看不见。
+  * 设置窗口是另一个 `Window`，不继承主窗口的主题：`SettingsWindow.ApplyTheme()` 自己设
+    `View.RequestedTheme`，并订阅主 ViewModel 的 `Theme`，主窗口一边拨它一边跟着换（关窗时退订）。
+  * **设置窗口必须有 Mica 背板**：`NavigationView` 左侧导航用的是半透明的“应用内亚克力”，
+    窗口背后没有背板时它采样到窗口自身的黑底 —— 深色主题下看不出来，浅色主题下就是黑底 + 深色文字。
+    详见第 6 节第 68 条。
+  * 回归：`tools/test-settings.ps1` 用例 9（下拉框三态 + 标题栏开关 + 两个入口互相同步）。
 * **扁平控件的悬停/按下/选中底色全部是强调色**（`Themes/ExdirTheme.xaml`）：
   WinUI 默认都是“灰底上叠 8% 白”（`ButtonBackgroundPointerOver`、`MenuBarItemBackgroundPointerOver`、
   `ListViewItemBackgroundPointerOver`…），几乎看不出鼠标停在哪里。现在统一换成强调色，
@@ -441,8 +514,8 @@ exdir/
     拖动时在按钮之间的边界画一条 2px 强调色插入提示条（`InsertionIndicator`，位置用
     `Margin.Left` 设，它和按钮不在同一棵子树里所以要 `TransformToVisual` 换算到 `PinnedItemsHost`）。
     **Button 上的 `CanDrag` 在 WinUI 3 里是无效的**，必须自己识别手势，见第 6 节第 25 条。
-* **侧边栏里有「收藏夹」分组，镜像工具条上的固定目录**（2026-09）：`主目录` 下面多一个
-  `收藏夹` 分组，子项与 `MainViewModel.PinnedFolders` **同序同名**（增删、工具条上拖拽排序后立刻同步：
+* **侧边栏里有「收藏夹」分组，镜像工具条上的固定目录**（2026-09）：它排在侧边栏**最上面**
+  （在 `主目录` 之上），子项与 `MainViewModel.PinnedFolders` **同序同名**（增删、工具条上拖拽排序后立刻同步：
   `MainViewModel` 订阅 `PinnedFolders.CollectionChanged` → `SidebarViewModel.SyncFavorites`，
   `RefreshDrives` 重建整棵树后也要再灌一次）。收藏项本身是普通目录节点（可展开、可导航）。
   * 把目录从文件列表 / 侧边栏拖到「收藏夹」分组或其任意子行上即收藏，提示是“收藏到侧边栏”，
@@ -466,6 +539,19 @@ exdir/
   窗口隐藏到托盘时仍是顶层窗口，消息照样收得到；只有真的「退出」才 `Detach()`。
   「工具 → 重新扫描磁盘」是同一个 `RefreshDrives`。
   坑见第 6 节第 56 条；回归：`tools/test-drive-hotplug.ps1`（subst 造盘符 + 发消息，不需要交互桌面）。
+
+* **侧边栏「此电脑」里也列出 Windows 的「网络位置」**（2026-09）：资源管理器里用「添加一个网络位置」
+  造出来的东西，在磁盘上就是 `%APPDATA%\Microsoft\Windows\Network Shortcuts` 下的一个快捷方式容器目录
+  （里面是隐藏的 `target.lnk`，目标通常是 `\\server\share`）。`Services/INetworkLocationService`
+  逐个子目录读 `target.lnk` 的目标（`Services/Native/ShellLinkInterop` 的 `IShellLinkW`），
+  以目录名为显示名、目标路径为 `FullPath`，作为「此电脑」分组里**排在磁盘之后**的普通可展开节点
+  （点击即导航到目标，UNC 也能走现有的路径规整与面包屑）。
+  * 目标解析不出来（快捷方式损坏 / 指向 shell 虚拟项）的项直接跳过；**不判断目标是否在线** ——
+    离线的网络位置在资源管理器里也照样列出来，打开时才报错（由现有导航错误处理兜底）。
+  * **`SidebarViewModel.RefreshDrives` 必须把网络位置一起算进“期望清单”**：它原本只从磁盘列表重建，
+    下面“摘掉不在期望清单里的节点”那一步会把网络位置全删掉（一次插拔 / 「重新扫描磁盘」就没了）。
+  * 回归：`tools/test-network-locations.ps1`（4 个用例 5 条断言，自己造一个指向临时目录的假网络位置，
+    UIA + `SendMessage`，不需要交互桌面）。
 
 * **文件列表区底部有一条状态栏**（`Views/StatusBarView.xaml` + `ViewModels/StatusBarViewModel`）：
   它挂在 `MainWindow` 里窗格那一列的**第 1 行**（第 0 行才是放 1~2 个窗格的 Grid，`Height="*"`），
@@ -504,8 +590,11 @@ exdir/
   决定用哪一种（**默认开 = 内置菜单**；关掉则回到系统外壳菜单）。两种菜单的内容**故意不一样**。
   * **内置菜单（默认）**：`Views/DetailsView` 现场搭一个 WinUI `MenuFlyout`，只绑 exdir 自己实现的命令，
     不建 COM 对象、不问外壳，所以弹出几乎瞬时：
-    * 文件行：`打开` / `在资源管理器中显示` /（分隔）/ `复制路径` / `属性`；
-    * 背景：`新建文件夹` / `刷新` / `全选` /（分隔）/ `复制当前路径` / `在此处打开终端`。
+    * 文件行：`打开` / `在资源管理器中显示` /（分隔）/ `剪切`(Ctrl+X) / `复制`(Ctrl+C) / `粘贴`(Ctrl+V) /
+      `删除`(Del) /（分隔）/ `复制路径` / `属性`；
+    * 背景：`粘贴`(Ctrl+V) / `新建文件夹` / `刷新` / `全选` /（分隔）/ `复制当前路径` / `在此处打开终端`。
+    * 剪贴板上没有文件时「粘贴」是灰的（建菜单时现查一次 CF_HDROP，不读内容）；
+      `剪切`/`复制` 的可点状态跟着选中项走（`CanExecute = HasSelection`）。
     * `属性` 走 `IShellService.ShowProperties`（`ProcessStartInfo.Verb = "properties"`，不建 `IContextMenu`）；
       `新建文件夹` 由 `FolderTabViewModel.CreateNewFolderAsync` 自己建目录（重名依次 `(2)(3)…`）并选中；
       其余项直接复用标签页已有的命令与视图的 `SelectAll`。
@@ -571,6 +660,64 @@ exdir/
 * UIA 里能看到托盘图标的方法与不要踩的坑见 `tools/test-tray.ps1` 的注释；回归：
   `pwsh -NoProfile -File tools\test-tray.ps1`（4 个用例 17 条断言，真鼠标点关闭按钮与托盘图标）。
 
+### 复制 / 剪切 / 粘贴 / 删除与“拖动移动”（2026-09）
+
+文件列表支持资源管理器那一套剪贴板操作与删除（进回收站），也支持把文件拖到目录里移动。
+
+* **剪贴板用系统标准格式，与资源管理器互通**（`Services/IClipboardService` +
+  `Services/Native/ClipboardInterop`）：写的是 `CF_HDROP`（HDROP 文件列表）+ `Preferred DropEffect`
+  （一个 DWORD，1 = 复制、2 = 剪切），读的时候先走 Win32 `GetClipboardData`、拿不到再退回
+  OLE `OleGetClipboard` + `IDataObject`。所以 exdir 里 Ctrl+C、然后到资源管理器里 Ctrl+V 能粘贴，反之亦然。
+  * 写入走 Win32 `SetClipboardData`：内存所有权交给系统，进程退出后内容仍有效（不需要
+    `OleFlushClipboard` 那一套）。`Preferred DropEffect` 是**运行时注册**的格式，
+    必须 `RegisterClipboardFormat("Preferred DropEffect")`——`0x000C` 是 `CF_WAVE`（见第 6 节第 57 条）。
+  * 读到“剪切”时写入方就在源目录里把文件搬走（`MoveAsync`），搬完 `Clear()` 清空剪贴板
+    （与资源管理器一致：剪切粘贴只能生效一次）。
+* **真正的复制 / 移动 / 删除交给外壳**（`Services/IFileOperationService` + `Services/Native/FileOperationInterop`）：
+  `SHFileOperation` 的 `FO_COPY` / `FO_MOVE` / `FO_DELETE`，因此进度对话框、同名冲突的是/否/全部、
+  “目标目录不存在就建”都是资源管理器同款，exdir 自己一行文件搬运代码都没有。
+  * `SHFileOperation` 必须在 **STA** 线程上跑（它要自己起一个模态进度对话框），
+    而线程池线程是 MTA，所以每次操作开一条专用的 STA 线程（主窗口消息循环不阻塞，
+    进度对话框用主窗口当属主）；操作完成在 `Completed` 事件里汇总。
+  * 完成后由 `MainViewModel.OnFileOperationCompleted` **按路径找**受影响的标签页（源所在目录 + 目标目录）
+    重新枚举，而不是只刷新发起操作的那个 —— 拖到另一个窗格、粘到另一个标签页也要跟着变；
+    删除时如果某个标签页正开在被删掉的目录里，则退到上一级（刷新它只会得到一条错误）。
+* **删除**（`FileOperationCompletedEventArgs.IsDelete`）：`Delete` 进回收站、`Shift+Delete` 永久删除。
+  回收站靠 `FOF_ALLOWUNDO` 实现，另外带上 `FOF_WANTNUKEWARNING` —— 文件大到装不进回收站（或所在卷没有回收站）
+  时外壳仍会警告一次，否则这类文件会被**静默抹掉**而用户以为只是“丢进回收站”。
+  `FO_DELETE` 不看 `pTo`，必须传 `null`（给空串会被外壳当成非法目标）。
+  确认框（“确实要将其移至回收站吗？ / 确实要永久性地删除吗？”）由外壳弹，等在那里不点的话，
+  删除就卡在 STA 线程上（日志里能看到“删除：1 项 → 永久删除”却没有“文件操作：…”的收尾行）；
+  它是 **owned 的 `#32770` 窗口**，UIA 里得从主窗口的 `Descendants` 里找（不在桌面子窗口那一层）；
+  用户点“否”时 `SHFileOperation` 返回 `fAnyOperationsAborted != 0`，`FileOperationResult.Canceled` 为 true。
+* **命令与快捷键**：`FolderTabViewModel.CopySelectionCommand` / `CutSelectionCommand` / `PasteCommand` /
+  `DeleteSelectionCommand`（进回收站）/ `DeleteSelectionPermanentlyCommand`（永久删除）
+  （`MainWindow` 的「编辑」菜单与 `MainViewModel` 里的同名命令只是转发到活动标签页）。
+  `Ctrl+C` / `Ctrl+X` / `Ctrl+V` 是挂在 `DetailsView` 根 Grid（`DetailsRoot`）上的
+  `KeyboardAccelerator`，和已有的 `Ctrl+A` 一个道理：焦点在地址栏（不在本控件子树里）时
+  仍然是 `TextBox` 自己的复制/粘贴/剪切。
+  `Delete` / `Shift+Delete` 则用 `DetailsRoot.PreviewKeyDown`（隧道事件）自己判 Shift ——
+  **带 Shift 的 `KeyboardAccelerator` 对 `Delete` 根本不触发**（实测），不要回去改成加速器。
+* **拖动移动**：把行拖到列表里的某个**目录行**上（或拖到列表空白处 = 当前目录，
+  也可以拖到另一个窗格）即移动；按住 `Ctrl` 是复制。
+  * 拖拽源是 `DetailsRoot` 自己识别的手势（按下 + 移动超过 4 DIP 后 `StartDragAsync`），
+    **不用** `ListView.CanDragItems`（它自带的拖拽在模拟鼠标下只能走到 `DragItemsStarting`
+    就没了下文，见第 6 节第 58 条）。数据包用 `exdir/paths` 格式（`DragDropHelper.SetPaths`），
+    额外带一个 `exdir/folders-only` 属性让工具条“固定目录”区能区分“拖的是文件”；
+    允许的效果带上 `Move`（同盘拖动默认就是移动，和资源管理器一样）。
+  * 落点是**整个文件列表**（`DetailsRoot`，`AllowDrop=True`）：行容器的拖放被关掉
+    （`ItemContainerStyle` 里 `AllowDrop=False`），指针在行间移动时目标不再变来变去。
+    鼠标下是哪一行用“光标位置 + 已生成行容器的实际矩形”算（`RowAt`），
+    **不用** `e.GetPosition`（拖拽期间它给的坐标不可靠，见第 6 节第 59 条）、也不用
+    `e.OriginalSource`（拖放事件的源永远是带 `AllowDrop` 的那个元素）。
+    命中行高亮：`FileItemViewModel.IsDropTarget` → 行模板里那层强调色 `Border`。
+  * **拖拽结束的兜底**：WinUI 有时不会把 `Drop` 冒泡到列表上（行高亮着、松手却什么都没发生），
+    所以 `StartRowDragAsync` 在 `StartDragAsync` 返回之后会再判一次：
+    左键还按着（= 用户按了 Esc 取消）或者光标已经不在本列表里（= 落到别的窗格/工具条/别的程序了）就不管，
+    否则按松开时的光标位置自己把这次移动做完（日志里的 `拖放兜底：…`）。
+  * 回归：`tools/test-file-ops.ps1`（9 个用例；需要交互桌面，且当前 shell 是管理员时会改用
+    `explorer.exe` 以普通权限启动 exdir —— 提权进程根本不能参与拖放，见第 6 节第 21 条）。
+
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
 | 快捷键 | 动作 |
@@ -581,11 +728,14 @@ exdir/
 | `Ctrl+H` | 显示/隐藏隐藏文件 |
 | `Ctrl+B` | 显示/隐藏侧边栏 |
 | `Ctrl+A` | 全选活动窗格文件列表里当前可见的行（焦点在地址栏时仍是文本框全选） |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | 复制 / 剪切 / 粘贴（挂在 `DetailsView` 根 Grid 上，焦点在地址栏时仍是文本框自己的行为） |
+| `Delete` / `Shift+Delete` | 删除到回收站 / 永久删除（走 `DetailsRoot.PreviewKeyDown` 隧道事件，仅作用于文件列表） |
 | `F6` | 切换活动窗格 |
 | `F10` | 单窗格 / 双窗格切换 |
 | `Ctrl+L` / `Alt+D` | 编辑活动窗格的地址栏（等价于点地址栏空白处） |
 
-另外：`文件列表 / 侧边栏文件夹树` 里的**目录**可以直接拖到工具条右侧的“固定目录”区固定下来。
+另外：`文件列表 / 侧边栏文件夹树` 里的**目录**可以直接拖到工具条右侧的“固定目录”区固定下来；
+文件列表里的文件 / 目录拖到某个**目录行**上（或拖到另一个窗格）就是移动，按住 `Ctrl` 是复制。
 
 ### 设置窗口（所有配置项的唯一入口，2026-09 从 ContentDialog 改为独立窗口）
 
@@ -601,9 +751,9 @@ exdir/
   | 分类 | 配置项 |
   | --- | --- |
   | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高（滑块，默认 28） |
-  | 外观 | 过渡动画 / 标签页使用直角（默认开） |
+  | 外观 | 主题（下拉框：跟随系统 / 浅色 / 深色，默认跟随系统）/ 标签页使用直角（默认开）/ 过渡动画 |
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
-  | 侧边栏 | 显示「主目录」分组 / 显示「收藏夹」分组 / 显示「云存储」分组 / 显示「此电脑」分组（各分组的显示开关，默认全开） |
+  | 侧边栏 | 显示「主目录」分组 / 显示「收藏夹」分组 / 显示「云存储」分组 / 显示「此电脑」分组（各分组的显示开关，默认全开）；「主目录」里显示「桌面」/「文档」/「下载」/「图片」/「音乐」/「视频」六个标准文件夹（**默认只开桌面与下载**） |
   | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 系统右键菜单项逐项开关（动态清单，见第 4 节“右键菜单”） |
 
   * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`（列表顺序即导航顺序），
@@ -615,10 +765,14 @@ exdir/
     `IsSidebarPageVisible` / `IsShellMenuPageVisible`（`SelectedCategory` 的 setter 里一次性通知这五个，省得每页各写一个枚举转换器）。
     非当前页是 `Visibility=Collapsed`，**UIA 树里根本没有它们**：所以回归脚本
     “切到某分类后只看得到该分类的开关”本身就是“切页真的生效”的验证。
-  * 每一行用 `{x:Bind}` 把 VM 属性绑到卡片里的控件上（`ToggleSwitch.IsOn` / `Slider.Value` 都是 TwoWay）；
+  * 每一行用 `{x:Bind}` 把 VM 属性绑到卡片里的控件上（`ToggleSwitch.IsOn` / `Slider.Value` / `ComboBox.SelectedIndex` 都是 TwoWay）；
     开关的 `AutomationProperties.Name` 就是卡片标题（工具包本来也会把 Header 设成内容的名字，显式写一遍更明确），
     回归脚本按这个名字找它，用 `TogglePattern` 拨；
-    滑块的 UIA 名字也是标题，用 `RangeValuePattern` 读写（`Slider` 没有 `TogglePattern`）。
+    滑块的 UIA 名字也是标题，用 `RangeValuePattern` 读写（`Slider` 没有 `TogglePattern`）；
+    「主题」是三态，用 `ComboBox`（`SelectedIndex` 直接对应 `ThemeHelper` 的 0/1/2），
+    回归脚本靠 `ExpandCollapse` + `SelectionItemPattern` 选、`SelectionPattern` 读 ——
+    **它没有 `TogglePattern`，所以不会干扰上面那套“这一页有几个开关”的计数**
+    （这也是选 `ComboBox` 而不是三个 `RadioButton` 的原因之一）。
   * **窗口默认 860×800 DIP**（`SettingsWindow.DefaultWidthDips/DefaultHeightDips`），交给 `SettingsView`，
     在工作区居中；工作区放不下就退让（先夹再定）。
     宽度不能小：`SettingsCard` 在**卡片宽度 < 476 DIP**（工具包里的 `SettingsCardWrapThreshold`）时
@@ -688,6 +842,11 @@ exdir/
   `MainViewModel.ApplySettings` 应用 → `tools/test-settings.ps1` 的 `$KeyMap` 与 `$CategoryMap` →
   需要时再往 `SettingsCategory` 加分类。
   落盘与应用只在 `MainViewModel.ApplySettings` 一处发生（设置窗口自己不写 `settings.json`）。
+* **凡是会被持久化（或跨 WinRT ABI）的对象，都不能只靠反射**：交付版是裁剪过的。
+  写进 `settings.json` 的类型要在 `Services/SettingsJsonContext.cs` 里加一行 `[JsonSerializable]`，
+  否则序列化会在运行时静默失败（见“踩过的坑”第 66 条）；
+  实现 WinRT 接口的自定义控件要 `partial`（CsWinRT 源生成器才能把 vtable 生成出来）。
+  这类问题只在**裁剪过的 dist 产物**里出现，改完记得用 `dist\win-x64\exdir.exe` 跑一遍回归。
 * **数据集合整体替换而非增量 Add**：`FolderTabViewModel.Items` 每次导航/排序都新建
   `ObservableCollection` 再赋值，避免逐条 Add 造成 O(n²) 的 UI 开销。
 * **中文注释**、中文 UI 文案。注释解释“为什么”，不要复述代码。
@@ -706,10 +865,15 @@ exdir/
    可用宽度必须用 `ScrollViewer.ViewportWidth`（而不是 ListView 宽度）算——
    自定义竖滚动条会占掉视口宽度（`HorizontalOffset` 同步列头时也一样）。
 3. **`dotnet publish` 会把 `.xbf` 和 `exdir.pri` 丢掉**，发布版启动即
-   `XamlParseException: XAML parsing failed`。
-   手动往 `ResolvedFileToPublish` 里补会更糟（整个发布目录被写成同一个文件的内容）。
-   **因此发布流程 = `dotnet build` + 镜像输出目录**，见 `tools/publish.ps1`。
-4. **`PublishReadyToRun=true` / `PublishTrimmed=true` 都不能开**，同样会导致启动期 XAML 失败。
+   `XamlParseException: XAML parsing failed`（两者只有 `CopyToOutputDirectory`，
+   没进发布文件列表）。
+   手动往 `ResolvedFileToPublish` 里补会更糟（整个发布目录被写成同一个文件的内容），
+   **不要往项目文件里加这种 target**。
+   **现在的发布流程 = `dotnet publish` + 从构建输出把这两个东西拷回发布目录**（`tools\publish.ps1` 的第 2 步），
+   并用 `dotnet publish` 是因为裁剪（`PublishTrimmed`）只在 publish 阶段生效 —— 两者必须同时存在。
+4. **`PublishReadyToRun=true` 不能开**，会导致启动期 XAML 失败。
+   **`PublishTrimmed=true` 可以开，但必须配齐四个开关**（缺一个不是启动崩就是特定窗口崩），
+   见第 64 条。
 5. **窗口刚开始 `Activated` 时 `XamlRoot` 是 null**，`RasterizationScale` 取不到，
    会把 DIP 当物理像素（高分屏下窗口过小）。
    现在在 `RootGrid.Loaded` 里才恢复窗口位置，并用 `Helpers/DpiHelper`（优先 XamlRoot，
@@ -1073,6 +1237,165 @@ exdir/
     每次插拔都 `BuildTree()` 会把用户在侧边栏里展开的目录全部折回去（整树重建的代价见第 4 节），
     也会连「收藏夹」一起重建。
 
+57. **`CF_PREFERREDDROPEFFECT` 不是 `0x000C`**：`0x000C` 是 `CF_WAVE`（波形数据），
+    “复制 / 剪切”那个标志的格式是**运行时注册**的，必须
+    `RegisterClipboardFormat("Preferred DropEffect")` 拿 id 再用它当 `SetClipboardData` / `GetClipboardData` 的格式号。
+    写错时的症状很有欺骗性：写剪贴板、读剪贴板都“成功”，甚至文件列表也能被资源管理器读到，
+    但剪贴板里多出一个叫 `WaveAudio` 的格式，而 `DataObject.GetDataPresent("Preferred DropEffect")` 永远是 false
+    （也就是剪切/复制区分彻底失效）。排查时把 `Clipboard.GetDataObject().GetFormats()` 打出来一看就知道。
+
+58. **`ListView.CanDragItems` 的拖拽在模拟鼠标下走不完**：`DragItemsStarting` 会正常触发、
+    数据包也填进去了，但之后拖拽循环收不到移动，永远没有 `DragOver`/`Drop`
+    （真鼠标下未必如此，但自动化回归靠不住）。本仓库的可靠做法是**自己识别手势**：
+    `CanDragItems=False`，在 `DetailsRoot` 上用 `handledEventsToo` 监听
+    `PointerPressed`/`PointerMoved`/`PointerReleased`，按下时记住行与位置、移动超过 4 DIP 后
+    `await element.StartDragAsync(point)`（之后照常发 `DragStarting`，在那里填 `DataPackage`）
+    —— 与工具条固定目录拖拽是同一条路（见第 25 条）。
+    两个容易漏的点：
+    * **不要把 `PointerCaptureLost` 当成松手**：`ListViewItem` 在按下时会把指针捕获过去，
+      随即发一次 `PointerCaptureLost`，那时拖拽还没开始 —— 拿它清 `_dragCandidate` 会让拖拽永远启动不了，
+      而且表现为“有时能拖、有时拖不动”（取决于捕获转移的时序）。只能在 `PointerReleased`
+      与 `StartDragAsync` 返回之后清。
+    * 行容器取数据项要用 `ListView.ItemFromContainer(container)`：行模板用的是 `x:Bind`，
+      实测 `ListViewItem.DataContext` **不是** `FileItemViewModel`（是 null），按它反查一行都命中不了。
+
+59. **拖拽期间的 `e.GetPosition(element)` 坐标不可靠**：实测同一次拖拽里它给出的坐标与
+    `GetCursorPos` 换算出来的差几十个 DIP（鼠标压在第二行上、报的却是第一行上方），
+    于是“行高亮着、松手却什么都没发生”（要么判到空白处、要么判成不合法目标）。
+    拖放要用**鼠标指针自己算**：`Helpers.DpiHelper.GetCursorPosition(element, hwnd)`
+    （`GetCursorPos` → `ScreenToClient` → 除以 `XamlRoot.RasterizationScale` → 减去元素在客户区里的原点，
+    就是 `ToScreenPoint` 的逆运算）。拖动期间鼠标指针就是拖放位置，所以这样算永远是对的。
+
+60. **拖放事件的坐标/落点不能用 `e.OriginalSource`，还要防“框架有时不冒泡 `Drop`”**：
+    拖放事件的源永远是**带 `AllowDrop` 的那个元素**（见第 54 条）；而且把 `AllowDrop` 放在
+    `ListViewItem` 这一级时，`ListViewBase` 自己会把 `Drop` 吃掉（`CanReorderItems=False` 时既不重排也不冒泡），
+    于是“行高亮着、松手却什么都没发生”。现在的做法是：容器 `AllowDrop=False`，
+    整个文件列表只有 `DetailsRoot` 一个落点（指针在行间移动时目标不会变），
+    鼠标下是哪一行用光标位置 + 容器实际矩形算。另外在 `StartDragAsync` 返回后还留了一道兜底：
+    左键已经松开、光标又在本列表里、而这次拖拽的 `Drop` 没被处理过 →
+    自己按光标位置把这次移动做完（左键还按着说明用户是按 Esc 取消的，不做）。
+
+61. **`SHFileOperation(FO_DELETE)` 的 `pTo` 必须传 `null`，而且要带上 `FOF_WANTNUKEWARNING`**：
+    `FO_DELETE` 根本不看 `pTo`，但给一个空串（而不是 NULL）会让外壳把参数当成非法目标
+    返回一个错误码（删除“失败”，文件其实没动）；多字符串部分的 `pFrom` 仍要 `\0` 结尾 + `\0` 收尾。
+    另一个坑是“装不进回收站的文件”：只带 `FOF_ALLOWUNDO` 时，太大 / 所在卷没有回收站的文件会被
+    **静默永久删除**，用户以为只是丢进了回收站 —— 必须加上 `FOF_WANTNUKEWARNING`（0x4000）
+    让外壳先警告一次。
+    顺带：删除的确认框是**本进程**的模态窗口（`SHFileOperation` 在 STA 线程上弹的 `#32770`），
+    它**不在桌面 UIA 子窗口那一层**（是被主窗口 owned 的），只在主窗口的 `Descendants` 里能找到 ——
+    所以自动化脚本 `TreeScope.Children` 会“看不到确认框”，删除就永远卡在 STA 线程上；
+    改成从 `Session.Root` 按 `Descendants` + `ProcessId == exdir` 找、点它的“是(Y)”即可
+    （见 `tools/test-file-ops.ps1` 的 `Confirm-ShellDialog`）。而“有没有真的进回收站”不要去翻
+    `$Recycle.Bin` 目录，用 `Shell.Application` 的 `NameSpace(10)` 读（与资源管理器左侧「回收站」同一份），
+    而且用例文件名要每次唯一，否则上一次跑剩下的同名项会让断言假通过。
+
+62. **带 `Shift` 的 `KeyboardAccelerator` 不触发，改用隧道事件自己判修饰键**：
+    `Delete` 进回收站用 `KeyboardAccelerator Key="Delete"` 正常，但再给它配一个
+    `Key="Delete" Modifiers="Shift"` 时，真实按 Shift+Delete（`SendKeys` 的 `+{DEL}`、以及
+    `keybd_event` 都试过）**两个加速器都不会 Invoke**（不是匹配错命令，是根本没反应），
+    而 `PreviewKeyDown`（隧道事件，一定先于列表/列头拿到这个键）能正常收到这个 Delete，
+    所以在那里用 `InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift)` 判 Shift 最稳：
+    ※ 用这个 API 而不是 `GetAsyncKeyState`：后者是“此刻的物理键状态”，而进程从消息队列里
+    取出这条键盘消息时用户（或脚本）可能已经松开 Shift 了；`GetKeyState` 一套给的是“该消息创建时”的状态。
+
+63. **Windows「网络位置」是快捷方式容器目录，而且会被“只按磁盘重建”的刷新逻辑误删**：
+    「网络位置」（资源管理器里「添加一个网络位置」造出来的）在磁盘上是
+    `%APPDATA%\Microsoft\Windows\Network Shortcuts\<名字>\target.lnk`，
+    目录名就是显示名，打开位置就是 `target.lnk` 的目标（通常 `\\server\share`）。
+    解析要 `IShellLinkW`（`IPersistFile.Load` + `GetPath`），
+    **所有字符串参数必须显式 `[MarshalAs(UnmanagedType.LPWStr)]`**：不标的话 COM 默认按 ANSI 传，中文路径会乱码；
+    只想用 `GetPath` 也得把 `IShellLinkW` 的 18 个方法按 vtable 顺序写全。
+    另：`target.lnk` 是隐藏文件、`desktop.ini` 只是壳的元数据，别把它们当“位置”列出来。
+    最容易踩的坑在 `SidebarViewModel.RefreshDrives`：它按磁盘清单重建「此电脑」的期望子节点，
+    然后“摘掉不在期望清单里的节点”——不把网络位置一并加进去，第一次 U 盘插拔（或「重新扫描磁盘」）
+    就会把网络位置全删掉（节点从界面上消失，却看不出是刷新干的）。
+    回归：`tools/test-network-locations.ps1`。
+
+64. **NativeAOT 在 WinAppSDK 2.5.1 + WinUI 3 下用不了（2026-09 实测穷举过）**：
+    AOT 能编译、能产出（自包含 72 MB / 框架依赖 13 MB，都比裁剪版小），
+    但**启动后约 30 ms（主窗口已构造、`Activate()` 已返回、`RootGrid.Loaded` 之前）进程就 fail-fast**：
+    退出码 `0xC000027B`（stowed exception），事件日志写的是
+    `故障模块 Microsoft.UI.Xaml.dll (3.2.3.0)`，`Windows.ApplicationModel.LimitedAccessFeatures` 的
+    ClassFactory 报 `0x80040111`；`Application.UnhandledException` 里拿到一个没有堆栈的 COMException，
+    设 `e.Handled = true` 也拦不住（native fail-fast）。
+    试过且都不行的变体：自包含 / 框架依赖（本机装了 WindowsAppRuntime.2 2.5.1）、net8.0 / net10.0、
+    `CsWinRTAotWarningLevel=2`、`AllowUnsafeBlocks`、`BuiltInComInteropSupport=true`、
+    换掉 Mica 背景、`CsWinRTUseWindowsUIXamlProjections`、只开裁剪不开 AOT。
+    **关键证据：这个报出来的类名（`LimitedAccessFeatures`）在整包任何文件里都搜不到（UTF-8/UTF-16 都搜过），
+    自己的代码也完全没碰过它，而同一个进程只要不开 AOT（哪怕同样裁剪）就一切正常** ——
+    所以它不是本仓库代码的问题，是 WinAppSDK/WinUI 在那条路径下的 bug（上游同类报告：
+    WindowsAppSDK#3905 / #6058：`WindowsAppSDKSelfContained` + 单文件/AOT 启动报 `80040111`）。
+    真要上 AOT 得先等上游修，别把时间花在改我们的 XAML 上。
+    （想要“小而快”就开裁剪，见下一条；裁剪已经把 225 MB 干到 83 MB。）
+
+65. **裁剪（`PublishTrimmed`）能开，但四个开关必须同时到位**：
+    ```xml
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>                      <!-- 不能是 full -->
+    <CsWinRTAotWarningLevel>2</CsWinRTAotWarningLevel>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    ```
+    * **`TrimMode=full` 会在“配置 → 设置…”上一打开就 0xC0000005 崩在 coreclr.dll**
+      （访问冲突、没有托管异常、也没进 exdir.log，只能靠事件日志看出来）：
+      设置卡片 / NavigationView 那边有东西是裁掉就找不到的。`partial` 只裁带
+      `[AssemblyMetadata("IsTrimmable","True")]` 的程序集（BCL），第三方/工具包原样保留，
+      体积上差别只有 2 MB（81 MB vs 83 MB）。
+    * **`CsWinRTAotWarningLevel` 必须是 2**：它让 CsWinRT 源生成器跑在 **Auto** 模式，
+      为“会跨 WinRT ABI 的泛型实例化”（例如 `ItemsControl.ItemsSource` 绑一个
+      `ObservableCollection<T>`）生成 vtable。只给默认的 level 1 时生成器可能停在 OptIn 模式，
+      CCW 查 vtable 拿到 null，启动后第一次设 `ItemsSource` 就
+      `NullReferenceException @ WinRT.TypeExtensions.GetAbiToProjectionVftblPtr`。
+    * **`AllowUnsafeBlocks`**：上面生成出来的代码用 unsafe。
+    * **`BuiltInComInteropSupport`**：老式 COM interop 在裁剪/ AOT 下默认关掉，
+      而剪贴板 OLE、外壳右键菜单（`IShellFolder`/`IContextMenu`）、云占位符属性存储（`IPropertyStore`）、
+      `.lnk` 解析（`IShellLinkW`）全靠它。关掉之后的症状是这些功能一用就挂，而不是编译报错。
+    * 不指望编译器帮忙把关：裁剪只在 publish 阶段发生，**改完必须重新 `tools\publish.ps1` 再跑一遍相关回归**
+      （`tools\test-*.ps1 -Exe dist\win-x64\exdir.exe`，默认的 `-Exe` 是 Debug 未裁剪版，测不出问题）。
+
+66. **裁剪过的发布版里，反射式 `JsonSerializer` 会静默失改 —— settings.json 读写得走源生成**：
+    症状极具迷惑性：设置窗口里拨开关**界面当场生效**，但 `settings.json` 没变，重开又变回去；
+    而 `SettingsService` 为了保证“设置坏了也不阻塞启动”是把异常吞掉的，所以**一行日志都没有**。
+    实测裁剪后 `tools\test-settings.ps1` 挂 9 条断言，全是“没落盘”。
+    修法：`Services/SettingsJsonContext.cs`（`[JsonSerializable(typeof(AppSettings))]`）+
+    `JsonSerializerOptions.TypeInfoResolver`，并且用 `JsonSerializer.Serialize(obj, JsonTypeInfo)` /
+    `Deserialize(json, JsonTypeInfo)` **而不是泛型重载**（泛型重载的“要求未裁剪代码”标记与
+    TypeInfoResolver 无关，IL2026/IL3050 会一直在）。
+    另：`Load()` / `Save()` 的 catch 里现在会 `Log.Exception` —— 就是为了这种“静默失败”能留下线索。
+    **以后新增会写进 settings.json 的类型，要往那个 context 里加 `[JsonSerializable]`。**
+
+67. **WinAppSDK 的两种“精简”各有官方钩子，不要用事后删文件代替**：
+    * **语言资源（85 个 `*.mui` 目录）**：用 `MicrosoftWindowsAppSDKFilesExcluded`
+      （`Microsoft.WindowsAppSDK.SelfContained.targets` 里就用它做 `Remove`）在
+      `AddMicrosoftWindowsAppSDKPayloadFilesFromComponents` 之前把不要的语言剔掉，
+      见 `exdir.csproj` 的 `ExcludeUnneededWinAppSdkLanguageResources`；这样 bin 与 dist 两边都干净。
+      本仓库只留 `zh-*` / `en-*`（界面文案是简体中文硬编码，框架资源用不到其它语言）。
+    * **整个组件包**：`Microsoft.WindowsAppSDK` 2.5.1 是元包，AI/ML/Search/Widgets 四个组件
+      （约 55 MB：`onnxruntime.dll` 20 MB + `DirectML.dll` 18 MB + `Microsoft.Windows.Search.dll` …）
+      exdir 一行都没用。用 `ExcludeAssets="all"` 把它们自己的全部资产排除：组件的 props 不再被导入
+      → 不会往 `WindowsAppSdkComponentPackages` 里登记 → 自包含部署就不会拷它们的负载。
+      两个坑：① **不能把元包删掉改成“只引用需要的组件包”** —— H.NotifyIcon 与 CommunityToolkit
+      的 SettingsCard 都声明了 `Microsoft.WindowsAppSDK >= 1.6`，没有这份直接引用 NuGet 会去装那份
+      1.6 的旧包，它的 props 和 WinUI 2.3.9 重复导入，构建直接报错；
+      ② 还得排除 **`Microsoft.Windows.AI.MachineLearning`**（`onnxruntime.dll`/`DirectML.dll` 其实是
+      它 `runtimes\win-x64\native` 里的），它自己的 targets 会因 `_WindowsAppSDKML` 没被置位而报
+      “需要 19H1+”，所以那份排除不是可选优化。
+
+68. **切到浅色主题才看得出来：NavigationView 左侧导航是半透明的，窗口背后必须有东西可采样**：
+    exdir 的浅色主题（标题栏那个太阳 / 月亮开关，见第 4 节“主题”）一加就发现设置窗口的左侧导航
+    是一块**纯黑底 + 深色文字**（看不见导航项），而右侧卡片、窗口标题栏都是正常的浅色。
+    逐像素量过：深色主题下导航区也是 `#000000`，同一窗口的内容区是 `#1D1D1D` —— 也就是说
+    那块黑底一直在，只是深色主题下看不出来。原因是 `NavigationView` 的窗格用的是“应用内亚克力”
+    （半透明，采样同一窗口里它背后的内容），而 `SettingsWindow` 没有 `SystemBackdrop`，
+    背后就是窗口自身的黑色底（`SettingsView` 的根就是那个 `NavigationView`，没有别的背景层）。
+    修法：给 `SettingsWindow` 加上和主窗口一样的
+    `<Window.SystemBackdrop><MicaBackdrop Kind="Base" /></Window.SystemBackdrop>`：
+    窗格改成采样 Mica 背板，深浅两套主题下都跟主窗口侧边栏一致。
+    教训：**浅色主题下“某块区域黑得不对劲”先怀疑“半透明控件背后没有背板”**，
+    而不是去翻主题资源字典（主题资源其实都是对的，`ThemeDictionaries` 里 Light 一套也生效了）。
+    另：本机系统就是深色（`AppsUseLightTheme=0`），所以“浅色 exdir + 深色系统”这种组合必须特地
+    把 `settings.json` 的 `Theme` 改成 1（或点标题栏开关）才能复现 —— 验证换肤时两套主题都要看。
+
 ## 7. 非打包模式下的 API 限制
 
 没有 Package Identity，因此**不要**使用：`Windows.Storage.KnownFolders`、
@@ -1088,6 +1411,19 @@ exdir/
 
 已完成（主体框架，可运行，Release 产物已生成）：
 
+* **交付产物精简到 83 MB**（2026-09，见第 2 节“任务收尾”与第 6 节第 64～67 条）：
+  `tools\publish.ps1` 改成「`dotnet publish`（开裁剪）+ 从构建输出补回 `.pri`/`.xbf` + 镜像」，
+  dist 从 **225 MB / 548 个文件** 降到 **83 MB / 165 个文件**：
+  ① 去掉完全用不到的 WinAppSDK AI / ML / Search / Widgets 四个组件（约 55 MB：
+  `onnxruntime.dll`、`DirectML.dll`、`Microsoft.Windows.Search.dll`、Widgets…）；
+  ② 语言资源只留中/英（85 个 `*.mui` 目录 → 4 个，3.3 MB）；
+  ③ `PublishTrimmed`（`TrimMode=partial`）裁掉用不到的 BCL（约 97 MB）。
+  功能未退化：`test-settings` / `test-file-ops` / `test-tray` / `test-shell-icons` /
+  `test-list-selection` / `test-row-dblclick` / `test-column-resize` / `test-pin-drag` /
+  `test-status-bar` / `test-drive-hotplug` / `test-network-locations` / `measure-row-align`
+  全部在 `dist\win-x64\exdir.exe` 上重跑通过（`test-context-menu` 的 4 条失败在未裁剪版上一样挂，属仓库现有待办）。
+  **NativeAOT 不可用**（共试了自包含/框架依赖、net8/net10、各类 CsWinRT/COM 开关），
+  原因不在本仓库，见第 6 节第 64 条。
 * **单窗口 + 常驻托盘**（2026-09，见第 4 节“托盘驻留”）：点关闭按钮 / `Alt+F4` 只把窗口隐藏到
   通知区域，进程、两个窗格、标签页与会话全部留着，再打开（左键点托盘图标 / 第二次双击 exe）
   就是一次 `ShowWindow`；托盘右键菜单是「显示主窗口 / 退出 exdir」，菜单里的「退出」才是真退出；
@@ -1101,6 +1437,28 @@ exdir/
   （不重建整棵树，展开状态与收藏夹都不受影响）；「工具 → 重新扫描磁盘」与之同一入口，
   磁盘清单变化时「转到 → 所有位置」也会重列；
   回归：`tools/test-drive-hotplug.ps1`（3 个用例 12 条断言，`subst` 造盘符 + `SendMessage`，不需要交互桌面）。
+* **侧边栏「此电脑」里列出 Windows「网络位置」**（2026-09）：`%APPDATA%\Microsoft\Windows\Network Shortcuts`
+  下的每个快捷方式（「添加一个网络位置」造出来的）作为「此电脑」里**排在磁盘之后**的节点，
+  显示名是容器目录名、点击进入 `target.lnk` 的目标（`IShellLinkW` 解析，UNC 也能走现有导航与面包屑）；
+  离线的网络位置照样列出，打开时才报错；
+  `SidebarViewModel.RefreshDrives` 的差量刷新一并带上它们（否则一次插拔就没了）；
+  回归：`tools/test-network-locations.ps1`（4 个用例 5 条断言，不需要交互桌面）。
+* **复制 / 剪切 / 粘贴 / 删除 + 拖动移动**（2026-09，见第 4 节同名小节与第 6 节第 57—62 条）：
+  内置右键菜单里多了「剪切 / 复制 / 粘贴 / 删除」（快捷键 `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Delete`，
+  永久删除是 `Shift+Delete`，前三个挂在 `DetailsView` 根 Grid 的加速器上、后两个走 `PreviewKeyDown`，
+  地址栏里仍是文本框自己的行为）；
+  剪贴板用的是系统标准格式
+  `CF_HDROP` + `Preferred DropEffect`，因此**与资源管理器 / 7-Zip 双向互通**
+  （在资源管理器里复制一批文件，回到 exdir 按 `Ctrl+V` 就能粘；反之也一样；剪切粘完只生效一次）；
+  真正的复制 / 移动 / 删除交给外壳的 `SHFileOperation`（`FO_COPY` / `FO_MOVE` / `FO_DELETE`），
+  所以有资源管理器同款的进度对话框、同名冲突询问与删除确认框，删除默认**进回收站**（`FOF_ALLOWUNDO`，
+  可从回收站恢复），只有 `Shift+Delete` 才是永久删除；
+  完成后按“源目录 + 目标目录”刷新受影响的标签页（拖到另一个窗格也跟得上，
+  被删目录里开着的标签页则退到上一级）；
+  文件列表里的文件 / 目录可以直接拖到某个**目录行**上（鼠标下那一行整条高亮）、拖到列表空白处
+  （= 当前目录）或拖到另一个窗格即**移动**，按住 `Ctrl` 是复制；
+  回归：`tools/test-file-ops.ps1`（9 个用例：菜单项 / 剪贴板互读 / Ctrl+C+V 复制 / Ctrl+X+V 移动 /
+  拖到目录行移动 / 外部来源复制进来 / 外部来源剪切进来 / Delete 进回收站 / Shift+Delete 永久删除）。
 * 非打包工程改造、单实例主窗口、Mica 背景、自定义标题栏、图标与窗口位置持久化；
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
 * 1/2 窗格 + 自研分隔条、TabView 多标签；
@@ -1129,20 +1487,23 @@ exdir/
   打开 `Views/SettingsWindow`（`Window`，默认 860×800、工作区居中，同一时刻只开一个）。
   左侧 `NavigationView` 五个分类（文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单），右侧一列 Windows 11 风格设置卡片
   （社区工具包 `SettingsCard`，不再自己写行模板），只显示当前分类那一页；
-  前四个分类共 14 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / **行高**）、
-  外观（过渡动画 / **标签页使用直角**，默认开）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）、
-  侧边栏（显示「主目录」/「收藏夹」/「云存储」/「此电脑」四个分组，均默认开）；
+  前四个分类共 21 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / **行高**）、
+  外观（**主题**：跟随系统 / 浅色 / 深色，默认跟随系统；过渡动画 / **标签页使用直角**，默认开）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）、
+  侧边栏（显示「主目录」/「收藏夹」/「云存储」/「此电脑」四个分组，均默认开；
+  以及「主目录」里显示哪几个标准文件夹——桌面 / 文档 / 下载 / 图片 / 音乐 / 视频，**默认只开桌面与下载**）；
   「右键菜单」页除了「使用内置的轻量右键菜单」这一个开关（默认开）之外，
   还是系统菜单项的动态清单（见下面那条与第 4 节）。
   **改动即时生效并立即落盘**（没有「保存 / 取消」）：`SettingsViewModel.Changed` →
   `MainViewModel.ApplySettings`（写 `AppSettings` + 刷界面 + `Save()`）。
   新增固定配置项要同时改 `AppSettings`、`SettingsViewModel`、`SettingsView.xaml`、`ApplySettings`
   与 `tools/test-settings.ps1` 的 `$KeyMap` / `$CategoryMap`（见第 4 节）。
-  回归：`tools/test-settings.ps1`（8 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
+  回归：`tools/test-settings.ps1`（9 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
   拨一下立即落盘并作用到文件列表 / 跨分类与关窗重开读回 / 同一时刻只开一个窗口 /
   菜单风格开关默认开（内置）且拨一下就落盘、系统菜单项默认全开且能逐项关闭 /
   行高滑块改完列表行真的变高 / 侧边栏分组开关改完树里真的少一个分组 /
-  标签页直角默认开、拨一下就当场应用），全程走 UIA 模式（不需要前台窗口）；
+  「主目录」标准文件夹开关改完（打开「文档」真的出现、关掉「桌面」真的消失）/
+  标签页直角默认开、拨一下就当场应用 /
+  主题下拉框三态 + 标题栏的太阳 / 月亮开关改的是同一个设置），全程走 UIA 模式（不需要前台窗口）；
   布局截图：`tools/shot-settings.ps1`（.artifacts\settings-<分类名>.png，需要交互桌面）。
   原先的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）已移除，
   「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与设置窗口共享同一份设置）；
@@ -1172,11 +1533,16 @@ exdir/
   要在 `PinnedItemsHost` 上 `AddHandler(..., handledEventsToo: true)` + `StartDragAsync`），
   排序落点走 `MainViewModel.MovePinnedFolder`；`tools/test-pin-drag.ps1` 第 4 个用例验证
   （拖 Documents 到 Downloads 右半边 → 顺序互换）；
-* **侧边栏「收藏夹」镜像工具条固定目录**（2026-09，见第 4 节“收藏夹”那条）：`主目录` 下面多一个
-  `收藏夹` 分组，子项与工具条固定目录同序同名（增删/排序即时同步）；把目录从文件列表或侧边栏
+* **侧边栏「收藏夹」镜像工具条固定目录**（2026-09，见第 4 节“收藏夹”那条）：它排在侧边栏**最上面**
+  （在 `主目录` 之上），子项与工具条固定目录同序同名（增删/排序即时同步）；把目录从文件列表或侧边栏
   拖到「收藏夹」分组或其子行上即收藏（悬停整行强调色高亮），右键收藏项可「取消收藏」；
   行级落点判定 + `TreeView` 层的 `handledEventsToo` 兜底见第 6 节第 54 条；
   回归：`tools/test-pin-drag.ps1` 用例 0（镜像一致）与用例 5（拖到收藏夹）；
+* **侧边栏「主目录」里显示哪些标准文件夹可配**（2026-09，见第 4 节“侧边栏分组”那条）：
+  设置窗口「侧边栏」页里为桌面 / 文档 / 下载 / 图片 / 音乐 / 视频各一个开关，
+  **默认只开「桌面」与「下载」**（`AppSettings.SidebarHomeDesktop` 等六个）；
+  筛选按 `UserFolderKey`（稳定标识）做；改完即时增删树里的子项，复用的节点保留展开状态；
+  回归：`tools/test-settings.ps1` 用例 7；
 * **悬停/按下/选中高亮统一改成强调色**（2026-09）：原来是 WinUI 默认的 8% 白（灰底上几乎看不出来），
   现在工具条按钮悬停是强调色 35%（深色）/ 25%（浅色）、按下 60% / 50%；
   文件列表行 / 侧边栏树 / 标签页头 / 菜单项等大表面用低一档的 `ExSurface*`，
@@ -1202,6 +1568,16 @@ exdir/
   默认 true），改完当场重画、无需重启；
   验证：`tools/capture.ps1` 截图量像素（标签左上角最大内缩：直角 ≈ 3.5 DIP、圆角 ≈ 6.5 DIP），
   回归：`tools/test-settings.ps1` 用例 8。
+* **深色 / 浅色主题**（2026-09，见第 4 节“主题”与第 6 节第 68 条）：
+  标题栏左侧（「文件」菜单左边）多了一个太阳 / 月亮图标开关，点一下就在浅色 / 深色之间切；
+  设置窗口「外观 → 主题」里还有三态的「跟随系统 / 浅色 / 深色」（`AppSettings.Theme`，默认跟随系统，
+  即保持改动前的行为）；两个入口共用同一个值，改完当场重画（无需重启）并立即落盘。
+  实现只有一处：给 `RootGrid` 设 `RequestedTheme`（根元素一变，菜单栏 / 工具条 / 侧边栏 / 窗格 /
+  状态栏 / 弹层全部跟着换）；系统窗口按钮要自己上色（详见第 4 节）。
+  设置窗口是另一个 `Window`，自己接一份主题，而且顺带修掉了它在浅色主题下左侧导航“黑底黑字”
+  的问题（加 Mica 背板，见第 6 节第 68 条）。
+  回归：`tools/test-settings.ps1` 用例 9（13 条断言：下拉框三态、标题栏开关、两个入口互相同步、
+  落盘与当场应用）；两套主题的渲染用 `tools/capture.ps1` / `tools/shot-settings.ps1` 截图人工确认。
 * **选择**（2026-09）：单击文件列表空白处（列头以下、任何一行之外）取消选择并把焦点留在列表上；
   `Ctrl+A` 全选列表里当前可见的行（就地展开出来的子行也算）；文件列表里**双击行的任意位置**
   （不只是名称文字 / 图标那一小块）都进入目录 / 打开文件——行内空白处命中的是 `ListViewItem`，
@@ -1216,6 +1592,9 @@ exdir/
   列头与数据行对齐 + 落盘 + 列头排序仍可用；修前用例 2/4/5 全部没反应）；
 * 键盘导航的其余部分（S2：`Ctrl+Shift+A` 反选、回车打开、type-ahead 等）尚未实现；右键菜单只做了文件列表
   （条目 + 空白处），侧边栏 / 固定目录 / 磁盘按钮还没有；
-* 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
+* 文件操作已有**复制 / 移动 / 删除（进回收站，`Shift+Delete` 永久删除）**（剪贴板、右键菜单、
+  拖放与快捷键都通）；重命名 / 重命名以外的新建 / 压缩 / 哈希还没做（新建文件夹算已有）；
+  拖拽只支持“拖到本应用的目录行 / 另一个窗格 / 工具条固定目录 / 侧边栏收藏夹”，
+  还不能拖到资源管理器（数据包里只有自定义格式与纯文本，没放 `StorageItems`）。
 
 **未实现的功能与后续步骤全部在 `plan.md`。**

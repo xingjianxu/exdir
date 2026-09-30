@@ -4,7 +4,7 @@
 #   pwsh -NoProfile -File tools\test-settings.ps1
 #   pwsh -NoProfile -File tools\test-settings.ps1 -Exe dist\win-x64\exdir.exe
 #
-# 八个用例：
+# 九个用例：
 #   1. 窗口结构：左侧 5 个分类（文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单）、默认停在「文件列表」，
 #      右侧只有当前分类的项（切分类真的换页），初始值与 settings.json 一致；
 #   2. 即时生效：拨一下开关，settings.json 立刻变（没有「保存 / 取消」按钮）；
@@ -14,14 +14,19 @@
 #      关掉「属性」后立即落盘 verb:properties，重新打开窗口时它仍是关的，再拨回来就清空；
 #   6. 「文件列表」页的「行高」滑块：初值与 settings.json 一致、切到别的分类就读不到，
 #      拖动后立即落盘，并且文件列表的数据行**真的**变高（UIA 量 ListItem 的高度，取中位数）；
-#   7. 「侧边栏」页的四个分组开关：关掉「云存储」分组后侧边栏树里真的读不到它（其它分组不受影响），
-#      再拨回来又回来；
+#   7. 「侧边栏」页的分组开关：关掉「云存储」分组后侧边栏树里真的读不到它（其它分组不受影响），
+#      再拨回来又回来；「主目录」里默认只显示「桌面」与「下载」，
+#      打开「显示「文档」」后文档真的出现在树里，关掉「显示「桌面」」后桌面真的消失（用完还原默认）；
 #   8. 「外观」页的「标签页使用直角」（默认开）：拨一下就立即落盘并当场应用
-#      （exdir.log 里记下「标签页=圆角 / 直角」），关窗重开仍是新值。
+#      （exdir.log 里记下「标签页=圆角 / 直角」），关窗重开仍是新值；
+#   9. 「外观」页的「主题」下拉框（跟随系统 / 浅色 / 深色）：初值一致；选「深色」/「浅色」
+#      立即落盘并当场应用（exdir.log：主题已应用：…）；标题栏那个太阳 / 月亮开关改的是同一个设置
+#      （拨一下就固定成显式的浅 / 深，设置窗口里的下拉框跟着同步）。
 #
 # 说明：开关类配置项是社区工具包 SettingsCard 里的 ToggleSwitch（Windows 11 设置的那种卡片行），
 #       UIA 里的类型是 Button（不是 CheckBox），所以要靠 TogglePattern 认它；
-#       「行高」是 Slider，靠 RangeValuePattern 读写。
+#       「行高」是 Slider，靠 RangeValuePattern 读写；「主题」是 ComboBox，靠
+#       ExpandCollapse + SelectionItem 选、Selection 读（它没有 TogglePattern，不干扰上面那套计数）。
 #       非当前分类的页是 Collapsed 的，UIA 树里根本没有 ——
 #       “某分类下能读到哪几个项”本身就是“切分类有效”的验证。
 #
@@ -81,6 +86,12 @@ $KeyMap = [ordered]@{
     '显示「收藏夹」分组'     = 'sidebarFavorites'
     '显示「云存储」分组'     = 'sidebarCloud'
     '显示「此电脑」分组'     = 'sidebarComputer'
+    '显示「桌面」'           = 'sidebarHomeDesktop'
+    '显示「文档」'           = 'sidebarHomeDocuments'
+    '显示「下载」'           = 'sidebarHomeDownloads'
+    '显示「图片」'           = 'sidebarHomePictures'
+    '显示「音乐」'           = 'sidebarHomeMusic'
+    '显示「视频」'           = 'sidebarHomeVideos'
     '使用内置的轻量右键菜单' = 'builtInContextMenu'
 }
 
@@ -92,7 +103,9 @@ $CategoryMap = [ordered]@{
     '文件列表' = @('hidden', 'extension', 'foldersFirst')
     '外观'     = @('squareTabCorners', 'animations')
     '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
-    '侧边栏'   = @('sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer')
+    '侧边栏'   = @('sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer',
+                    'sidebarHomeDesktop', 'sidebarHomeDocuments', 'sidebarHomeDownloads',
+                    'sidebarHomePictures', 'sidebarHomeMusic', 'sidebarHomeVideos')
     '右键菜单' = $null
 }
 
@@ -208,6 +221,46 @@ function Get-SliderValue {
 function Set-SliderValue {
     param($Element, [double]$Value)
     $Element.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue($Value)
+    Start-Sleep -Milliseconds 900
+}
+
+# ------------------------------------------------------------------ 主题（下拉框）
+
+# 「外观」页的「主题」下拉框（UIA 类型 ComboBox）。左边的标题 TextBlock 也叫“主题”，
+# 所以要按 ControlType 过滤。
+function Find-ThemeCombo {
+    param($Settings)
+    return Find-VisibleFirst -From $Settings.Window -Name '主题' -ControlType ([System.Windows.Automation.ControlType]::ComboBox)
+}
+
+# 下拉框当前选中的那一项的文字（跟随系统 / 浅色 / 深色）
+function Get-ThemeComboText {
+    param($Combo)
+    if ($null -eq $Combo) { return 'MISSING' }
+    $selection = $Combo.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
+    if ($selection.Count -eq 0) { return '' }
+    return $selection[0].Current.Name
+}
+
+# 选下拉框里的某一项：先展开，再从桌面（弹出层不在主窗口的 UIA 子树里，见 AGENTS.md 第 6 节第 24 条）
+# 按进程号找那个 ListItem，最后用 SelectionItemPattern.Select()。
+function Select-ThemeComboItem {
+    param($Settings, [string]$Name)
+
+    $combo = Find-ThemeCombo -Settings $Settings
+    if ($null -eq $combo) { Assert $false '「外观」页里找不到「主题」下拉框'; return }
+
+    $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+
+    $item = $null
+    for ($i = 0; $i -lt 24 -and $null -eq $item; $i++) {
+        Start-Sleep -Milliseconds 250
+        $item = Find-VisibleFirst -From $Settings.Session.Desktop -Name $Name `
+            -ControlType ([System.Windows.Automation.ControlType]::ListItem) -ProcessId $Settings.Session.Proc.Id
+    }
+    if ($null -eq $item) { Assert $false "主题下拉框里找不到「$Name」"; return }
+
+    $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
     Start-Sleep -Milliseconds 900
 }
 
@@ -465,11 +518,20 @@ Set-Setting 'IsDualPane' $false
 Set-Setting 'RowHeight' 28
 # 标签页默认是直角：用例 8 要断言“拨一下就变圆角”，历史值同样会让它不可控
 Set-Setting 'SquareTabCorners' $true
+# 主题默认是「跟随系统」：用例 9 要断言“初值 = 跟随系统”，历史值同样会让它不可控
+Set-Setting 'Theme' 0
 # 侧边栏四个分组默认全部显示：不先归位的话，用例 1 的“初始值一致”与用例 7 都会被历史值干扰
 Set-Setting 'SidebarShowHome' $true
 Set-Setting 'SidebarShowFavorites' $true
 Set-Setting 'SidebarShowCloud' $true
 Set-Setting 'SidebarShowComputer' $true
+# 「主目录」里默认只显示桌面与下载：不归位的话用例 7 的“默认只开两个”会被历史值干扰
+Set-Setting 'SidebarHomeDesktop' $true
+Set-Setting 'SidebarHomeDocuments' $false
+Set-Setting 'SidebarHomeDownloads' $true
+Set-Setting 'SidebarHomePictures' $false
+Set-Setting 'SidebarHomeMusic' $false
+Set-Setting 'SidebarHomeVideos' $false
 # 右键菜单默认全部开启，且默认用内置菜单：不先归位的话，用例 5 的断言会被历史值干扰
 Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
 Set-Setting 'UseBuiltInContextMenu' $true
@@ -679,6 +741,29 @@ Start-Sleep -Seconds 1
 Assert ((Get-Setting 'SidebarShowCloud') -eq $true) '再拨回来立即落盘（SidebarShowCloud=true）'
 Assert (Test-SidebarGroupVisible -Session $session -Name '云存储') '「云存储」分组又回到侧边栏树里了'
 
+# --- 「主目录」分组里显示哪些标准文件夹（默认只开桌面与下载）---
+Assert (Test-SidebarGroupVisible -Session $session -Name '桌面') '「主目录」里默认显示「桌面」'
+Assert (Test-SidebarGroupVisible -Session $session -Name '下载') '「主目录」里默认显示「下载」'
+Assert (-not (Test-SidebarGroupVisible -Session $session -Name '文档')) '「主目录」里默认不显示「文档」'
+
+Invoke-ToggleByKey -Settings $settings -Category '侧边栏' -Key 'sidebarHomeDocuments'
+Start-Sleep -Seconds 1
+Assert ((Get-Setting 'SidebarHomeDocuments') -eq $true) '打开「显示「文档」」后立即落盘（SidebarHomeDocuments=true）'
+Assert (Test-SidebarGroupVisible -Session $session -Name '文档') '打开后「文档」真的出现在「主目录」分组里'
+
+Invoke-ToggleByKey -Settings $settings -Category '侧边栏' -Key 'sidebarHomeDesktop'
+Start-Sleep -Seconds 1
+Assert ((Get-Setting 'SidebarHomeDesktop') -eq $false) '关掉「显示「桌面」」后立即落盘（SidebarHomeDesktop=false）'
+Assert (-not (Test-SidebarGroupVisible -Session $session -Name '桌面')) '关掉后「桌面」真的从「主目录」分组里消失'
+Assert (Test-SidebarGroupVisible -Session $session -Name '下载') '关掉「桌面」不影响「下载」'
+
+# 用完还原成默认（桌面 + 下载开，其余关）
+Invoke-ToggleByKey -Settings $settings -Category '侧边栏' -Key 'sidebarHomeDesktop'
+Invoke-ToggleByKey -Settings $settings -Category '侧边栏' -Key 'sidebarHomeDocuments'
+Start-Sleep -Milliseconds 800
+Assert ((Get-Setting 'SidebarHomeDesktop') -eq $true) '还原「桌面」开关'
+Assert ((Get-Setting 'SidebarHomeDocuments') -eq $false) '还原「文档」开关'
+
 Close-Settings -Settings $settings
 Stop-Session -Session $session
 
@@ -704,6 +789,44 @@ Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'squar
 Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'squareTabCorners'
 Assert ((Get-Setting 'SquareTabCorners') -eq $true) '再拨回来立即落盘（SquareTabCorners=true）'
 Assert (Test-LogContains -Pattern '标签页=直角') '再拨回来也当场应用到了所有标签页（exdir.log：标签页=直角）'
+
+Close-Settings -Settings $settings
+Stop-Session -Session $session
+
+# ================================================================== 用例 9：主题
+
+Write-Host '--- 用例 9：「外观」页的「主题」与标题栏的太阳 / 月亮开关 ---'
+Set-Setting 'Theme' 0
+
+$session = Start-Session
+$settings = Open-Settings -Session $session
+Select-Category -Settings $settings -Name '外观'
+
+$combo = Find-ThemeCombo -Settings $settings
+Assert ($null -ne $combo) '「外观」页里有「主题」下拉框'
+Assert ((Get-ThemeComboText -Combo $combo) -eq '跟随系统') '下拉框的初值是「跟随系统」（settings.json 里 Theme=0）'
+
+Select-ThemeComboItem -Settings $settings -Name '深色'
+Assert ((Get-Setting 'Theme') -eq 2) '选「深色」就立即落盘（Theme=2）'
+Assert ((Get-ThemeComboText -Combo (Find-ThemeCombo -Settings $settings)) -eq '深色') '下拉框显示「深色」'
+Assert (Test-LogContains -Pattern '主题已应用：深色' -Tail 200) '当场应用到了主窗口（exdir.log：主题已应用：深色）'
+
+# 标题栏那个太阳 / 月亮开关改的是同一个设置（UIA 里是支持 TogglePattern 的 Button）
+$themeToggle = Find-VisibleFirst -From $session.Root -Name '深色模式' -ControlType ([System.Windows.Automation.ControlType]::Button)
+Assert ($null -ne $themeToggle) '标题栏上（「文件」菜单左边）有主题开关'
+if ($null -ne $themeToggle) {
+    Assert ((Get-ToggleState -Element $themeToggle) -eq 'On') '深色主题下这个开关是打开状态（显示月亮）'
+    Toggle-Element -Element $themeToggle
+    Assert ((Get-Setting 'Theme') -eq 1) '拨一下就落盘成显式的浅色（Theme=1）'
+    Assert ((Get-ToggleState -Element $themeToggle) -eq 'Off') '开关状态跟着变成关闭（显示太阳）'
+    Assert ((Get-ThemeComboText -Combo (Find-ThemeCombo -Settings $settings)) -eq '浅色') '设置窗口里的下拉框也同步成了「浅色」'
+    Assert (Test-LogContains -Pattern '主题已应用：浅色' -Tail 200) '当场应用（exdir.log：主题已应用：浅色）'
+}
+
+# 选回「跟随系统」：系统主题每台机器不一样，所以只断言落盘与“当场应用”，不断言画出来是深还是浅
+Select-ThemeComboItem -Settings $settings -Name '跟随系统'
+Assert ((Get-Setting 'Theme') -eq 0) '再选回「跟随系统」立即落盘（Theme=0）'
+Assert (Test-LogContains -Pattern '主题已应用：跟随系统' -Tail 200) '当场应用（exdir.log：主题已应用：跟随系统）'
 
 Close-Settings -Settings $settings
 Stop-Session -Session $session

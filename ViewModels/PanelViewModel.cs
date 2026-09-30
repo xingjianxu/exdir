@@ -18,6 +18,8 @@ public sealed partial class PanelViewModel : ObservableObject
     private readonly ISettingsService _settings;
     private readonly IShellIconService _icons;
     private readonly IShellContextMenuService _contextMenu;
+    private readonly IClipboardService _clipboard;
+    private readonly IFileOperationService _fileOperations;
 
     private FolderTabViewModel? _activeTab;
     private bool _isActive;
@@ -28,7 +30,9 @@ public sealed partial class PanelViewModel : ObservableObject
         IShellService shell,
         ISettingsService settings,
         IShellIconService icons,
-        IShellContextMenuService contextMenu)
+        IShellContextMenuService contextMenu,
+        IClipboardService clipboard,
+        IFileOperationService fileOperations)
     {
         Id = id;
         _fileSystem = fileSystem;
@@ -36,6 +40,8 @@ public sealed partial class PanelViewModel : ObservableObject
         _settings = settings;
         _icons = icons;
         _contextMenu = contextMenu;
+        _clipboard = clipboard;
+        _fileOperations = fileOperations;
     }
 
     /// <summary>窗格标识：<c>primary</c> 或 <c>secondary</c>。</summary>
@@ -95,7 +101,7 @@ public sealed partial class PanelViewModel : ObservableObject
     /// <summary>创建一个标签页并激活它。返回新建的标签页。</summary>
     public FolderTabViewModel CreateTab()
     {
-        var tab = new FolderTabViewModel(_fileSystem, _shell, _settings, _icons, _contextMenu);
+        var tab = new FolderTabViewModel(_fileSystem, _shell, _settings, _icons, _contextMenu, _clipboard, _fileOperations);
         tab.PropertyChanged += OnTabPropertyChanged;
         Tabs.Add(tab);
         ActiveTab = tab;

@@ -16,6 +16,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Windows.Graphics;
+using Windows.UI;
 
 namespace Exdir;
 
@@ -97,8 +98,16 @@ public sealed partial class MainWindow : Window
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
+        // 主题要在窗口第一次渲染之前就位，否则浅色机器上会先闪一下深色
+        //（ActualTheme 要到首次布局之后才是最终值，那时由 OnRootGridLoaded / ActualThemeChanged 再刷一次）
+        ApplyTheme();
+
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         ViewModel.ExitRequested += (_, _) => RequestExit();
+
+        // 「跟随系统」时系统主题一变，RootGrid.ActualTheme 会自己跟着变（不需要重设 RequestedTheme），
+        // 但图标、悬停提示与系统窗口按钮的颜色得跟着刷新
+        RootGrid.ActualThemeChanged += (_, _) => SyncThemeVisuals();
 
         AppWindow.Closing += OnAppWindowClosing;
 
@@ -127,6 +136,9 @@ public sealed partial class MainWindow : Window
         }
 
         _loaded = true;
+
+        // 首次布局之后 ActualTheme 才是最终值：把图标与系统窗口按钮的颜色再刷一遍
+        SyncThemeVisuals();
 
         RestoreWindowPlacement();
         BuildLocationsMenu();
@@ -296,6 +308,94 @@ public sealed partial class MainWindow : Window
             case nameof(MainViewModel.ActiveDirectoryPath):
                 SyncSidebarSelection();
                 break;
+
+            case nameof(MainViewModel.Theme):
+                ApplyTheme();
+                break;
+        }
+    }
+
+    // ------------------------------------------------------------------ 主题
+
+    /// <summary>
+    /// 应用主题：只改根元素的 <c>RequestedTheme</c>。
+    /// <c>Application.RequestedTheme</c> 启动之后不允许再改，而根元素这一个属性一改，
+    /// 菜单栏 / 工具条 / 侧边栏 / 两个窗格 / 状态栏就全部跟着换（弹层同理：MenuFlyout 与
+    /// ContentDialog 的 XamlRoot 都是它）。设置窗口是另一个 Window，不继承这份主题，要单独推一次。
+    /// </summary>
+    private void ApplyTheme()
+    {
+        RootGrid.RequestedTheme = ThemeHelper.ToElementTheme(ViewModel.Theme);
+
+        SyncThemeVisuals();
+
+        _settingsWindow?.ApplyTheme();
+
+        Log.Write($"主题已应用：{ThemeHelper.ToDisplayName(ViewModel.Theme)}（实际 {RootGrid.ActualTheme}）");
+    }
+
+    /// <summary>按**实际画出来的**主题刷新与主题相关的视觉：图标 / 悬停提示 + 系统窗口按钮颜色。</summary>
+    private void SyncThemeVisuals()
+    {
+        SyncThemeToggle();
+        UpdateCaptionButtons();
+    }
+
+    /// <summary>
+    /// 标题栏那个太阳 / 月亮按钮：字形与悬停提示都按**实际画出来的**主题来。
+    /// 读 ActualTheme 而不是设置值，是为了「跟随系统」时图标与画面一致。
+    /// </summary>
+    private void SyncThemeToggle()
+    {
+        var dark = RootGrid.ActualTheme == ElementTheme.Dark;
+
+        ThemeToggle.IsChecked = dark;
+        ThemeGlyph.Glyph = dark ? "\uE708" : "\uE706";
+        ToolTipService.SetToolTip(ThemeToggle, dark ? "切换到浅色模式" : "切换到深色模式");
+    }
+
+    private void ThemeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        // ToggleButton 已经把自己的 IsChecked 翻过来了，这里只把结果固定成显式的浅 / 深
+        // （从「跟随系统」拨动也是一样：拨哪儿算哪儿）
+        ViewModel.SetDarkMode(ThemeToggle.IsChecked == true);
+    }
+
+    /// <summary>
+    /// 系统窗口按钮（最小化 / 最大化 / 关闭）由 AppWindow 原生绘制，不跟着我们的 ElementTheme 走，
+    /// 系统主题与 exdir 主题不一致时必须自己给它们上色，否则“深色系统 + 浅色 exdir”下
+    /// 按钮会是白的、几乎看不见。给 null 表示回到系统默认。
+    /// </summary>
+    private void UpdateCaptionButtons()
+    {
+        try
+        {
+            var titleBar = AppWindow.TitleBar;
+            var dark = RootGrid.ActualTheme == ElementTheme.Dark;
+
+            var foreground = dark ? Colors.White : Colors.Black;
+            var hover = dark
+                ? Color.FromArgb(0x20, 0xFF, 0xFF, 0xFF)
+                : Color.FromArgb(0x18, 0x00, 0x00, 0x00);
+            var pressed = dark
+                ? Color.FromArgb(0x38, 0xFF, 0xFF, 0xFF)
+                : Color.FromArgb(0x28, 0x00, 0x00, 0x00);
+
+            titleBar.ButtonBackgroundColor = Colors.Transparent;
+            titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+            titleBar.ButtonForegroundColor = foreground;
+            titleBar.ButtonInactiveForegroundColor = dark
+                ? Color.FromArgb(0x80, 0xFF, 0xFF, 0xFF)
+                : Color.FromArgb(0x80, 0x00, 0x00, 0x00);
+            titleBar.ButtonHoverBackgroundColor = hover;
+            titleBar.ButtonHoverForegroundColor = foreground;
+            titleBar.ButtonPressedBackgroundColor = pressed;
+            titleBar.ButtonPressedForegroundColor = foreground;
+        }
+        catch (Exception ex)
+        {
+            // 颜色设不上不影响用（只是一块观感不好），但要留一笔
+            Log.Exception("设置系统窗口按钮颜色", ex);
         }
     }
 

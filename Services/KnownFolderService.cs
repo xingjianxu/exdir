@@ -22,12 +22,12 @@ public sealed class KnownFolderService : IKnownFolderService
     {
         var result = new List<SpecialFolderModel>();
 
-        Add(result, "桌面", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), FileTypeHelper.DesktopGlyph);
-        Add(result, "文档", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), FileTypeHelper.DocumentGlyph);
-        Add(result, "下载", Path.Combine(UserProfile, "Downloads"), FileTypeHelper.DownloadGlyph);
-        Add(result, "图片", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), FileTypeHelper.PictureGlyph);
-        Add(result, "音乐", Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), FileTypeHelper.MusicGlyph);
-        Add(result, "视频", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), FileTypeHelper.VideoGlyph);
+        Add(result, "桌面", Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), FileTypeHelper.DesktopGlyph, UserFolderKey.Desktop);
+        Add(result, "文档", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), FileTypeHelper.DocumentGlyph, UserFolderKey.Documents);
+        Add(result, "下载", Path.Combine(UserProfile, "Downloads"), FileTypeHelper.DownloadGlyph, UserFolderKey.Downloads);
+        Add(result, "图片", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), FileTypeHelper.PictureGlyph, UserFolderKey.Pictures);
+        Add(result, "音乐", Environment.GetFolderPath(Environment.SpecialFolder.MyMusic), FileTypeHelper.MusicGlyph, UserFolderKey.Music);
+        Add(result, "视频", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), FileTypeHelper.VideoGlyph, UserFolderKey.Videos);
 
         return result;
     }
@@ -83,11 +83,11 @@ public sealed class KnownFolderService : IKnownFolderService
         return result;
     }
 
-    private static void Add(List<SpecialFolderModel> target, string name, string path, string glyph)
+    private static void Add(List<SpecialFolderModel> target, string name, string path, string glyph, UserFolderKey key)
     {
         if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
         {
-            target.Add(new SpecialFolderModel(name, path, glyph, SpecialFolderKind.UserFolder));
+            target.Add(new SpecialFolderModel(name, path, glyph, SpecialFolderKind.UserFolder, key));
         }
     }
 

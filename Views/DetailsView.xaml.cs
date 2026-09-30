@@ -1,14 +1,18 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using Exdir.Controls;
 using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.ViewModels;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -17,7 +21,10 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Foundation;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.ApplicationModel.DataTransfer.DragDrop;
 using Windows.System;
+using Windows.UI.Core;
 using WinRT.Interop;
 
 namespace Exdir.Views;
@@ -56,9 +63,20 @@ public sealed partial class DetailsView : UserControl
         DetailsRoot.AddHandler(UIElement.RightTappedEvent, new RightTappedEventHandler(DetailsRoot_RightTapped), true);
         DetailsRoot.AddHandler(UIElement.ContextRequestedEvent, new TypedEventHandler<UIElement, ContextRequestedEventArgs>(DetailsRoot_ContextRequested), true);
 
-        // 左键单击空白处取消选择：行上的点击虽然由 ListView 自己处理，但它可能把事件标记成 Handled，
-        // 所以这里也必须 handledEventsToo（靠 FindRowItem 把“落在某一行上”的点击排除掉）。
+        // 左键单击空白处取消选择（行上的点击交给 ListView，但它可能把事件标记成 Handled，
+        // 所以这里也必须 handledEventsToo，靠 FindRowItem 区分）。
         DetailsRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(DetailsRoot_PointerPressed), true);
+
+        // 拖拽手势是自己识别的（按下 + 移动超过阈值 → StartDragAsync）：
+        // ListView 自带的 CanDragItems 拖拽在模拟鼠标下只能走到 DragItemsStarting 就没了下文，
+        // 而 StartDragAsync 是本仓库验证过能用的（工具条上的固定目录拖拽就是它）。
+        DetailsRoot.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(DetailsRoot_PointerMoved), true);
+
+        // 注意不要把 PointerCaptureLost 也接到 PointerEnded 上：
+        // ListViewItem 在按下时会把指针捕获过去，随即发一次 PointerCaptureLost，
+        // 而那时拖拽还没开始 —— 拿它当“松手”会把 _dragCandidate 清掉，拖拽永远启动不了
+        // （表现为“有时能拖、有时拖不动”）。捕获丢失只意味着事件不再往上传，不代表用户松手。
+        DetailsRoot.AddHandler(UIElement.PointerReleasedEvent, new PointerEventHandler(DetailsRoot_PointerEnded), true);
 
         // 双击一行：目录进入、文件用默认程序打开。
         // 同样挂在最外层 Grid 上（handledEventsToo）：行里绝大部分区域（文字右侧、日期/类型/大小的空白处、
@@ -66,6 +84,13 @@ public sealed partial class DetailsView : UserControl
         // 永远经过不了行模板里那个 Grid，于是只有双击到文字/图标上才有效。挂在这一层再用 FindRowItem
         // 反查行，整条高亮区（= 鼠标悬停会高亮的那一块）就都能双击了。
         DetailsRoot.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(DetailsRoot_DoubleTapped), true);
+
+        // 拖放：把文件 / 目录拖到某个目录行上（或列表空白处 = 当前目录）就移动 / 复制过去。
+        // 同样用 handledEventsToo：ListViewItem 这些容器自己也参与拖放，会把“不接受”写进 AcceptedOperation，
+        // 必须在整条路由的最后再确认一次，否则鼠标下的行高亮着、松手却什么都不发生。
+        DetailsRoot.AddHandler(UIElement.DragOverEvent, new DragEventHandler(DetailsRoot_DragOver), true);
+        DetailsRoot.AddHandler(UIElement.DragLeaveEvent, new DragEventHandler(DetailsRoot_DragLeave), true);
+        DetailsRoot.AddHandler(UIElement.DropEvent, new DragEventHandler(DetailsRoot_Drop), true);
     }
 
     public static readonly DependencyProperty ViewModelProperty = DependencyProperty.Register(
@@ -349,26 +374,48 @@ public sealed partial class DetailsView : UserControl
     }
 
     /// <summary>
-    /// 拖拽的起点：把选中的目录作为拖放内容（工具条“固定目录”是接受方）。
-    /// 文件目前没有可拖拽的语义（复制/移动尚未实现），所以直接取消拖拽，
-    /// 免得拖出去后落到哪儿都没反应。
+    /// 拖拽的起点：把选中的项（目录与文件）作为拖放内容。
+    /// <para>
+    /// 拖拽手势是自己识别的（<c>EntryList</c> 的 <c>CanDragItems</c> 关掉，见
+    /// <see cref="DetailsRoot_PointerMoved" />）：<c>ListView</c> 自带的那个拖拽在模拟鼠标下
+    /// 只能走到 <c>DragItemsStarting</c> 就没了下文（拖拽循环收不到移动），而
+    /// <c>StartDragAsync</c> 这条路是本仓库验证过能用的（工具条上的固定目录拖拽就是它）。
+    /// </para>
+    /// 同一个数据包既是“固定到工具条”的来源（只有目录时才显示那个提示，见
+    /// DragDropHelper.FoldersOnlyProperty），也是“拖到目录行 / 另一个窗格里移动”的来源；
+    /// 允许的效果里带上 Move：同盘拖动默认就是移动（资源管理器的习惯）。
     /// </summary>
-    private void EntryList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
+    private void DetailsRoot_DragStarting(UIElement sender, DragStartingEventArgs args)
     {
-        var directories = e.Items
-            .OfType<FileItemViewModel>()
-            .Where(item => item.IsDirectory)
-            .Select(item => item.FullPath)
-            .ToList();
+        _dragStarted = true;
+        _internalDropHandled = false;
 
-        if (directories.Count == 0)
+        var items = EntryList.SelectedItems.OfType<FileItemViewModel>().ToList();
+
+        // 按在没选中的行上时 ListView 会先把它选上；这里再兜一次底（顺序将来变了也不会拖错东西）
+        if (_dragCandidate is { } candidate && !items.Contains(candidate))
         {
-            e.Cancel = true;
+            EntryList.SelectedItem = candidate;
+            items = new List<FileItemViewModel> { candidate };
+        }
+
+        _draggingPaths = items.Select(item => item.FullPath).ToList();
+
+        if (items.Count == 0)
+        {
+            args.Cancel = true;
             return;
         }
 
-        DragDropHelper.SetPaths(e.Data, directories);
-        Log.Write($"拖拽开始（文件列表）：{directories.Count} 个目录");
+        var foldersOnly = items.All(item => item.IsDirectory);
+
+        DragDropHelper.SetPaths(
+            args.Data,
+            items.Select(item => item.FullPath),
+            DataPackageOperation.Copy | DataPackageOperation.Move | DataPackageOperation.Link,
+            foldersOnly);
+
+        Log.Write($"拖拽开始（文件列表）：{items.Count} 项（全是目录={foldersOnly}）");
     }
 
     /// <summary>列头固定高度也不变，这里只是为了把列头内容裁剪在窗格内（横向滚动时会平移出去）。</summary>
@@ -412,6 +459,7 @@ public sealed partial class DetailsView : UserControl
         AttachScrollViewer();
         FitColumns();
         UpdateSplitterPositions();
+
 
         // 容器是加载后才生成的，这里再同步一次过渡设置（让“关闭动画”对已经显示的行也立即生效）
         ApplyListAnimations();
@@ -519,8 +567,26 @@ public sealed partial class DetailsView : UserControl
             return;
         }
 
+        var row = FindRowItem(e.OriginalSource);
+        if (row is not null)
+        {
+            // 按在没选中的行上（没按 Ctrl/Shift）就先把选择换成它：
+            // ListView 为了支持“拖动已选中的多项”会把选择推迟到鼠标松开，而那时拖拽已经开始了
+            // （`DragStarting` 要用当前选择当拖拽内容）—— 这里自己补上。
+            if ((e.KeyModifiers & (VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift)) == 0
+                && !EntryList.SelectedItems.Contains(row))
+            {
+                EntryList.SelectedItem = row;
+            }
+
+            _dragCandidate = row;
+            _dragPressPosition = point.Position;
+            _dragStarted = false;
+            return;
+        }
+
         // 列头有自己的行为（排序 / 拖列宽），不算空白处
-        if (point.Position.Y <= HeaderRow.ActualHeight || FindRowItem(e.OriginalSource) is not null)
+        if (point.Position.Y <= HeaderRow.ActualHeight)
         {
             return;
         }
@@ -534,6 +600,141 @@ public sealed partial class DetailsView : UserControl
         // （紧接着按 Ctrl+A / 方向键就不作用于文件列表了）
         EntryList.Focus(FocusState.Pointer);
     }
+
+    // ------------------------------------------------------------------ 拖拽手势
+
+    /// <summary>按下时鼠标所在的行（可能要拖的那一行）。</summary>
+    private FileItemViewModel? _dragCandidate;
+
+    /// <summary>按下的位置，用来算拖拽阈值。</summary>
+    private Point _dragPressPosition;
+
+    /// <summary>本次按下已经启动过拖拽，避免重复调 <c>StartDragAsync</c>。</summary>
+    private bool _dragStarted;
+
+    /// <summary>本次拖拽真正拖走的路径（DragStarting 时定下来）。</summary>
+    private List<string> _draggingPaths = new();
+
+    /// <summary>本次拖拽的 Drop 有没有落到本列表上（落下处理用它防重复）。</summary>
+    private bool _internalDropHandled;
+
+    /// <summary>按下后移动超过这个距离（DIP）才算拖拽，否则还是点击。</summary>
+    private const double DragThreshold = 4;
+
+    private void DetailsRoot_PointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_dragCandidate is null || _dragStarted || ViewModel is null)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(DetailsRoot);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            _dragCandidate = null;
+            return;
+        }
+
+        if (Math.Abs(point.Position.X - _dragPressPosition.X) < DragThreshold
+            && Math.Abs(point.Position.Y - _dragPressPosition.Y) < DragThreshold)
+        {
+            return;
+        }
+
+        _dragStarted = true;
+        _ = StartRowDragAsync(point);
+    }
+
+    /// <summary>松手：结束本次“按下”（拖拽已经启动时由 <see cref="StartRowDragAsync" /> 自己收尾）。</summary>
+    private void DetailsRoot_PointerEnded(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_dragStarted)
+        {
+            _dragCandidate = null;
+        }
+    }
+
+    private async Task StartRowDragAsync(Microsoft.UI.Input.PointerPoint point)
+    {
+        try
+        {
+            await DetailsRoot.StartDragAsync(point);
+        }
+        catch (Exception ex)
+        {
+            // 提权进程不支持 StartDragAsync（Windows 的安全策略），只记日志
+            Log.Exception("文件列表拖拽", ex);
+            return;
+        }
+        finally
+        {
+            // 拖拽结束后才能再开始下一次；拖拽期间收不到 PointerReleased，得在这里清
+            _dragStarted = false;
+            _dragCandidate = null;
+        }
+
+        // 兜底：WinUI 有时不会把 Drop 冒泡到列表上（行高亮着、松手却什么都没发生），
+        // 那就按“松开时鼠标落在哪儿”自己把这次移动做完。
+        // 左键还按着 = 用户按 Esc 取消了拖拽，什么都不做；
+        // 光标不在本列表里 = 已经落到别的窗格 / 工具条 / 别的程序上了，不用管。
+        if (_internalDropHandled || IsKeyDown(VkLeftButton))
+        {
+            return;
+        }
+
+        await CompleteInternalDropAsync();
+    }
+
+    /// <summary>
+    /// 拖拽结束的兜底：把 <see cref="_draggingPaths" /> 移到松开鼠标时所指向的目录
+    /// （目录行，或列表空白处 = 当前目录）。
+    /// </summary>
+    private async Task CompleteInternalDropAsync()
+    {
+        if (ViewModel is not { } viewModel || _draggingPaths.Count == 0)
+        {
+            return;
+        }
+
+        var position = DpiHelper.GetCursorPosition(DetailsRoot, MainWindowHandle);
+        if (double.IsNaN(position.X) || position.X < 0 || position.Y < 0
+            || position.X > DetailsRoot.ActualWidth || position.Y > DetailsRoot.ActualHeight)
+        {
+            return;
+        }
+
+        var row = RowAt(position);
+        var target = row is { IsDirectory: true } ? row.FullPath : viewModel.CurrentPath;
+
+        if (string.IsNullOrEmpty(target))
+        {
+            return;
+        }
+
+        // 和 DragOver 里的判定一致（默认移动，按住 Ctrl 是复制）
+        var move = !IsKeyDown(VkControl);
+
+        Log.Write($"拖放兜底：{_draggingPaths.Count} 项 → {target}（{(move ? "移动" : "复制")}）");
+        await viewModel.DropFilesAsync(_draggingPaths, target, move).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Shift 现在是不是按下的。用 <see cref="InputKeyboardSource" />（因为线程消息队列里的键状态）
+    /// 而不是 <c>GetAsyncKeyState</c>：后者是“此刻的真实物理状态”，等到本进程拿到这条键盘消息时，
+    /// 用户（或自动化脚本）可能已经把 Shift 松开了。
+    /// </summary>
+    private static bool IsShiftDown()
+        => (InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift) & CoreVirtualKeyStates.Down)
+           == CoreVirtualKeyStates.Down;
+
+    private const int VkLeftButton = 0x01;
+    private const int VkControl = 0x11;
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    /// <summary>某个键（或鼠标键）现在是不是按下状态；拖拽期间收不到指针事件，只能这样问系统。</summary>
+    private static bool IsKeyDown(int virtualKey) => (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
 
     /// <summary>
     /// Ctrl+A：全选列表里当前可见的行。
@@ -550,6 +751,78 @@ public sealed partial class DetailsView : UserControl
 
         EntryList.SelectAll();
         EntryList.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>Ctrl+C：把选中项放到剪贴板（与资源管理器、7-Zip 互通）。</summary>
+    private void CopyAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+
+        if (ViewModel is { } viewModel && viewModel.CopySelectionCommand.CanExecute(null))
+        {
+            viewModel.CopySelectionCommand.Execute(null);
+        }
+    }
+
+    /// <summary>Ctrl+X：放到剪贴板，粘贴时是移动。</summary>
+    private void CutAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+
+        if (ViewModel is { } viewModel && viewModel.CutSelectionCommand.CanExecute(null))
+        {
+            viewModel.CutSelectionCommand.Execute(null);
+        }
+    }
+
+    /// <summary>Ctrl+V：把剪贴板上的文件复制 / 移动进当前目录。</summary>
+    private void PasteAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+
+        if (ViewModel is { } viewModel)
+        {
+            _ = viewModel.PasteCommand.ExecuteAsync(null);
+        }
+    }
+
+    /// <summary>
+    /// Delete / Shift+Delete：删除选中项（默认丢进回收站，按住 Shift 是永久删除）。
+    /// <para>
+    /// 为什么不用 <c>KeyboardAccelerator</c>：带 Shift 的加速器对 Delete 这种键在本仓库的
+    /// WinUI 下根本不会 Invoke（实测 <c>Modifiers="Shift" + Key="Delete"</c> 完全没反应，
+    /// 同一次按键的普通 Delete 却正常）——Shift 的修饰键匹配不可靠。
+    /// <c>PreviewKeyDown</c> 是隧道事件，一定先于列表/列头拿到这个键，再由自己查 Shift 的按下状态，
+    /// 不依赖任何修饰键匹配。
+    /// </para>
+    /// 只作用于文件列表：地址栏在 <c>NavigationBarView</c> 里、不是本控件子树，所以那里的 Delete
+    /// 仍然是文本框自己的行为。
+    /// </summary>
+    private async void DetailsRoot_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != VirtualKey.Delete || ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        var permanent = IsShiftDown();
+        var command = permanent ? viewModel.DeleteSelectionPermanentlyCommand : viewModel.DeleteSelectionCommand;
+
+        if (!command.CanExecute(null))
+        {
+            return;
+        }
+
+        e.Handled = true;
+
+        try
+        {
+            await command.ExecuteAsync(null);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("删除", ex);
+        }
     }
 
     // ------------------------------------------------------------------ 右键菜单
@@ -667,11 +940,22 @@ public sealed partial class DetailsView : UserControl
             AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
             AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand);
             flyout.Items.Add(new MenuFlyoutSeparator());
+
+            // 复制 / 剪切 / 粘贴：与 Ctrl+C / X / V 是同一条命令
+            AddContextMenuItem(flyout, "剪切", viewModel.CutSelectionCommand, "Ctrl+X");
+            AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
+            AddContextMenuItem(flyout, "粘贴", viewModel.PasteCommand, "Ctrl+V", viewModel.HasFileClipboard);
+
+            // 删除进回收站（与资源管理器一致：Shift+Delete 才是永久删除，菜单里不单列一项）
+            AddContextMenuItem(flyout, "删除", viewModel.DeleteSelectionCommand, "Del");
+
+            flyout.Items.Add(new MenuFlyoutSeparator());
             AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
             AddContextMenuItem(flyout, "属性", viewModel.ShowPropertiesCommand);
         }
         else
         {
+            AddContextMenuItem(flyout, "粘贴", viewModel.PasteCommand, "Ctrl+V", viewModel.HasFileClipboard);
             AddContextMenuItem(flyout, "新建文件夹", viewModel.CreateNewFolderCommand);
             AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
             AddContextMenuAction(flyout, "全选", SelectAllRows);
@@ -687,8 +971,22 @@ public sealed partial class DetailsView : UserControl
         flyout.ShowAt(DetailsRoot, new FlyoutShowOptions { Position = position });
     }
 
-    private static void AddContextMenuItem(MenuFlyout flyout, string text, ICommand command)
-        => flyout.Items.Add(new MenuFlyoutItem { Text = text, Command = command });
+    private static void AddContextMenuItem(
+        MenuFlyout flyout,
+        string text,
+        ICommand command,
+        string? acceleratorText = null,
+        bool isEnabled = true)
+    {
+        var item = new MenuFlyoutItem { Text = text, Command = command, IsEnabled = isEnabled };
+
+        if (acceleratorText is not null)
+        {
+            item.KeyboardAcceleratorTextOverride = acceleratorText;
+        }
+
+        flyout.Items.Add(item);
+    }
 
     private static void AddContextMenuAction(MenuFlyout flyout, string text, Action action)
     {
@@ -702,6 +1000,231 @@ public sealed partial class DetailsView : UserControl
     {
         EntryList.SelectAll();
         EntryList.Focus(FocusState.Programmatic);
+    }
+
+    // ------------------------------------------------------------------ 拖放（移动 / 复制到目录）
+
+    /// <summary>本次拖放要落到的目录（目录行，或列表空白处对应的当前目录）。</summary>
+    private string? _dropTargetDirectory;
+
+    /// <summary>落下时是移动还是复制（同盘拖动默认移动，按住 Ctrl 是复制）。</summary>
+    private bool _dropIsMove;
+
+    /// <summary>鼠标正压着的那一行（只记录有效的目录行，用于整行高亮）。</summary>
+    private FileItemViewModel? _dropRow;
+
+    /// <summary>
+    /// 拖到列表上：认出目标目录（鼠标下的目录行，或列表空白处 = 当前目录），
+    /// 把“移动 / 复制”的结论写进 <see cref="DragEventArgs.AcceptedOperation" /> 与拖拽提示。
+    /// </summary>
+    private void DetailsRoot_DragOver(object sender, DragEventArgs e) => HandleDragOver(e);
+
+    private void HandleDragOver(DragEventArgs e)
+    {
+        if (ViewModel is not { } viewModel || !TryResolveDrop(e, viewModel, out var target, out var row, out var move))
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            SetDropRow(null);
+            _dropTargetDirectory = null;
+            return;
+        }
+
+        e.AcceptedOperation = move ? DataPackageOperation.Move : DataPackageOperation.Copy;
+        e.DragUIOverride.Caption = (move ? "移动到 " : "复制到 ") + LeafName(target);
+        e.DragUIOverride.IsCaptionVisible = true;
+        e.DragUIOverride.IsGlyphVisible = false;
+
+        if (!string.Equals(_dropTargetDirectory, target, StringComparison.OrdinalIgnoreCase) || _dropIsMove != move)
+        {
+            Log.Write($"拖放经过：{target}（{(move ? "移动" : "复制")}）行={row?.DisplayName ?? "(背景)"}");
+        }
+
+        _dropTargetDirectory = target;
+        _dropIsMove = move;
+        SetDropRow(row);
+    }
+
+    /// <summary>光拖着离开列表（跑到别的窗格/程序上）就把高亮与目标清掉。</summary>
+    private void DetailsRoot_DragLeave(object sender, DragEventArgs e)
+    {
+        // 用光标位置而不是 e.GetPosition（后者在拖拽过程中的坐标不可靠，见 DpiHelper.GetCursorPosition）
+        var position = DpiHelper.GetCursorPosition(DetailsRoot, MainWindowHandle);
+        if (!double.IsNaN(position.X)
+            && position.X >= 0 && position.Y >= 0
+            && position.X <= DetailsRoot.ActualWidth && position.Y <= DetailsRoot.ActualHeight)
+        {
+            // 还在自己身上（子元素之间的移动也会发 DragLeave），不当作离开
+            return;
+        }
+
+        SetDropRow(null);
+        _dropTargetDirectory = null;
+    }
+
+    /// <summary>
+    /// 真正落下：按 <see cref="DetailsRoot_DragOver" /> 记下的目标目录与移动/复制做操作。
+    /// 操作本身交给标签页 ViewModel（视图不做 I/O），完成后由服务发事件让受影响的目录重枚举。
+    /// </summary>
+    private async void DetailsRoot_Drop(object sender, DragEventArgs e) => await HandleDropAsync(e);
+
+    private async Task HandleDropAsync(DragEventArgs e)
+    {
+        _internalDropHandled = true;
+
+        var viewModel = ViewModel;
+        SetDropRow(null);
+
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        // 落下这一刻按光标位置再算一次落点：拖拽期间鼠标可能已经停在别处，
+        // 而 DragOver 里记下的目标只代表“最后一次 DragOver 时”的位置。
+        // 只有实在算不出来时才退回 DragOver 记下的那个。
+        if (!TryResolveDrop(e, viewModel, out var target, out _, out var move))
+        {
+            target = _dropTargetDirectory ?? string.Empty;
+            move = _dropIsMove;
+        }
+
+        _dropTargetDirectory = null;
+
+        if (string.IsNullOrEmpty(target))
+        {
+            Log.Write("拖放落下：没有可用的目标目录");
+            return;
+        }
+
+        // 先把 DataView 取到局部变量：await 之后不能再碰事件参数（见 AGENTS.md 第 6 节第 22 条）
+        var data = e.DataView;
+
+        try
+        {
+            var paths = await DragDropHelper.GetPathsAsync(data);
+            if (paths.Count == 0)
+            {
+                Log.Write("拖放落下：数据包里没有路径");
+                return;
+            }
+
+            Log.Write($"拖放落下：{paths.Count} 项 → {target}（{(move ? "移动" : "复制")}）");
+            await viewModel.DropFilesAsync(paths, target, move).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("文件拖放", ex);
+        }
+    }
+
+    /// <summary>
+    /// 算“这次拖放落在哪个目录 / 是移动还是复制”，不是文件拖放（例如工具条固定目录排序）时返回 false。
+    /// <para>
+    /// 落点用“鼠标下的行 + 已生成容器的实际矩形”算，而不是看 <c>e.OriginalSource</c>：
+    /// 拖放事件的源永远是带 <c>AllowDrop</c> 的那个元素（这里是 <c>DetailsRoot</c>），
+    /// 反查不出鼠标压在哪一行（见 AGENTS.md 第 6 节第 54 条）。
+    /// </para>
+    /// </summary>
+    private bool TryResolveDrop(
+        DragEventArgs e,
+        FolderTabViewModel viewModel,
+        out string target,
+        out FileItemViewModel? row,
+        out bool move)
+    {
+        target = string.Empty;
+        row = null;
+        move = false;
+
+        if (string.IsNullOrEmpty(viewModel.CurrentPath)
+            || e.DataView.Contains(DragDropHelper.PinnedReorderFormat))
+        {
+            return false;
+        }
+
+        // 同进程拖拽（我们自己写的格式）与外部拖入（资源管理器）都接受；其它一律不接
+        var internalDrag = e.DataView.Contains(DragDropHelper.PathsFormat);
+        if (!internalDrag && !e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            return false;
+        }
+
+        var point = DpiHelper.GetCursorPosition(DetailsRoot, MainWindowHandle);
+        var hit = double.IsNaN(point.X) ? null : RowAt(point);        row = hit is { IsDirectory: true } ? hit : null;
+        target = row?.FullPath ?? viewModel.CurrentPath;
+
+        var control = (e.Modifiers & DragDropModifiers.Control) != 0;
+        var shift = (e.Modifiers & DragDropModifiers.Shift) != 0;
+
+        // 自己拖的：默认移动（资源管理器在同盘内的习惯），按住 Ctrl 变成复制。
+        // 从资源管理器拖进来的：默认复制（不客气地搬走别人窗口里的文件太危险），按住 Shift 才是移动。
+        move = internalDrag ? !control : shift && !control;
+
+        return true;
+    }
+
+    /// <summary>鼠标下的那一行：按已生成行容器的实际矩形判断（虚拟化下已实现的容器就是屏幕上的那些）。</summary>
+    private FileItemViewModel? RowAt(Point positionInRoot)
+    {
+        if (EntryList.ItemsPanelRoot is not { } panel)
+        {
+            return null;
+        }
+
+        foreach (var child in panel.Children)
+        {
+            if (child is not ListViewItem container)
+            {
+                continue;
+            }
+
+            // 行模板用的是 x:Bind，容器的 DataContext 不保证是数据项（实测为 null），
+            // 要用 ItemFromContainer 反查（同 SidebarView 的 TreeView.ItemFromContainer）
+            if (EntryList.ItemFromContainer(container) is not FileItemViewModel item)
+            {
+                continue;
+            }
+
+            var origin = container.TransformToVisual(DetailsRoot).TransformPoint(new Point(0, 0));
+            var bounds = new Rect(origin.X, origin.Y, container.ActualWidth, container.ActualHeight);
+
+            if (bounds.Contains(positionInRoot))
+            {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>高亮当前拖放落点那一行（只对目录行）。</summary>
+    private void SetDropRow(FileItemViewModel? row)
+    {
+        if (ReferenceEquals(_dropRow, row))
+        {
+            return;
+        }
+
+        if (_dropRow is not null)
+        {
+            _dropRow.IsDropTarget = false;
+        }
+
+        _dropRow = row;
+
+        if (row is not null)
+        {
+            row.IsDropTarget = true;
+        }
+    }
+
+    /// <summary>提示文本里的目录名（根目录这种没有名字的就用完整路径）。</summary>
+    private static string LeafName(string path)
+    {
+        var trimmed = path.TrimEnd('\\', '/');
+        var index = trimmed.LastIndexOfAny(new[] { '\\', '/' });
+        var name = index >= 0 ? trimmed[(index + 1)..] : trimmed;
+        return name.Length == 0 ? path : name;
     }
 
     /// <summary>同一次右键里两个事件都冒上来时，用来去重的时间窗（毫秒）。</summary>

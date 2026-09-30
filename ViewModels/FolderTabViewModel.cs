@@ -27,6 +27,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private readonly ISettingsService _settings;
     private readonly IShellIconService _icons;
     private readonly IShellContextMenuService _contextMenu;
+    private readonly IClipboardService _clipboard;
+    private readonly IFileOperationService _fileOperations;
 
     private readonly List<string> _backStack = new();
     private readonly List<string> _forwardStack = new();
@@ -64,13 +66,17 @@ public sealed partial class FolderTabViewModel : ObservableObject
         IShellService shell,
         ISettingsService settings,
         IShellIconService icons,
-        IShellContextMenuService contextMenu)
+        IShellContextMenuService contextMenu,
+        IClipboardService clipboard,
+        IFileOperationService fileOperations)
     {
         _fileSystem = fileSystem;
         _shell = shell;
         _settings = settings;
         _icons = icons;
         _contextMenu = contextMenu;
+        _clipboard = clipboard;
+        _fileOperations = fileOperations;
 
         _foldersFirst = settings.Current.FoldersFirst;
         _showExtensions = settings.Current.ShowExtensions;
@@ -219,6 +225,10 @@ public sealed partial class FolderTabViewModel : ObservableObject
                 CopySelectionPathCommand.NotifyCanExecuteChanged();
                 RevealInExplorerCommand.NotifyCanExecuteChanged();
                 ShowPropertiesCommand.NotifyCanExecuteChanged();
+                CopySelectionCommand.NotifyCanExecuteChanged();
+                CutSelectionCommand.NotifyCanExecuteChanged();
+                DeleteSelectionCommand.NotifyCanExecuteChanged();
+                DeleteSelectionPermanentlyCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -605,6 +615,187 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     [RelayCommand]
     private void CopyCurrentPath() => _shell.CopyTextToClipboard(_currentPath);
+
+    // ------------------------------------------------------------------ 复制 / 剪切 / 粘贴
+
+    /// <summary>剪贴板上现在有没有文件（内置菜单据此决定「粘贴」能不能点）。</summary>
+    public bool HasFileClipboard => _clipboard.HasFiles();
+
+    /// <summary>Ctrl+C / 内置菜单「复制」：把选中项放进剪贴板（后续「粘贴」时拉起复制）。</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void CopySelection()
+    {
+        var paths = _selection.Select(i => i.FullPath).ToList();
+
+        if (_clipboard.SetFiles(paths, move: false))
+        {
+            Log.Write($"复制到剪贴板：{paths.Count} 项");
+        }
+    }
+
+    /// <summary>Ctrl+X / 内置菜单「剪切」：把选中项放进剪贴板，粘贴时是移动。</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void CutSelection()
+    {
+        var paths = _selection.Select(i => i.FullPath).ToList();
+
+        if (_clipboard.SetFiles(paths, move: true))
+        {
+            Log.Write($"剪切到剪贴板：{paths.Count} 项");
+        }
+    }
+
+    /// <summary>Ctrl+V / 内置菜单「粘贴」：把剪贴板上的文件复制 / 移动进当前目录。</summary>
+    [RelayCommand]
+    private async Task PasteAsync()
+    {
+        var snapshot = _clipboard.GetFiles();
+
+        if (snapshot is null || snapshot.Paths.Count == 0)
+        {
+            ErrorMessage = "剪贴板上没有文件";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_currentPath))
+        {
+            ErrorMessage = "当前窗口没有目录，无法粘贴";
+            return;
+        }
+
+        // 复制到同一个目录时交给外壳处理（它会问是否覆盖 / 生成“(2)”副本），
+        // 只有拖放才需要把“已经在目标目录里”的项跳过（拖过去本来就没变化）
+        var isMove = snapshot.IsMove;
+        var ok = await TransferAsync(snapshot.Paths, _currentPath, isMove, skipItemsAlreadyInTarget: false)
+            .ConfigureAwait(true);
+
+        // 剪切只生效一次：成功后清掉剪贴板（与资源管理器一致）
+        if (ok && isMove)
+        {
+            _clipboard.Clear();
+        }
+    }
+
+    /// <summary>
+    /// 拖放落下：把一批文件 / 目录移动（按住 Ctrl 时是复制）到目标目录。
+    /// 目标可能是当前目录（拖到列表空白处），也可能是列表里的某个目录行，甚至另一个窗格。
+    /// </summary>
+    public Task DropFilesAsync(IReadOnlyList<string> paths, string targetDirectory, bool move)
+        => TransferAsync(paths, targetDirectory, move, skipItemsAlreadyInTarget: true);
+
+    // ------------------------------------------------------------------ 删除
+
+    /// <summary>
+    /// Delete 键 / 内置菜单「删除」：把选中项丢进回收站。
+    /// 确认框（“确实要将其移至回收站吗？”）由外壳弹，用户点“否”时什么都不发生。
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private Task DeleteSelectionAsync() => RunDeleteAsync(permanent: false);
+
+    /// <summary>Shift+Delete：不经过回收站，直接永久删除（外壳会就此单独警告一次）。</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private Task DeleteSelectionPermanentlyAsync() => RunDeleteAsync(permanent: true);
+
+    private async Task RunDeleteAsync(bool permanent)
+    {
+        // 选中项可能是别处已经删掉的陈旧行（刷新前），过滤一遍免得外壳报“找不到文件”
+        var paths = _selection
+            .Select(i => i.FullPath)
+            .Where(p => _fileSystem.DirectoryExists(p) || _fileSystem.FileExists(p))
+            .ToList();
+
+        if (paths.Count == 0)
+        {
+            return;
+        }
+
+        Log.Write($"删除：{paths.Count} 项 → {(permanent ? "永久删除" : "回收站")}");
+
+        var result = await _fileOperations.DeleteAsync(paths, permanent).ConfigureAwait(true);
+
+        // 用户在外壳的确认框里点“否”不是错误，不要把“操作已取消”当成失败报出来
+        if (!result.Canceled && result.ErrorMessage is { } message)
+        {
+            ErrorMessage = message;
+        }
+
+        // 成功后由 FileOperationService.Completed 事件让受影响的标签页重新枚举（包括本页），
+        // 所以这里不自己刷新：别处的同名目录、另一个窗格也要跟着变
+    }
+
+    /// <summary>真正执行复制 / 移动；返回是否全部成功。</summary>
+    private async Task<bool> TransferAsync(
+        IReadOnlyList<string> paths,
+        string targetDirectory,
+        bool move,
+        bool skipItemsAlreadyInTarget)
+    {
+        var target = _fileSystem.NormalizeDirectoryPath(targetDirectory);
+        if (target is null)
+        {
+            ErrorMessage = $"目标目录不存在：{targetDirectory}";
+            return false;
+        }
+
+        var sources = new List<string>();
+        foreach (var path in paths.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!_fileSystem.DirectoryExists(path) && !_fileSystem.FileExists(path))
+            {
+                continue;
+            }
+
+            if (SameDirectory(path, target))
+            {
+                continue;
+            }
+
+            // 目录不能搬进它自己（或它的子目录）里
+            if (_fileSystem.DirectoryExists(path) && IsUnder(target, path))
+            {
+                continue;
+            }
+
+            // 拖进它本来就在的目录：什么都不用做
+            if (skipItemsAlreadyInTarget && SameDirectory(_fileSystem.GetParentDirectory(path) ?? string.Empty, target))
+            {
+                continue;
+            }
+
+            sources.Add(path);
+        }
+
+        if (sources.Count == 0)
+        {
+            Log.Write($"文件操作：没有需要处理的项（目标 {target}）");
+            return false;
+        }
+
+        var result = move
+            ? await _fileOperations.MoveAsync(sources, target).ConfigureAwait(true)
+            : await _fileOperations.CopyAsync(sources, target).ConfigureAwait(true);
+
+        // 用户在外壳的进度/冲突对话框里点取消不是错误
+        if (!result.Canceled && result.ErrorMessage is { } message)
+        {
+            ErrorMessage = message;
+        }
+
+        return result.Success;
+    }
+
+    /// <summary>两个路径是不是同一个目录（忽略末尾分隔符与大小写；`C:\` 与 `C:\` 这种根路径也要相等）。</summary>
+    private static bool SameDirectory(string a, string b)
+        => string.Equals(a.TrimEnd(Separators), b.TrimEnd(Separators), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary><paramref name="candidate" /> 是不是在 <paramref name="ancestor" /> 目录里（含任意深度）。</summary>
+    private static bool IsUnder(string candidate, string ancestor)
+    {
+        var root = ancestor.TrimEnd(Separators);
+        return candidate.Length > root.Length
+               && candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+               && (candidate[root.Length] == '\\' || candidate[root.Length] == '/');
+    }
 
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void RevealInExplorer()

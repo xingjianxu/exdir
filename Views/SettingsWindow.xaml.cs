@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.ViewModels;
@@ -17,6 +18,9 @@ namespace Exdir.Views;
 /// </summary>
 public sealed partial class SettingsWindow : Window
 {
+    /// <summary>主窗口的 ViewModel（只读它的 Theme，用来跟主窗口同步主题）。</summary>
+    private readonly MainViewModel _owner;
+
     /// <summary>
     /// 默认宽高（DIP）：860×800 —— 左导航 180 + 右侧正文约 630。
     /// 宽度不能小：Windows 11 的 SettingsCard 在卡片宽度小于 476 DIP 时会把右侧控件
@@ -30,6 +34,8 @@ public sealed partial class SettingsWindow : Window
     {
         ArgumentNullException.ThrowIfNull(owner);
 
+        _owner = owner;
+
         InitializeComponent();
 
         Title = "设置";
@@ -40,11 +46,35 @@ public sealed partial class SettingsWindow : Window
         // 即时生效：任何一项改动都由这里写回并落盘
         ViewModel.Changed += (_, _) => owner.ApplySettings(ViewModel);
 
+        // 主题是主窗口与本窗口共享的：标题栏那个太阳 / 月亮开关一拨，本窗口也得当场换色
+        // （本窗口是另一个 Window，不继承主窗口的 RequestedTheme）。
+        // 关窗时必须退订：owner 是单例（活到进程结束），不退订会让关掉的窗口一直被它引用。
+        owner.PropertyChanged += OnOwnerPropertyChanged;
+        Closed += (_, _) => owner.PropertyChanged -= OnOwnerPropertyChanged;
+
+        ApplyTheme();
         ApplyDefaultPlacement();
     }
 
     /// <summary>这一份编辑模型（窗口关闭即丢弃）。</summary>
     public SettingsViewModel ViewModel { get; }
+
+    /// <summary>把主窗口当前的主题推给本窗口（含左导航 / 设置卡片，以及「主题」下拉框的选中项）。</summary>
+    public void ApplyTheme()
+    {
+        var theme = _owner.Theme;
+
+        View.RequestedTheme = ThemeHelper.ToElementTheme(theme);
+        ViewModel.SyncTheme(theme);
+    }
+
+    private void OnOwnerPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.Theme))
+        {
+            ApplyTheme();
+        }
+    }
 
     /// <summary>
     /// 默认尺寸 860×800 DIP，工作区放不下就退让，并在显示器工作区居中。

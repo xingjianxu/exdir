@@ -22,6 +22,7 @@ public sealed class FileItemViewModel : ObservableObject
 
     private bool _isExpanded;
     private bool _childrenLoaded;
+    private bool _isDropTarget;
     private ImageSource? _icon;
 
     public FileItemViewModel(FileSystemEntry entry, bool showExtensions, ColumnLayout columns, int depth = 0)
@@ -143,6 +144,16 @@ public sealed class FileItemViewModel : ObservableObject
     public string ExpanderGlyph => CanExpand
         ? (IsExpanded ? "\uE70D" : "\uE76C")
         : string.Empty;
+
+    /// <summary>
+    /// 拖拽时鼠标是不是正压在这一行上（目录行才是有效的拖放入口）。
+    /// 由 <c>DetailsView</c> 的拖放处理填，视图据此给整行画一圈强调色。
+    /// </summary>
+    public bool IsDropTarget
+    {
+        get => _isDropTarget;
+        set => SetProperty(ref _isDropTarget, value);
+    }
 
     /// <summary>灌入子项（由 FolderTabViewModel 排序后调用）。</summary>
     public void SetChildren(IReadOnlyList<FileItemViewModel> children)

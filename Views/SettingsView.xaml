@@ -96,6 +96,19 @@
                         Style="{ThemeResource TitleTextBlockStyle}"
                         Text="外观" />
 
+                    <!-- 主题是三态（跟随系统 / 浅色 / 深色），所以用下拉框；
+                         标题栏左侧那个太阳 / 月亮图标是同一个设置的快捷入口（只在浅 / 深之间切）。 -->
+                    <controls:SettingsCard Description="跟随系统（默认），或者固定用浅色 / 深色；也可以直接点标题栏左侧的太阳 / 月亮图标" Header="主题">
+                        <ComboBox
+                            MinWidth="120"
+                            AutomationProperties.Name="主题"
+                            SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}">
+                            <ComboBoxItem Content="跟随系统" />
+                            <ComboBoxItem Content="浅色" />
+                            <ComboBoxItem Content="深色" />
+                        </ComboBox>
+                    </controls:SettingsCard>
+
                     <controls:SettingsCard Description="标签页顶部两个角用直角（更紧凑整齐）；关掉则用 Windows 默认的圆角" Header="标签页使用直角">
                         <ToggleSwitch
                             AutomationProperties.Name="标签页使用直角"
@@ -195,6 +208,61 @@
                         <ToggleSwitch
                             AutomationProperties.Name="显示「此电脑」分组"
                             IsOn="{x:Bind ViewModel.SidebarShowComputer, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <TextBlock
+                        Margin="4,12,4,4"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Text="「主目录」分组里显示哪些标准文件夹（只影响子项；分组本身由上面的开关控制）。"
+                        TextWrapping="Wrap" />
+
+                    <controls:SettingsCard Description="在「主目录」分组里显示“桌面”文件夹" Header="显示「桌面」">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「桌面」"
+                            IsOn="{x:Bind ViewModel.SidebarHomeDesktop, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="在「主目录」分组里显示“文档”文件夹" Header="显示「文档」">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「文档」"
+                            IsOn="{x:Bind ViewModel.SidebarHomeDocuments, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="在「主目录」分组里显示“下载”文件夹" Header="显示「下载」">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「下载」"
+                            IsOn="{x:Bind ViewModel.SidebarHomeDownloads, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="在「主目录」分组里显示“图片”文件夹" Header="显示「图片」">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「图片」"
+                            IsOn="{x:Bind ViewModel.SidebarHomePictures, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="在「主目录」分组里显示“音乐”文件夹" Header="显示「音乐」">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「音乐」"
+                            IsOn="{x:Bind ViewModel.SidebarHomeMusic, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
+                    <controls:SettingsCard Description="在「主目录」分组里显示“视频”文件夹" Header="显示「视频」">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「视频」"
+                            IsOn="{x:Bind ViewModel.SidebarHomeVideos, Mode=TwoWay}"
                             OffContent=""
                             OnContent="" />
                     </controls:SettingsCard>

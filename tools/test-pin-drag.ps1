@@ -123,21 +123,28 @@ function Get-PinName {
 }
 
 # 侧边栏「收藏夹」分组的子行：WinUI TreeView 在 UIA 里是平铺的（子项不是父项的 UIA 后代），
-# 所以按 Y 坐标取“收藏夹”与下一个分组“云存储”之间的 TreeItem，顺序就是树里的顺序。
+# 所以按 Y 坐标取“收藏夹”与它下面最近的那个分组标题之间的 TreeItem，顺序就是树里的顺序。
 function Get-FavoriteRows {
     $fav = Find-Element -Name '收藏夹' -Type 'TreeItem'
-    $cloud = Find-Element -Name '云存储' -Type 'TreeItem'
-    if ($null -eq $fav -or $null -eq $cloud) { return @() }
+    if ($null -eq $fav) { return @() }
 
     $cond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::TreeItem)
     $fr = Get-Rect $fav
-    $cr = Get-Rect $cloud
+
+    # 下边界 = 收藏夹下面最近的那个分组标题（分组顺序可变，不能写死“云存储”）
+    $bottom = $root.Current.BoundingRectangle.Bottom
+    foreach ($name in @('主目录', '云存储', '此电脑')) {
+        $group = Find-Element -Name $name -Type 'TreeItem'
+        if ($null -eq $group) { continue }
+        $gy = (Get-Rect $group).Y
+        if ($gy -gt $fr.Y -and $gy -lt $bottom) { $bottom = $gy }
+    }
 
     return @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond) `
         | Where-Object { $_.Current.Name -and $_.Current.BoundingRectangle.Width -gt 0 } `
-        | Where-Object { $_.Current.BoundingRectangle.Y -gt $fr.Y -and $_.Current.BoundingRectangle.Y -lt $cr.Y } `
+        | Where-Object { $_.Current.BoundingRectangle.Y -gt $fr.Y -and $_.Current.BoundingRectangle.Y -lt $bottom } `
         | Sort-Object { $_.Current.BoundingRectangle.Y })
 }
 
