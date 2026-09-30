@@ -664,15 +664,15 @@ public sealed partial class MainViewModel : ObservableObject
             + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
     }
 
-    /// <summary>磁盘热插拔后刷新磁盘条与侧边栏。</summary>
+    /// <summary>
+    /// 重新读一遍磁盘清单（U 盘插拔后由 <c>MainWindow</c> 安排刷新，也可以从「工具 → 重新扫描磁盘」手动触发）。
+    /// 工具条左侧的磁盘区（<see cref="Drives" />）与侧边栏的「此电脑」分组都要跟着变，但都只做增量更新。
+    /// </summary>
     [RelayCommand]
     public void RefreshDrives()
     {
         ReloadDrives();
-        Sidebar.BuildTree();
-
-        // BuildTree 重建了「收藏夹」分组（新节点是空的），把固定目录重新灌一遍
-        Sidebar.SyncFavorites(PinnedFolders);
+        Sidebar.RefreshDrives();
     }
 
     // ------------------------------------------------------------------ 内部
@@ -705,12 +705,41 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ReloadDrives()
     {
+        var drives = _driveService.GetDrives();
+
+        // 清单没变就什么都不做：一次插拔会连发好几条 WM_DEVICECHANGE，
+        // 每次都 Drives.Clear() 会把工具条上的磁盘按钮整体重建一遍（闪一下，还丢键盘焦点）
+        if (Drives.Count == drives.Count)
+        {
+            var same = true;
+            for (var i = 0; i < drives.Count; i++)
+            {
+                if (!SameDrive(Drives[i], drives[i]))
+                {
+                    same = false;
+                    break;
+                }
+            }
+
+            if (same)
+            {
+                return;
+            }
+        }
+
         Drives.Clear();
-        foreach (var drive in _driveService.GetDrives())
+        foreach (var drive in drives)
         {
             Drives.Add(drive);
         }
     }
+
+    /// <summary>磁盘按钮上看得见的东西都一样就算同一个盘（盘符 / 卷标 / 类型 / 是否就绪）。</summary>
+    private static bool SameDrive(DriveModel a, DriveModel b)
+        => string.Equals(a.RootPath, b.RootPath, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(a.ToolbarText, b.ToolbarText, StringComparison.Ordinal)
+           && a.Kind == b.Kind
+           && a.IsReady == b.IsReady;
 
     private void LoadPinnedFolders()
     {

@@ -85,6 +85,7 @@ public partial class App : Application
         services.AddSingleton<IShellService, ShellService>();
         services.AddSingleton<IShellIconService, ShellIconService>();
         services.AddSingleton<IShellContextMenuService, ShellContextMenuService>();
+        services.AddSingleton<IDeviceChangeService, DeviceChangeService>();
 
         // ViewModel
         services.AddSingleton<MainViewModel>();

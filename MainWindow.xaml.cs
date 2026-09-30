@@ -5,10 +5,12 @@ using System.Windows.Input;
 using CommunityToolkit.Mvvm.Input;
 using Exdir.Diagnostics;
 using Exdir.Helpers;
+using Exdir.Services;
 using Exdir.ViewModels;
 using Exdir.Views;
 using H.NotifyIcon;
 using Microsoft.UI;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -30,6 +32,17 @@ public sealed partial class MainWindow : Window
     /// <summary>托盘驻留的单实例唤回、以及「配置 → 设置…」打开的设置窗口（同一时刻只开一个）。</summary>
     private SettingsWindow? _settingsWindow;
 
+    /// <summary>卷（U 盘 / 光驱 / 网络盘）插拔通知。</summary>
+    private readonly IDeviceChangeService _deviceChange;
+
+    /// <summary>
+    /// 两次延迟刷新：<c>WM_DEVICECHANGE</c> 常常连发好几条（设备节点 + 卷 + 介质），而且盘符
+    /// 往往比消息晚几百毫秒才可用。所以“合并成一次稍后再刷”+“再补一次兜底刷新”，
+    /// 避免刷得太早、U 盘还没挂上而看不到它。
+    /// </summary>
+    private readonly DispatcherQueueTimer _driveRefreshSoon;
+    private readonly DispatcherQueueTimer _driveRefreshBackstop;
+
     private double _sidebarWidth = 232;
     private bool _loaded;
 
@@ -39,16 +52,28 @@ public sealed partial class MainWindow : Window
     /// <summary>隐藏到托盘那一刻窗口是不是最大化的（ShowWindow(SW_SHOWNORMAL) 会把最大化还原掉）。</summary>
     private bool _restoreMaximized;
 
-    public MainWindow(MainViewModel viewModel)
+    public MainWindow(MainViewModel viewModel, IDeviceChangeService deviceChange)
     {
         // x:Bind 在 InitializeComponent 期间求值，因此必须先赋值
         ViewModel = viewModel;
+        _deviceChange = deviceChange;
 
         // 托盘菜单是 H.NotifyIcon 转成 Win32 弹出菜单再执行的，只能走 Command（不能挂 Click）
         ShowWindowCommand = new RelayCommand(ShowFromTray);
         HideWindowCommand = new RelayCommand(HideToTray);
 
         InitializeComponent();
+
+        _driveRefreshSoon = CreateDriveRefreshTimer(600);
+        _driveRefreshBackstop = CreateDriveRefreshTimer(2500);
+
+        // 卷插拔是系统广播给所有顶层窗口的 WM_DEVICECHANGE，所以要挂在自己的窗口句柄上。
+        // 窗口隐藏到托盘时它仍是顶层窗口，消息照样收得到。
+        _deviceChange.VolumesChanged += OnVolumesChanged;
+        _deviceChange.Attach(WinRT.Interop.WindowNative.GetWindowHandle(this));
+
+        // 「转到 → 所有位置」列的是磁盘清单：插拔后要跟着重列一遍，否则会一直列着已经拔掉的盘
+        ViewModel.Drives.CollectionChanged += (_, _) => BuildLocationsMenu();
 
         Title = "exdir";
 
@@ -189,6 +214,40 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ------------------------------------------------------------------ 卷插拔刷新
+
+    /// <summary>
+    /// 收到卷变化通知（U 盘插入 / 拔出、光盘换盘、网络盘映射变化）：安排两次延迟刷新。
+    /// 处理器是在窗口消息线程（UI 线程）上调用的，所以里面可以直接改集合。
+    /// </summary>
+    private void OnVolumesChanged(object? sender, EventArgs e)
+    {
+        RestartDriveRefresh(_driveRefreshSoon);
+        RestartDriveRefresh(_driveRefreshBackstop);
+        Log.Write("检测到卷变化（WM_DEVICECHANGE），安排刷新磁盘");
+    }
+
+    private DispatcherQueueTimer CreateDriveRefreshTimer(int delayMs)
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(delayMs);
+        timer.IsRepeating = false;
+        timer.Tick += (sender, _) =>
+        {
+            sender.Stop();
+            ViewModel.RefreshDrives();
+        };
+
+        return timer;
+    }
+
+    /// <summary>重新开始计时（连发的事件只留下一轮刷新，不会刷出一串）。</summary>
+    private static void RestartDriveRefresh(DispatcherQueueTimer timer)
+    {
+        timer.Stop();
+        timer.Start();
+    }
+
     /// <summary>真正退出：摘掉托盘图标、允许窗口销毁，并保证进程结束。</summary>
     private void RequestExit()
     {
@@ -203,6 +262,9 @@ public sealed partial class MainWindow : Window
         {
             SaveWindowPlacement();
             ViewModel.SaveSession();
+
+            // 窗口都要销毁了，卷插拔监听也一并摘掉
+            _deviceChange.Detach();
 
             // 先摘托盘图标：退出过程中窗口还会收到 WM_CLOSE，图标不能等到进程结束才消失
             TrayIcon.Dispose();

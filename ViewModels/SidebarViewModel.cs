@@ -181,6 +181,73 @@ public sealed partial class SidebarViewModel : ObservableObject
     }
 
     /// <summary>
+    /// 磁盘热插拔后把「此电脑」分组对齐到当前磁盘清单（U 盘插上就出现、拔掉就消失）。
+    ///
+    /// 只动这一个分组：其它分组、用户在树里展开的目录、滚动位置都留着（整树重建会把这些全丢掉）。
+    /// 已经存在且没有变化的盘节点**复用同一个节点对象**，所以它的容器不会重建、展开状态也还在；
+    /// 只有卷标或“能不能展开”（未就绪 → 就绪，例如刚插上的光驱）变了才换新节点。
+    /// </summary>
+    public void RefreshDrives()
+    {
+        if (_computerGroup is null)
+        {
+            return;
+        }
+
+        var existing = new Dictionary<string, SidebarNodeViewModel>(StringComparer.OrdinalIgnoreCase);
+        foreach (var node in _computerGroup.Children)
+        {
+            existing[node.FullPath] = node;
+        }
+
+        var desired = new List<SidebarNodeViewModel>(existing.Count);
+        foreach (var drive in _driveService.GetDrives())
+        {
+            if (existing.TryGetValue(drive.RootPath, out var node) && CanReuse(node, drive))
+            {
+                desired.Add(node);
+            }
+            else
+            {
+                desired.Add(CreateDriveNode(drive));
+            }
+        }
+
+        // 拔掉的盘（以及上面被换掉的旧节点）先摘掉，顺手清索引
+        for (var i = _computerGroup.Children.Count - 1; i >= 0; i--)
+        {
+            var node = _computerGroup.Children[i];
+            if (!desired.Contains(node))
+            {
+                Unindex(node);
+                _computerGroup.Children.RemoveAt(i);
+            }
+        }
+
+        // 再按磁盘清单的顺序补齐 / 挪位（新插的 U 盘一般排在最后，但盘符顺序要以 DriveService 为准）
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i < _computerGroup.Children.Count && ReferenceEquals(_computerGroup.Children[i], desired[i]))
+            {
+                continue;
+            }
+
+            var at = _computerGroup.Children.IndexOf(desired[i]);
+            if (at < 0)
+            {
+                _computerGroup.Children.Insert(i, desired[i]);
+                _index[desired[i].FullPath] = desired[i];
+            }
+            else
+            {
+                // 不用 ObservableCollection.Move：ItemsControl 对 Move 通知的支持依版本而异
+                _computerGroup.Children.RemoveAt(at);
+                _computerGroup.Children.Insert(i, desired[i]);
+            }
+        }
+    }
+
+    /// <summary>
     /// 按设置显示 / 隐藏侧边栏的四个分组（设置窗口「侧边栏」页）。
     /// 启动时与设置改动时各调一次。
     /// </summary>
@@ -399,21 +466,38 @@ public sealed partial class SidebarViewModel : ObservableObject
 
         foreach (var drive in _driveService.GetDrives())
         {
-            var name = string.IsNullOrEmpty(drive.VolumeLabel)
-                ? drive.DisplayName
-                : $"{drive.DisplayName}  {drive.VolumeLabel}";
-
-            var node = new SidebarNodeViewModel(
-                name,
-                drive.RootPath,
-                drive.Glyph,
-                SidebarNodeKind.Drive,
-                canExpand: drive.IsReady);
-
+            var node = CreateDriveNode(drive);
             group.Children.Add(node);
             _index[drive.RootPath] = node;
         }
 
         return group;
+    }
+
+    private static SidebarNodeViewModel CreateDriveNode(DriveModel drive)
+        => new(
+            DriveDisplayName(drive),
+            drive.RootPath,
+            drive.Glyph,
+            SidebarNodeKind.Drive,
+            canExpand: drive.IsReady);
+
+    private static string DriveDisplayName(DriveModel drive)
+        => string.IsNullOrEmpty(drive.VolumeLabel)
+            ? drive.DisplayName
+            : $"{drive.DisplayName}  {drive.VolumeLabel}";
+
+    /// <summary>节点是否还如实反映这个盘（卷标文字与“能不能展开”都对）。</summary>
+    private static bool CanReuse(SidebarNodeViewModel node, DriveModel drive)
+        => string.Equals(node.Name, DriveDisplayName(drive), StringComparison.Ordinal)
+           && node.HasUnrealizedChildren == drive.IsReady;
+
+    /// <summary>把节点从路径索引里移除（只在该路径确实指向它时）。</summary>
+    private void Unindex(SidebarNodeViewModel node)
+    {
+        if (_index.TryGetValue(node.FullPath, out var indexed) && ReferenceEquals(indexed, node))
+        {
+            _index.Remove(node.FullPath);
+        }
     }
 }

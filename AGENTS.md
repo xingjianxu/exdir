@@ -112,6 +112,12 @@ pwsh -NoProfile -File tools\test-column-resize.ps1
 #      菜单「退出」→ 进程真的结束；需要交互桌面（真鼠标点关闭按钮与托盘图标）
 #      跑完还原 settings.json
 pwsh -NoProfile -File tools\test-tray.ps1
+
+# 12e) 磁盘热插拔回归（用 subst 造一个“U 盘”盘符 + 给主窗口发一条 WM_DEVICECHANGE：
+#      侧边栏「此电脑」与工具条磁盘区都实时出现新盘、拔出后立刻消失，
+#      而且不重建整棵树（节点清单前后一致）、不动收藏夹）
+#      全程 UIA + SendMessage，不需要交互桌面；跑完删掉 subst 映射并还原 settings.json
+pwsh -NoProfile -File tools\test-drive-hotplug.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -177,9 +183,11 @@ exdir/
 │   ├─ ISettingsService       settings.json 读写（含结构版本迁移）
 │   ├─ IShellService          默认程序打开 / 终端 / 剪贴板 / 命令行
 │   ├─ IShellContextMenuService  系统右键菜单（IContextMenu：弹出真菜单 + 枚举菜单项供设置页，见第 4 节“右键菜单”）
+│   ├─ IDeviceChangeService  卷（驱动器 / U 盘 / 光驱）插拔通知：侧边栏与工具条磁盘区实时刷新
 │   └─ Native/                Win32 互操作（ShellPropertyStore：属性系统 + 占位符兼容模式；
 │                             ShellIconExtractor：图标提取 / HICON → BGRA 像素；
-│                             ShellContextMenuInterop：IShellFolder / IContextMenu(2/3) + HMENU 操作）
+│                             ShellContextMenuInterop：IShellFolder / IContextMenu(2/3) + HMENU 操作；
+│                             VolumeChangeWatcher：WM_DEVICECHANGE 的卷插拔监听）
 ├─ ViewModels/
 │   ├─ MainViewModel          磁盘、固定目录、快捷命令、侧边栏、两个窗格、全局命令
 │   ├─ PanelViewModel         一个窗格（标签页集合）
@@ -204,7 +212,7 @@ exdir/
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
-                              test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray /
+                              test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray / test-drive-hotplug /
                               measure-row-align / publish / make-icon 脚本
 ```
 
@@ -447,6 +455,18 @@ exdir/
   * 右键收藏项 → 「取消收藏」（`SidebarViewModel.UnpinRequested` → `MainViewModel.UnpinFolderByPath`）；
     工具条被隐藏时这是唯一的移除入口。
   * 回归：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `settings.json` 一致）与用例 5（拖到收藏夹）。
+* **磁盘（U 盘 / 光驱 / 网络盘）插拔是实时反映的**（2026-09）：`Services/DeviceChangeService`
+  （实现 `IDeviceChangeService`，内部是 `Services/Native/VolumeChangeWatcher`）把主窗口子类化，
+  接系统**广播给所有顶层窗口**的 `WM_DEVICECHANGE`（卷到达 / 移除，外加设备树变化
+  `DBT_DEVNODES_CHANGED`），再由 `MainWindow` 安排两次延迟刷新
+  （600 ms 合并 + 2500 ms 兜底：一条插拔会连发好几条消息，盘符又往往比消息晚几百毫秒才可用）。
+  刷新走 `MainViewModel.RefreshDrives()`：工具条磁盘区（`Drives`）与侧边栏「此电脑」分组都做**差量更新** ——
+  清单没变就一个控件都不动，变了也只增删 / 挪动那一个盘节点（没变化的盘**复用同一个节点对象**），
+  所以不会重建整棵树、不会丢侧边栏的展开状态，也不会清掉「收藏夹」。
+  窗口隐藏到托盘时仍是顶层窗口，消息照样收得到；只有真的「退出」才 `Detach()`。
+  「工具 → 重新扫描磁盘」是同一个 `RefreshDrives`。
+  坑见第 6 节第 56 条；回归：`tools/test-drive-hotplug.ps1`（subst 造盘符 + 发消息，不需要交互桌面）。
+
 * **文件列表区底部有一条状态栏**（`Views/StatusBarView.xaml` + `ViewModels/StatusBarViewModel`）：
   它挂在 `MainWindow` 里窗格那一列的**第 1 行**（第 0 行才是放 1~2 个窗格的 Grid，`Height="*"`），
   所以：侧边栏保持全高、状态栏只占文件列表区（不跨侧边栏）、窗格拿掉它以外的全部高度；
@@ -1033,6 +1053,26 @@ exdir/
       UIA 只能读到标签的矩形（圆角与否它一样），所以 `tools/test-settings.ps1` 用例 8 只断言
       “拨一下就落盘 + exdir.log 里当场应用了”，真变直角/圆角靠截图人工确认。
 
+56. **卷插拔消息只能在自家窗口上听，而且跨进程发消息时不能带 `DEV_BROADCAST_*` 指针**：
+    `WM_DEVICECHANGE` 里带 `DBT_DEVTYP_VOLUME` 的到达 / 移除事件是系统**广播给所有顶层窗口**的，
+    不需要 `RegisterDeviceNotification`（那是用来“按 GUID 订阅某类设备接口”的），
+    所以在主窗口上 `SetWindowSubclass` 就够了；窗口隐藏到托盘不影响（它依旧是顶层窗口）。
+    两条容易踩的细节：
+    * `DBT_DEVICEARRIVAL` / `DBT_DEVICEREMOVECOMPLETE` 的 `lParam` 是 `DEV_BROADCAST_HDR*`，
+      必须先读 `dbch_devicetype` 才知道是不是卷（同一个事件也用于设备接口、卷的句柄等）。
+      **因此这类消息不能拿来跨进程 `SendMessage`**：脚本里的“假 U 盘”回归发的是
+      `DBT_DEVNODES_CHANGED`（`wParam=7`、`lParam=0`，根本没有指针），否则目标进程会去读自己
+      地址空间里的野指针（`Marshal.ReadInt32` 碰上无效地址直接 AV 掉进程，`try/catch` 拦不住）。
+      `exdir` 把这个没有 lParam 的事件也当“卷可能变了”处理（顺带兜住“盘符可用比卷消息晚”），
+      刷新本身是幂等 + 差分的，不会白刷。
+    * 一次插拔常常连发好几条消息，而且 `DriveInfo` 能列出盘符的时刻比消息晚几百毫秒，
+      所以刷新要“合并 + 延后 + 兜底”各来一次（`MainWindow` 里两个 `DispatcherQueueTimer`），
+      收到消息就立刻枚举一次是不够的。
+    刷新本身要按**差量**做：`DriveInfo` 清单没变就什么都不动，变了也只改那一个盘节点
+    （`SidebarViewModel.RefreshDrives` 复用未变化的节点对象、清理 `_index`、按新顺序挪位）；
+    每次插拔都 `BuildTree()` 会把用户在侧边栏里展开的目录全部折回去（整树重建的代价见第 4 节），
+    也会连「收藏夹」一起重建。
+
 ## 7. 非打包模式下的 API 限制
 
 没有 Package Identity，因此**不要**使用：`Windows.Storage.KnownFolders`、
@@ -1053,6 +1093,14 @@ exdir/
   就是一次 `ShowWindow`；托盘右键菜单是「显示主窗口 / 退出 exdir」，菜单里的「退出」才是真退出；
   单实例闸门跑在 XAML 初始化之前（`Program.cs` + `Helpers/SingleInstance`），第二次双击 exe 只跑几十毫秒。
   依赖 `H.NotifyIcon.WinUI 2.3.2`（见 exdir.csproj）；回归：`tools/test-tray.ps1`（4 个用例 17 条断言）。
+* **磁盘热插拔实时刷新**（2026-09，见第 4 节与第 6 节第 56 条）：插上 U 盘 / 光驱换盘 / 映射网络盘后，
+  工具条磁盘区与侧边栏「此电脑」分组**立刻**出现新盘，拔掉立刻消失（窗口藏在托盘里也照样更新）；
+  实现是 `IDeviceChangeService` + `Services/Native/VolumeChangeWatcher`（`WM_DEVICECHANGE` 子类化，
+  卷到达 / 移除 + 设备树变化）→ `MainWindow` 的两次延迟刷新（600 ms 合并 + 2500 ms 兜底）→
+  `MainViewModel.RefreshDrives` / `SidebarViewModel.RefreshDrives` 的差量更新
+  （不重建整棵树，展开状态与收藏夹都不受影响）；「工具 → 重新扫描磁盘」与之同一入口，
+  磁盘清单变化时「转到 → 所有位置」也会重列；
+  回归：`tools/test-drive-hotplug.ps1`（3 个用例 12 条断言，`subst` 造盘符 + `SendMessage`，不需要交互桌面）。
 * 非打包工程改造、单实例主窗口、Mica 背景、自定义标题栏、图标与窗口位置持久化；
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
 * 1/2 窗格 + 自研分隔条、TabView 多标签；

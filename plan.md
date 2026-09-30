@@ -51,6 +51,9 @@
     单实例闸门（命名内核事件 `Local\exdir.activate`）跑在 XAML 初始化之前（`Program.cs`），
     第二次双击 exe 只跑几十毫秒，不会出现第二个托盘图标 / 两份会话互相覆盖；
     依赖 `H.NotifyIcon.WinUI 2.3.2`，回归脚本 `tools/test-tray.ps1`，见 AGENTS.md 第 4 节“托盘驻留”。
+  - 磁盘热插拔实时刷新（2026-09，S24）：U 盘 / 光驱换盘 / 网络盘映射变化后，工具条磁盘区与侧边栏
+    「此电脑」分组立即更新（窗口藏在托盘里也照样），且只做差量刷新（不重建整棵树、不影响展开状态与收藏夹）；
+    回归脚本 `tools/test-drive-hotplug.ps1`，见 AGENTS.md 第 4 节与第 6 节第 56 条。
   - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
     松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
     `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
@@ -482,6 +485,28 @@
     用 `InvokePattern` 点列头后行顺序按状态分组（升/降序均正确）；
     云目录 19 项 113 ms / 62 项 247 ms（见 exdir.log 的 `云同步状态：…` 行）。
   - 预估：~700 行，17 个文件（超出了单步 8 个文件的规模线，但功能本身不可再拆）。
+
+---
+
+### Phase 8 — 外壳实时性
+
+- [x] **S24 磁盘热插拔实时刷新**（2026-09，新增 3 个文件 / 改 5 个，~260 行）
+  - 目标：插上 U 盘后侧边栏「此电脑」与工具条磁盘区**不用手动刷新**就出现新盘，拔掉立刻消失。
+  - 涉及：新增 `Services/IDeviceChangeService.cs`、`Services/DeviceChangeService.cs`、
+    `Services/Native/VolumeChangeWatcher.cs`；改 `App.xaml.cs`（注册）、`MainWindow.xaml.cs`（挂监听 + 两次延迟刷新）、
+    `ViewModels/MainViewModel.cs`（`RefreshDrives` 改差量）、`ViewModels/SidebarViewModel.cs`（新增 `RefreshDrives`）、
+    新增 `tools/test-drive-hotplug.ps1`。
+  - 做法：主窗口用 `SetWindowSubclass` 接 `WM_DEVICECHANGE`（卷到达 / 移除 + `DBT_DEVNODES_CHANGED`）；
+    收到后 600 ms 合并刷新一次、2500 ms 再兜底刷新一次（一条插拔会连发好几条消息，盘符又往往晚几百毫秒才可用）；
+    `RefreshDrives` 只按 `DriveInfo` 清单做差量：清单没变一个控件都不动，变了也只增删 / 挪动那一个盘节点
+    （没变化的盘复用同一个节点对象，容容器不重建）；「工具 → 重新扫描磁盘」与磁盘变化后重列
+    「转到 → 所有位置」都走同一入口。
+  - 坑（已记入 `AGENTS.md` 第 6 节第 56 条）：卷事件的 `lParam` 是 `DEV_BROADCAST_HDR*`，
+    跨进程 `SendMessage` 会让目标进程去读自己地址空间里的野指针（AV 直接崩进程），所以回归脚本发的是
+    没有 lParam 的 `DBT_DEVNODES_CHANGED`，产品代码也把这个事件当“卷可能变了”（顺带兜住就绪延迟）。
+  - 验收：`tools/test-drive-hotplug.ps1` 3 个用例 12 条断言全绿（插入前两处都没有该盘符 →
+    `subst` + 发消息后两处都出现（并从 exdir.log 确认消息真的被处理）→ `subst /d` + 发消息后两处都消失 →
+    侧边栏节点清单与插入前完全一致、收藏夹仍与 settings.json 一致）。
 
 ---
 
