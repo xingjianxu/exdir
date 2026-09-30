@@ -61,6 +61,25 @@ public sealed class ShellService : IShellService
         }
     }
 
+    public void ShowProperties(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        try
+        {
+            // “properties” 是外壳给文件 / 文件夹注册的标准谓词，直接跑它就能拿到属性对话框，
+            // 不必为此建一个 IContextMenu（那才是系统菜单慢的原因）
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true, Verb = "properties" });
+        }
+        catch (Exception)
+        {
+            // 忽略
+        }
+    }
+
     public void OpenTerminal(string directory, bool asAdministrator = false, bool preferWindowsTerminal = true)
     {
         var workingDirectory = Directory.Exists(directory) ? directory : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

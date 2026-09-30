@@ -11,6 +11,12 @@
 #   3. 把某个菜单项在设置里关掉（settings.json 的 ShellMenuDisabledItems 写进「属性」的键 verb:properties）
 #      → 重启后弹出的菜单里不再有「属性」（exdir.log 里会写“已关闭 属性”），截图 context-menu-filtered.png。
 #
+# 另外两个用例验证默认的“内置轻量菜单”（settings.json 的 UseBuiltInContextMenu=true）：
+#   4. 内置菜单是 WinUI MenuFlyout（会进 UIA 树，能直接读菜单项），进程里**没有** #32768；
+#      文件行菜单里有「打开 / 在资源管理器中显示 / 复制路径 / 属性」；
+#   5. 空白处菜单里有「新建文件夹 / 全选 / 在此处打开终端」，用 UIA 的 InvokePattern 点「新建文件夹」
+#      → 磁盘上真的建出了目录（内置菜单的命令是 exdir 自己执行的，不是交回外壳）。
+#
 # 为什么用 exdir.log 断言而不是 UIA：Windows 11 的外壳右键菜单是自绘的，
 # Win32 #32768 窗口里没有可供 UIA 读取的 MenuItem（整张菜单在 UIA 里就是一个 Pane），
 # 所以“菜单弹出来了”靠 EnumWindows 找 #32768，“有哪些项 / 关掉了哪些项”靠 exdir 自己的日志。
@@ -138,7 +144,7 @@ function Start-Session {
 
 function Stop-Session {
     param($Session)
-    try { $Session.Proc.CloseMainWindow() | Out-Null; $Session.Proc.WaitForExit(4000) | Out-Null } catch { }
+    # exdir 关窗口只是隐藏到托盘（隐藏时已统一落盘），收尾直接 Kill
     try { if (-not $Session.Proc.HasExited) { $Session.Proc.Kill() } } catch { }
     Start-Sleep -Milliseconds 500
 }
@@ -178,6 +184,23 @@ function Get-PopupMenus {
     return @([MenuNative]::FindPopupMenus([uint32]$Session.Proc.Id))
 }
 
+# 内置（自建）右键菜单是 WinUI MenuFlyout，会进 UIA 树（和系统菜单不同）；
+# 但它不在主窗口的 UIA 子树里（见 AGENTS.md 第 6 节第 24 条），要从桌面往下找、并按进程过滤。
+function Find-MenuItems {
+    param($Session, [string]$Name)
+    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+    $items = @()
+    foreach ($el in $desktop.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+        if ($el.Current.ProcessId -ne $Session.Proc.Id) { continue }
+        if ($el.Current.ControlType -ne [System.Windows.Automation.ControlType]::MenuItem) { continue }
+        if ($el.Current.IsOffscreen) { continue }
+        $items += $el
+    }
+    return $items
+}
+
 # 截“窗口 ∪ 弹出菜单”：菜单在窗口外面，只截窗口会漏掉它
 function Save-Shot {
     param($Session, [string]$Name)
@@ -193,6 +216,20 @@ function Save-Shot {
         if (-not [MenuNative]::GetWindowRect($hwnd, [ref]$r)) { continue }
         $left = [Math]::Min($left, $r.Left); $top = [Math]::Min($top, $r.Top)
         $right = [Math]::Max($right, $r.Right); $bottom = [Math]::Max($bottom, $r.Bottom)
+    }
+
+    # 内置菜单是 XAML 弹层（不是 #32768），把可见菜单项的矩形也并进来
+    $menuCond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::MenuItem)
+    foreach ($el in ([System.Windows.Automation.AutomationElement]::RootElement).FindAll(
+            [System.Windows.Automation.TreeScope]::Descendants, $menuCond)) {
+        if ($el.Current.ProcessId -ne $Session.Proc.Id) { continue }
+        if ($el.Current.IsOffscreen) { continue }
+        $r = $el.Current.BoundingRectangle
+        if ($r.Width -le 0 -or $r.Height -le 0) { continue }
+        $left = [Math]::Min($left, [int]$r.X); $top = [Math]::Min($top, [int]$r.Y)
+        $right = [Math]::Max($right, [int]($r.X + $r.Width)); $bottom = [Math]::Max($bottom, [int]($r.Y + $r.Height))
     }
 
     $left = [Math]::Max(0, $left); $top = [Math]::Max(0, $top)
@@ -218,6 +255,8 @@ try {
     Set-Setting 'IsDualPane' $false
     Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
     Set-Setting 'ShellMenuKnownItems' ([string[]]@())
+    # 这一部分验的是系统菜单，必须显式关掉内置菜单（默认值是内置）
+    Set-Setting 'UseBuiltInContextMenu' $false
 
     # 窗口尺寸也写死：上次退出时如果窗口是最小化的，位置/尺寸可能是哨兵值，
     # 窗口会小到只剩侧边栏，右键点不到列表（见 MainWindow.SaveWindowPlacement）
@@ -275,6 +314,7 @@ try {
     # ============================================================== 用例 3：关掉的项不再出现
 
     Write-Host '--- 用例 3：在设置里关掉「属性」后菜单里不再有它 ---'
+    Set-Setting 'UseBuiltInContextMenu' $false
     Set-Setting 'ShellMenuDisabledItems' ([string[]]@('verb:properties'))
 
     $session = Start-Session
@@ -291,9 +331,64 @@ try {
     Dismiss-Menu -Session $session
     Stop-Session -Session $session
 
+    # ============================================================== 用例 4：内置菜单（轻量、弹出快）
+
+    Write-Host '--- 用例 4：切到内置菜单后右键弹出的是 exdir 自建菜单 ---'
+    Set-Setting 'UseBuiltInContextMenu' $true
+
+    $session = Start-Session
+    $rows = Find-Rows -Session $session
+    $alpha = $rows | Where-Object { $_.Current.Name -like 'alpha*' } | Select-Object -First 1
+    Assert ($null -ne $alpha) '测试目录里的 alpha.txt 出现在列表里（内置菜单）'
+
+    $rect = $alpha.Current.BoundingRectangle
+    Invoke-RightClick -Session $session -ScreenX ([int]($rect.X + $rect.Width / 3)) -ScreenY ([int]($rect.Y + $rect.Height / 2))
+
+    Assert ((Get-PopupMenus -Session $session).Count -eq 0) '内置菜单不是 Win32 弹出菜单（进程里没有 #32768）'
+    Assert ((Find-MenuItems -Session $session -Name '打开').Count -ge 1) '内置菜单里有「打开」'
+    Assert ((Find-MenuItems -Session $session -Name '在资源管理器中显示').Count -ge 1) '内置菜单里有「在资源管理器中显示」'
+    Assert ((Find-MenuItems -Session $session -Name '复制路径').Count -ge 1) '内置菜单里有「复制路径」'
+    Assert ((Find-MenuItems -Session $session -Name '属性').Count -ge 1) '内置菜单里有「属性」'
+    Assert ((Find-MenuItems -Session $session -Name '新建文件夹').Count -eq 0) '文件行的菜单里没有背景命令「新建文件夹」'
+    Assert (@(Get-LogTail | Where-Object { $_ -match '内置右键菜单：文件 上下文 \d+ 项' }).Count -ge 1) '日志记下了内置菜单的上下文与项数'
+
+    Save-Shot -Session $session -Name 'context-menu-builtin-file'
+    Dismiss-Menu -Session $session
+    Assert ((Find-MenuItems -Session $session -Name '打开').Count -eq 0) 'Esc 之后内置菜单关掉了'
+
+    # ============================================================== 用例 5：内置菜单的背景命令真的能用
+
+    Write-Host '--- 用例 5：内置菜单的「新建文件夹」真的建出目录 ---'
+    Get-ChildItem -Path $testDir -Filter '新建文件夹*' -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+
+    $rowRect = $alpha.Current.BoundingRectangle
+    $blankX = [int]($rowRect.X + $rowRect.Width / 3)
+    $blankY = [int]($rowRect.Y + $rowRect.Height * 4)
+    Invoke-RightClick -Session $session -ScreenX $blankX -ScreenY $blankY
+
+    Assert (@(Get-LogTail | Where-Object { $_ -match '内置右键菜单：背景 上下文 \d+ 项' }).Count -ge 1) '空白处右键弹出了内置背景菜单（日志）'
+    Assert ((Find-MenuItems -Session $session -Name '全选').Count -ge 1) '内置背景菜单里有「全选」'
+    Assert ((Find-MenuItems -Session $session -Name '在此处打开终端').Count -ge 1) '内置背景菜单里有「在此处打开终端」'
+    Assert ((Find-MenuItems -Session $session -Name '打开').Count -eq 0) '背景菜单里没有文件命令「打开」'
+
+    $newFolderItem = Find-MenuItems -Session $session -Name '新建文件夹' | Select-Object -First 1
+    Assert ($null -ne $newFolderItem) '内置背景菜单里有「新建文件夹」'
+    Save-Shot -Session $session -Name 'context-menu-builtin-background'
+
+    if ($null -ne $newFolderItem) {
+        $newFolderItem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Seconds 3
+        Assert (Test-Path (Join-Path $testDir '新建文件夹')) '点「新建文件夹」后磁盘上真的建出了目录'
+    }
+
+    Stop-Session -Session $session
+
 }
 finally {
     Get-Process -Name 'exdir' -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch { } }
+
+    # 清掉用例 5 里“新建文件夹”建出来的目录
+    Get-ChildItem -Path $testDir -Filter '新建文件夹*' -Directory -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
     if ($null -ne $originalSettings) {
         Set-Content $settingsPath $originalSettings -Encoding utf8

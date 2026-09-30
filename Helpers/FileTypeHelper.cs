@@ -18,6 +18,7 @@ public static class FileTypeHelper
     public const string NetworkGlyph = "\uE8CE";      // NetworkTethering / Wifi
     public const string UsbGlyph = "\uE88E";          // USB
     public const string HomeGlyph = "\uE80F";         // Home
+    public const string FavoriteGlyph = "\uE734";     // FavoriteStar（侧边栏「收藏夹」用）
     public const string DesktopGlyph = "\uE8FC";      // TVMonitor
     public const string PictureGlyph = "\uEB9F";      // Photo
     public const string MusicGlyph = "\uE8D6";        // MusicInfo

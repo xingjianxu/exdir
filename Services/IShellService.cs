@@ -11,6 +11,9 @@ public interface IShellService
     /// <summary>在资源管理器中定位并选中该项。</summary>
     void RevealInFileExplorer(string path);
 
+    /// <summary>弹出该项的“属性”对话框（内置右键菜单用；不经过 IContextMenu，所以很快）。</summary>
+    void ShowProperties(string path);
+
     /// <summary>用系统默认程序打开多个项。</summary>
     void OpenAll(IEnumerable<string> paths);
 

@@ -14,6 +14,8 @@
 | 语言 | C# 12，`net8.0-windows10.0.19041.0`，`TargetPlatformMinVersion 10.0.17763.0` |
 | MVVM | CommunityToolkit.Mvvm 8.4.2（`[ObservableProperty]` / `[RelayCommand]` / `[NotifyCanExecuteChangedFor]`） |
 | DI | Microsoft.Extensions.DependencyInjection 8.0.1 |
+| 托盘图标 | H.NotifyIcon.WinUI 2.3.2（关闭按钮只隐藏窗口，进程常驻托盘，见第 4 节“托盘驻留”） |
+| 设置卡片 | CommunityToolkit.WinUI.Controls.SettingsControls 8.2.251219（`SettingsCard`：Windows 11 设置界面的那行卡片，见第 4 节“设置窗口”） |
 | 部署 | **非打包（unpackaged）**：`WindowsPackageType=None` + `WindowsAppSDKSelfContained=true` + `SelfContained=true` |
 | 平台 | x64（`Platforms` 里也声明了 x86/ARM64，未验证） |
 
@@ -63,13 +65,14 @@ pwsh -NoProfile -File tools\make-icon.ps1
 #    需要交互桌面；当前 shell 提权时会自动改用 explorer.exe 以普通权限启动 exdir（见第 6 节第 21 条）
 pwsh -NoProfile -File tools\test-pin-drag.ps1
 
-# 7) 设置对话框回归（左导航四个分类 / 每页只显示本分类的开关 / 取消不落盘 / 保存立即落盘并作用到列表 /
-#    跨分类读回 / 「右键菜单」页的系统菜单项默认全开且能逐项关掉）
-#    需要交互桌面（真鼠标点击对话框按钮）
+# 7) 设置窗口回归（左导航四个分类 / 每页只显示本分类的项 / 拨一下就立即生效并落盘 /
+#    跨分类读回 / 关窗重开仍是新值 / 「右键菜单」页的系统菜单项默认全开且能逐项关掉 /
+#    「行高」滑块拖完列表行真的变高）
+#    全程走 UIA 模式，不需要真鼠标、不需要前台窗口；跑完还原 settings.json
 pwsh -NoProfile -File tools\test-settings.ps1
 
-# 7b) 设置对话框截图（左侧每个分类各一张，肉眼验证“左导航 + 右正文”的布局）
-#     需要交互桌面；输出 .artifacts\settings-<分类名>.png
+# 7b) 设置窗口截图（左侧每个分类各一张，肉眼验证“左导航 + 右侧设置卡片”的布局）
+#     需要交互桌面（要真把窗口提到前台才截得到内容）；输出 .artifacts\settings-<分类名>.png
 pwsh -NoProfile -File tools\shot-settings.ps1
 
 # 8) 状态栏回归（只有一条 / 一行高 / 贴底 / 项数 / 选中摘要 + 合计大小 / 磁盘可用空间 / 跟随活动窗格）
@@ -88,6 +91,26 @@ pwsh -NoProfile -File tools\measure-row-align.ps1
 #     菜单项记进清单；关掉 verb:properties 后菜单里不再有「属性」）
 #     需要交互桌面（真鼠标右键 + 截图）；跑完还原 settings.json
 pwsh -NoProfile -File tools\test-context-menu.ps1
+
+# 12) 文件列表选择回归（单击行 / Ctrl+A 全选 / 单击空白处取消选择 / 地址栏的 Ctrl+A 不抢）
+#     需要交互桌面（真鼠标点击 + SendKeys），跑之前桌面上不能有窗口盖住 exdir；跑完还原 settings.json
+pwsh -NoProfile -File tools\test-list-selection.ps1
+
+# 12b) 双击命中范围回归（整条行高亮区内任意位置双击都算：行内边距 / 名称文字右侧空白 /
+#      类型列与大小列的空白处 / 行首展开箭头只展开不进目录 / 列表下方空白处不导航）
+#      需要交互桌面（真鼠标双击），跑完还原 settings.json
+pwsh -NoProfile -File tools\test-row-dblclick.ps1
+
+# 12c) 列宽拖动回归（拖每个列边界都真的改宽度 / 列头与数据行仍对齐 / 双击复位 /
+#      最右一列也拖得动 / 拖完落盘 / 列头排序按钮仍可用）
+#      需要交互桌面（真鼠标拖拽）；跑之前桌面上不能有窗口盖住 exdir；跑完还原 settings.json
+pwsh -NoProfile -File tools\test-column-resize.ps1
+
+# 12d) 托盘驻留回归（点系统关闭按钮 → 窗口隐藏、进程驻留、托盘图标进通知区域 /
+#      隐藏时再启动 exe → 第二个进程退出、已有窗口被唤回 / 菜单「隐藏到托盘」+ 点托盘图标唤回 /
+#      菜单「退出」→ 进程真的结束；需要交互桌面（真鼠标点关闭按钮与托盘图标）
+#      跑完还原 settings.json
+pwsh -NoProfile -File tools\test-tray.ps1
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -107,6 +130,10 @@ pwsh -NoProfile -File tools\publish.ps1
   两者不一致说明忘了 publish。
 * `publish.ps1` 会自动校验 `exdir.pri` 与每个 `.xaml` 对应的 `.xbf` 都在产物里，缺了就报错。
 * **不要用 `dotnet publish`**（见“踩过的坑”第 3 条）。
+
+**测试范围（2026-09）**：改完只跑与本次改动直接相关的交互式回归脚本（改托盘就只跑 `tools\test-tray.ps1`，改列宽就只跑 `tools\test-column-resize.ps1`），
+**不要每次把 `tools\test-*.ps1` 全跑一遍**；只有用户明确要求“全部测试”时才全跑。
+就是不依赖鼠标模拟的非交互检查（`dotnet build`、单测、脚本语法）不受此限制，该跑照跑。
 
 ### 运行期日志
 
@@ -135,8 +162,9 @@ pwsh -NoProfile -File tools\publish.ps1
 
 ```
 exdir/
+├─ Program.cs                 自定义入口点（DISABLE_XAML_GENERATED_MAIN）：单实例闸门跑在 XAML 初始化之前
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
-├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格
+├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格 + 托盘图标（关闭即隐藏）
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
 ├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / QuickCommand / CloudSyncState / ShellMenuItem / IconBitmap / 枚举（含 SettingsCategory）
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
@@ -156,25 +184,26 @@ exdir/
 │   ├─ PanelViewModel         一个窗格（标签页集合）
 │   ├─ FolderTabViewModel     一个标签页（当前目录、条目、选中、历史、排序、地址栏编辑态）
 │   ├─ PathSegmentViewModel   地址栏面包屑里的一段路径（显示名 + 完整路径 + 是否当前段）
-│   ├─ SidebarViewModel       文件夹树（懒加载）
+│   ├─ SidebarViewModel       文件夹树（懒加载；含镜像工具条固定目录的「收藏夹」分组）
 │   ├─ FileItemViewModel      列表一行（带 Depth/IsExpanded/Children，可展开）
 │   ├─ PinnedFolderViewModel  title 栏上的固定目录
 │   ├─ StatusBarViewModel     文件列表区底部状态栏（项数 / 选中摘要 + 合计大小 / 卷容量）
-│   ├─ SettingsCategoryViewModel  设置对话框左侧导航的一项（Key + Name）
-│   ├─ ShellMenuItemViewModel 设置对话框「右键菜单」页里的一行（包着 ShellMenuItem + 开关状态）
-│   └─ SettingsViewModel      设置对话框的编辑快照（点“保存”才写回 AppSettings）+ 分类与当前选中分类
+│   ├─ SettingsCategoryViewModel  设置窗口左侧导航的一项（Key + Name）
+│   ├─ ShellMenuItemViewModel 设置窗口「右键菜单」页里的一行（包着 ShellMenuItem + 开关状态）
+│   └─ SettingsViewModel      设置窗口的编辑模型（绑到界面，任何改动发 Changed → 即时生效 + 落盘）
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 │                             StatusBarView（文件列表区底部一行）
-│                             SettingsDialog（ContentDialog：左分类导航 + 右正文 + 底部保存/取消）
-│                             SettingsToggleRow（设置对话框里的一行开关：标题 + 说明 + ToggleSwitch）
+│                             SettingsWindow（设置窗口外壳：默认 860×800、居中、即时生效的接线）
+│                             SettingsView（设置窗口正文：NavigationView 左导航 + Windows 11 设置卡片）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽：requested/rendered + 自适应) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式)
+├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / SingleInstance(托盘驻留的单实例闸门)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs
 ├─ Assets/                    图标等（exdir.ico 由脚本生成）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
-                              test-context-menu / measure-row-align / publish / make-icon 脚本
+                              test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray /
+                              measure-row-align / publish / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -205,12 +234,14 @@ exdir/
   `ContentBefore` / `ContentAfter` 虽然在 winmd 里存在，但被标记为 experimental，
   XAML 编译器会报 `WMC0011: Unknown member`，**不要用**。
 * 侧边栏分组：`主目录`（可点击，指向 %USERPROFILE%，子项为桌面/文档/下载/图片/音乐/视频）、
+  `收藏夹`（工具条固定目录的镜像，可从文件列表/侧边栏拖目录进来收藏，见下面“固定目录”那条）、
   `云存储`（注册表探测到的同步根）、`此电脑`（各磁盘）。分组节点本身可导航当且仅当它有路径
   （`SidebarNodeViewModel.IsNavigable`）。
 * 紧凑密度靠 `Themes/ExdirTheme.xaml` 里覆盖 WinUI 数值型资源实现：
   `TitleBarExpandedHeight=36`、`ListViewItemMinHeight=24`、`TreeViewItemMinHeight=24`。
   **只覆盖数值/颜色类资源键**，不要覆盖控件隐式样式（会丢掉默认 ControlTemplate）。
   同一处还关掉了选中行的左侧蓝色竖条：`ListViewItemSelectionIndicatorVisualEnabled=False`（只看整行底色）。
+  例外：**文件列表数据行的行高不用固定资源**，它是可配的（见下面“行高可配”那条）。
 * **标签条紧凑、且顶到窗格顶部齐平**（`TabView`，2026-09）：WinUI 默认一条标签栏高 32 DIP，
   上面还压着 8 DIP 空白（`TabViewHeaderPadding`，它被模板传给列表与 `ItemsPresenter`），
   窗格顶部到标签标题之间一共空了 17.5 DIP。现在标签条 24 DIP（≈ `ExRowHeight`）、
@@ -238,11 +269,15 @@ exdir/
     已挂样式的：`DriveBarView`（磁盘/固定目录/快捷菜单）、`NavigationBarView`（← → ↑ ⟳）、
     `DetailsView`（5 个列头排序按钮）。
   * **例外：地址栏与行内展开箭头不用强调色**（`ExSubtleButtonStyle` / `ExFlatSubtleButtonStyle`）：
-    面包屑分段、地址栏右侧空白区、文件列表行内那个 18px 展开箭头，悬停/按下都是普通灰色
+    面包屑分段、文件列表行内那个 18px 展开箭头，悬停/按下都是普通灰色
     （色刷 `ExSubtleButtonBackgroundPointerOver/Pressed`：深色主题叠白、浅色主题叠黑）。
-    地址栏空白区几乎铺满整条地址栏，行内箭头只有 18px，一上强调色就喧宾夺主。
+    面包屑分段与行内箭头一上强调色就喧宾夺主，反而看不清当前指着的是哪段路径/哪一行。
     这两个样式与 `ExToolbar*` 只差悬停/按下的画刷，但 Storyboard 里的 `{ThemeResource}` 键
     是写死在模板里的（`BasedOn` 改不了），所以模板另写了一份，改模板时两处要同步。
+  * **地址栏右侧的空白区（`BlankArea`）连灰色悬停都不要**（`ExGhostButtonStyle`）：
+    它几乎铺满整条地址栏的剩余宽度，给一点悬停底色都会像“整条地址栏被按住了”，
+    所以这个样式的 `PointerOver` / `Pressed` 是空状态（只保留 `Disabled` 的默认观感）；
+    点击、工具提示、系统焦点视觉照旧，只是鼠标划过它时不变色。
   * 表/树/菜单/标签这些改不了样式的（模板在 WinUI 里），就在 `ThemeDictionaries` 里覆写
     WinUI 的资源键（键名抄 `generic.xaml`）：`TitleBarPaneToggleButtonBackground*`、
     `MenuBarItemBackground*`、`MenuFlyoutItemBackground*`、`TabViewItemHeaderBackground*`、
@@ -258,8 +293,31 @@ exdir/
   * 展开状态存在 `_expandedPaths`，刷新/重进同一个目录后按路径恢复（父级路径一定比子级短，按长度升序展开）。
   * 行内：缩进 = `Depth * 14`，行首 18px 展开箭头（`CanExpand` 为 false 时不可点、字形为空串占位），
     双击行仍然是“进入目录 / 打开文件”，箭头只负责展开/折叠，`←/→` 方向键也能展开/折叠。
+  * **双击的命中范围 = 整条行高亮区**（2026-09）：行内任意位置（左边距、名称文字右侧的空白、
+    日期/类型/大小列里的空白、行内上下留白）双击都能进入目录 / 打开文件，不再只有“双击到名称文字
+    或图标上”才有效。行模版本该用的是 `Grid` 的 `DoubleTapped`，但**行里那些空白处没有可命中的元素**，
+    命中的是 `ListViewItem` 自己，事件从 `ListViewItem` 直接往上冒、经过不了行模板那个 `Grid` ——
+    所以双击处理器挂在 `DetailsRoot` 上（`AddHandler(..., handledEventsToo: true)`）再用 `FindRowItem`
+    反查行；行模板的 `Grid` 另外补上 `Background="Transparent"`（没有背景的 Grid 在空白处不参与
+    命中测试，那样连行内悬停提示框都弹不出来）。行首展开箭头是 `Button`，双击它仍是展开/折叠。
+    回归：`tools/test-row-dblclick.ps1`；踩过的坑见第 6 节第 45 条。
   * 排序对树的**每一层**生效（`CompareNodes`）；排序/刷新后由 `FolderTabViewModel.PendingSelection`
     （一组路径，视图读，不清空）让视图在新集合里把行选回来；返回上一级用 `selectPath` 选中来源目录。
+* **选择**（2026-09）：单击文件列表的空白处（列头以下、任何一行之外）取消当前选择，
+  单击行仍然是 ListView 自己的选择行为（含 Ctrl 加选）；`Ctrl+A` 全选列表里当前可见的行
+  （就地展开出来的子行也算，它们就是列表里的行）。
+  * 空白处没有可复用的控件，所以 `PointerPressed` 和右键一样挂在 `DetailsView` **最外层的 Grid** 上
+    （`handledEventsToo: true`，行上的点击可能被 ListView 标成 Handled），再用
+    `FindRowItem(e.OriginalSource)` 把“落在某一行上”的点击排掉；列头（y ≤ `HeaderRow.ActualHeight`）也不算空白处；
+  * 清空选择后顺手 `EntryList.Focus(FocusState.Pointer)`：空白处自身不可聚焦，不抢这一下的话焦点会
+    留在点空白之前的控件上，紧接着按 `Ctrl+A` / 方向键就不作用于文件列表；
+  * `Ctrl+A` 是 `KeyboardAccelerator`，挂在 `DetailsRoot` 上而不是 `ListView` 上 —— 这样焦点在列头按钮 /
+    行内展开箭头时也生效（它们的焦点路径不经过 `ListView`）。地址栏在 `NavigationBarView` 里、
+    不在本控件子树内，所以那里按 `Ctrl+A` 仍是 `TextBox` 自己的“全选文本”（见 `tools/test-list-selection.ps1` 用例 5）；
+  * 全选用 `ListViewBase.SelectAll()`（`SelectionMode=Extended` 下就是全选），不要自己遍历
+    `SelectedItems.Add`（几千行会退化成 O(n²)）；
+  * 回归：`tools/test-list-selection.ps1`（5 个用例 11 条断言：单击行只选中它 / `Ctrl+A` 全选且状态栏同步 /
+    单击空白处清空 / 行上的点击不算空白处 / 地址栏的 `Ctrl+A` 仍是文本框全选）。
 * **列宽**：`Helpers/ColumnLayout` 的实例是**每个标签页一个**（`FolderTabViewModel.Columns`），
   同时被列头与每一行绑定，因此列头与数据行永远对齐。要区分 requested（用户拖的，落盘）与
   rendered（按窗格可用宽度算出来的，见 `FitTo`）：
@@ -271,10 +329,39 @@ exdir/
     `MinWidth={x:Bind Columns.RowMinWidth}` 提供滚动范围）；
   * 手动模式下列头靠 `TranslateTransform` 跟随 `ScrollViewer.HorizontalOffset`，
     `HeaderRow.Clip` 负责裁掉平移出去的部分；
-  * 拖动把手 `Controls/ColumnResizeHandle` 由 `DetailsView` code-behind 追加到 `HeaderContent.Children`，
+  * 拖动把手 `Controls/ColumnResizeHandle` 由 `DetailsView` code-behind 追加到 `HeaderLayer.Children`
+    （`HeaderLayer` = 表头里那个**没有列定义**的整宽父层，XAML 里就包着 `HeaderContent`），
     位置用 `TranslateTransform.X` 推到列边界（**不要用 Canvas**：Canvas 子元素实测高度为 0，命中区会是空的），
     双击把手 = 该列恢复默认宽度 + 回到自动模式；宽度为 0 的列（下面说的“状态”列）会把把手
     `Visibility=Collapsed`，否则它会压在名称列左边界上抢走点击。
+    **不要把把手放进 `HeaderContent`**：它带列定义，第 0 列正是“状态”列，非云目录里宽度为 0，
+    而零宽单元格里的子元素收不到指针事件（把手会彻底拖不动，见第 6 节）。
+    横向滚动的 `HeaderTransform` 也挂在 `HeaderLayer` 上，所以按钮与把手一起平移。
+  * **列头排序按钮铺满整列**（`ExColumnHeaderButtonStyle`）：整列宽度 + 整个表头高度都是排序的命中区，
+    悬停/按下底色是直角矩形（普通扁平按钮那 4 DIP 圆角铺满一列后像一张“卡片”）；
+    最左可见列往左、最右的“大小”列往右各再铺 6 DIP（= `ExRowPadding` 的左右内边距），
+    这样表头的高亮范围与数据行的行高亮一样从窗格边缘铺到边缘。
+    外扩在 `DetailsView.UpdateHeaderInsets()` 里用负 `Margin` + 等量 `Padding` 实现（内容位置不变、
+    列头与数据行仍然对齐；改列宽会连数据行一起错位，所以不能用改列宽的办法）；
+    拖动把手在 XAML 的按钮**之后**加进 `HeaderLayer`，仍在按钮之上，列宽拖动不受影响。
+    回归：`tools/test-column-resize.ps1`（8 个用例 20 条断言，真鼠标拖每个列边界）。
+* **列头排序按钮铺满整列**（2026-09，见第 4 节“列宽”最后一条）：点列头的**任意位置**（不再只有文字那一小块）
+  都能排序，悬停/按下是铺满整列、整个表头高度的直角矩形（不再是 4 DIP 圆角的“按钮块”）；
+  最左/最右列各再往外铺 6 DIP，高亮范围与数据行的行高亮一致（窗格边缘到边缘）；
+* **行高可配**（2026-09，默认 28 DIP）：设置窗口「文件列表 → 行高」一个滑块（20~48 DIP、步进 2）。
+  * 值存在 `AppSettings.RowHeight`（默认 `ColumnLayout.DefaultRowHeight = 28`，比原来的固定 24 更舒展），
+    真实上下限/夹取在 `ColumnLayout.NormalizeRowHeight`（settings.json 被手改过也不会出界面外）；
+  * 运行时值是**每个标签页一份**的 `ColumnLayout.RowHeight`（行模板本来就绑着这个共享对象，
+    见上面“列宽”那条），行模板写 `Height="{x:Bind Columns.RowHeight, Mode=OneWay}"`；
+    所以只需要在 `MainViewModel.ApplySettings` 里给每个标签页赋一次值，几千行会一起变；
+  * `ListView.ItemContainerStyle` 的 `MinHeight` 必须归零（原来是 `ExRowHeight`）：
+    容器锁着 24 的话，把行高调到 24 以下根本不生效（见第 6 节第 44 条）；`ExRowHeight=24` 现在只给状态栏用；
+  * **列头不跟着变**（仍是 `ExListHeaderHeight=26`）：表头是控件不是数据行，分开更紧凑；
+  * 行内每一格依旧 `VerticalAlignment="Center"`，所以行高只改变上下留白：
+    图标与名称文字在任何行高下都垂直居中（图标那 1 DIP 下推不受行高影响，
+    28 与 48 两种行高下 `tools/measure-row-align.ps1` 的中位数偏差都是 2.5 物理像素）；
+  * 回归：`tools/test-settings.ps1` 用例 6（初值一致 / 切分类读不到 / 拖完立即落盘 /
+    用 UIA 量 `ListItem` 的高度确认数据行真的变成设定的值）。
 * **名称列的行首图标是真实的外壳图标**（2026-09，S14）：`.exe` 显示程序自带图标、`.lnk` 显示目标图标
   + 快捷方式小箭头、文件夹/文件类型按系统关联，与资源管理器一致；
   `Helpers/FileTypeHelper` 的 Segoe 字形**降级成兜底占位**（图标还没到、或系统里查不到图标时显示）：
@@ -332,6 +419,20 @@ exdir/
     拖动时在按钮之间的边界画一条 2px 强调色插入提示条（`InsertionIndicator`，位置用
     `Margin.Left` 设，它和按钮不在同一棵子树里所以要 `TransformToVisual` 换算到 `PinnedItemsHost`）。
     **Button 上的 `CanDrag` 在 WinUI 3 里是无效的**，必须自己识别手势，见第 6 节第 25 条。
+* **侧边栏里有「收藏夹」分组，镜像工具条上的固定目录**（2026-09）：`主目录` 下面多一个
+  `收藏夹` 分组，子项与 `MainViewModel.PinnedFolders` **同序同名**（增删、工具条上拖拽排序后立刻同步：
+  `MainViewModel` 订阅 `PinnedFolders.CollectionChanged` → `SidebarViewModel.SyncFavorites`，
+  `RefreshDrives` 重建整棵树后也要再灌一次）。收藏项本身是普通目录节点（可展开、可导航）。
+  * 把目录从文件列表 / 侧边栏拖到「收藏夹」分组或其任意子行上即收藏，提示是“收藏到侧边栏”，
+    悬停时整行强调色高亮（`SidebarNodeViewModel.IsDropTarget`）。落点是**行级**的：
+    `AllowDrop` + `DragOver`/`DragLeave` 写在 `TreeViewItem`（模板根）上，命中哪一行就用
+    `FolderTree.ItemFromContainer(sender)` 反查（不要走 `e.OriginalSource`，见第 6 节第 54 条）；
+    `TreeView` 那一层再用 `AddHandler(..., handledEventsToo: true)` 接 `DragOver`/`Drop`，
+    在整条路由最后重新确认一次 `AcceptedOperation`（否则 `TreeViewList` 会把它改回 `None`，松手没有 Drop）。
+  * 落到其它树节点上、或拖工具条固定目录按钮（排序格式）经过侧边栏时一律 `None`，不会误收藏。
+  * 右键收藏项 → 「取消收藏」（`SidebarViewModel.UnpinRequested` → `MainViewModel.UnpinFolderByPath`）；
+    工具条被隐藏时这是唯一的移除入口。
+  * 回归：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `settings.json` 一致）与用例 5（拖到收藏夹）。
 * **文件列表区底部有一条状态栏**（`Views/StatusBarView.xaml` + `ViewModels/StatusBarViewModel`）：
   它挂在 `MainWindow` 里窗格那一列的**第 1 行**（第 0 行才是放 1~2 个窗格的 Grid，`Height="*"`），
   所以：侧边栏保持全高、状态栏只占文件列表区（不跨侧边栏）、窗格拿掉它以外的全部高度；
@@ -360,14 +461,25 @@ exdir/
     段与段之间是 chevron 字形 `E76C`，第一段不画）；
   * 点某一段：非当前段 → `NavigateToSegmentCommand` 导航过去，当前目录段 → 进入编辑态；
   * 点地址栏右侧空白区域（`BlankArea` 按钮，位置/宽度按面包屑实际宽度算）→ 进入编辑态；
+    这个按钮用 `ExGhostButtonStyle`（可点但悬停/按下无底色），不要把样式换回 `ExSubtleButtonStyle`；
   * 编辑态由 `FolderTabViewModel.IsPathEditing` 持有（不在视图里），回车 `NavigatePathCommand` 前往、
     `Esc` 或失焦 `CancelPathEdit()` 取消；**任何一次成功导航都会自动退出编辑态**；
   * 路径比地址栏宽时 `CrumbScroll` 滚到最右（当前目录永远可见），左端露省略号提示还有被裁掉的分段。
-* **右键菜单 = 系统真实菜单**（2026-09，S8a/S8b）：在文件列表里右键行 → 该（批）条目的菜单，
-  右键空白处 → 当前目录的背景菜单。菜单内容完全来自系统外壳（`IContextMenu`），
-  所以 7-Zip / Git / VS Code / WPS 这些第三方项、“发送到 / 打开方式”这类子菜单都在，
-  而且**默认全部开启**，只是可以在「配置 → 设置… → 右键菜单」里逐项关掉。
-  * 实现：`Services/ShellContextMenuService` + `Services/Native/ShellContextMenuInterop`。
+* **右键菜单有两种风格，可在设置里切换**（2026-09）：在文件列表里右键行 → 该（批）条目的菜单，
+  右键空白处 → 当前目录的背景菜单。「配置 → 设置… → 右键菜单 → 使用内置的轻量右键菜单」
+  决定用哪一种（**默认开 = 内置菜单**；关掉则回到系统外壳菜单）。两种菜单的内容**故意不一样**。
+  * **内置菜单（默认）**：`Views/DetailsView` 现场搭一个 WinUI `MenuFlyout`，只绑 exdir 自己实现的命令，
+    不建 COM 对象、不问外壳，所以弹出几乎瞬时：
+    * 文件行：`打开` / `在资源管理器中显示` /（分隔）/ `复制路径` / `属性`；
+    * 背景：`新建文件夹` / `刷新` / `全选` /（分隔）/ `复制当前路径` / `在此处打开终端`。
+    * `属性` 走 `IShellService.ShowProperties`（`ProcessStartInfo.Verb = "properties"`，不建 `IContextMenu`）；
+      `新建文件夹` 由 `FolderTabViewModel.CreateNewFolderAsync` 自己建目录（重名依次 `(2)(3)…`）并选中；
+      其余项直接复用标签页已有的命令与视图的 `SelectAll`。
+    * 风格在**每次右键时现读** `FolderTabViewModel.UseBuiltInContextMenu`，所以改设置立即生效。
+  * **系统菜单**（把开关关掉才用）：菜单内容完全来自系统外壳（`IContextMenu`），
+    所以 7-Zip / Git / VS Code / WPS 这些第三方项、“发送到 / 打开方式”这类子菜单都在，
+    而且**默认全部开启**，只是可以在同一页里逐项关掉（这份逐项开关只对系统菜单生效）。
+  * 系统菜单的实现：`Services/ShellContextMenuService` + `Services/Native/ShellContextMenuInterop`。
     选中项走 `IShellFolder.GetUIObjectOf`，目录背景走**目录自己**的
     `IShellFolder.CreateViewObject`（不是它所在目录的，`SHBindToObject` 传 null 从桌面绑），
     然后 `QueryContextMenu` 填 HMENU → `TrackPopupMenuEx(TPM_RETURNCMD)` 弹出 →
@@ -391,9 +503,39 @@ exdir/
     事件会从外层 Grid 往上冒（见第 6 节第 39/40 条）；行上右键会先把该行选中再弹菜单；
   * `Helpers.DpiHelper.ToScreenPoint` 负责 DIP → 屏幕物理像素（先 `TransformToVisual(null)`
     拿客户区坐标，再 `ClientToScreen`；不要自己用窗口位置 + 缩放算，系统边框会让它对不上）。
-  * 回归：`tools/test-context-menu.ps1`（真鼠标右键 + 截图；因为 Win11 的外壳菜单是自绘的、
-    UIA 里读不到菜单项，“弹没弹出来”看进程里有没有 `#32768` 窗口、“有哪些项/关掉了哪些项”
-    看 `exdir.log` 里那行 `系统右键菜单：…`）。
+  * 回归：`tools/test-context-menu.ps1`（5 个用例：系统菜单 3 个 + 内置菜单 2 个，真鼠标右键 + 截图；
+    系统菜单是自绘的、UIA 里读不到菜单项，所以“弹没弹出来”看进程里有没有 `#32768` 窗口、
+    “有哪些项/关掉了哪些项”看 `exdir.log`；内置菜单是 `MenuFlyout`，直接按名字从 `RootElement`
+    找 `MenuItem` 断言，并且用 `InvokePattern` 点「新建文件夹」验磁盘上真的建出了目录）。
+
+### 托盘驻留（单窗口模式，2026-09）
+
+**exdir 是常驻托盘的单窗口程序**：点窗口右上角的关闭按钮（或 `Alt+F4`）**不会**退出，只是把窗口隐藏起来。
+进程、DI 容器、两个窗格、标签页、已枚举的目录、图标缓存全部原封不动地留着，所以再打开就是一次
+`ShowWindow`（瞬时的），不需要重建任何一个窗格；**只有菜单里的「退出」才真的结束进程**。
+
+* 托盘图标用 NuGet 包 `H.NotifyIcon.WinUI`（版本锁 **2.3.2**：2.4.x 只出 `net10.0`，跟本项目的
+  `net8.0-windows` 不兼容）。图标本体是 `Shell_NotifyIcon`，非打包部署可用，不需要包标识。
+* 图标在 `MainWindow.xaml` 里声明（`<tb:TaskbarIcon x:Name="TrayIcon">`，`xmlns:tb="using:H.NotifyIcon"`），
+  它是 0×0 的 `FrameworkElement`、不占布局（UIA 里它的矩形是空的）；图标位图在 code-behind 里用
+  `System.Drawing.Icon(Assets\exdir.ico, DpiHelper.GetSmallIconSize())` 设置（不走 `ms-appx://`）。
+* **托盘菜单只能用 `Command`，不能挂 `Click`**：H.NotifyIcon 的默认 `ContextMenuMode=PopupMenu` 是把
+  `MenuFlyout` 转成 Win32 弹出菜单再执行 `Command` 的（见第 6 节第 47 条）；菜单只有两项：
+  「显示主窗口」/「退出 exdir」（非打包模式下子菜单不可用，所以不要做二级菜单）。
+* 左键单击 = 唤回窗口（`LeftClickCommand` + `NoLeftClickDelay="True"`）；右键 = 上面那张菜单。
+* 关窗口的拦截在 `MainWindow.OnAppWindowClosing`：`args.Cancel = true` + `HideToTray()`（
+  `H.NotifyIcon.WindowExtensions.Hide()` = `ShowWindow(SW_HIDE)` + 打开效率模式）。
+  隐藏/显示前都会 `SaveWindowPlacement()` + `ViewModel.SaveSession()` 落盘，所以隐藏状态下被杀
+  也不会丢列宽/会话（`tools/test-*.ps1` 的收尾才可以直接 `Kill`）。
+* **最大化的窗口藏起来再唤回不能被还原成普通尺寸**：`Show()` 走的是 `ShowWindow(SW_SHOWNORMAL)`，
+  它会顺手取消最大化，所以隐藏时要把 “之前是不是最大化” 记下来，唤回后自己 `presenter.Maximize()`。
+* **单实例闸门在 `Program.cs` 里**（exdir.csproj 里定义了 `DISABLE_XAML_GENERATED_MAIN`）：
+  `Helpers/SingleInstance` 用一个命名内核事件（`Local\exdir.activate`）同时做两件事——
+  `EventWaitHandle` 的 `createdNew` 就是“我是不是第一个实例”，而第二个实例 `Set()` 它就等于
+  “把已有窗口叫出来”。这一步在 `Application.Start` **之前**，所以第二次双击 exe 只跑几十毫秒
+  （不会白初始化一遍 WinUI，也不会多出第二个托盘图标/第二份会话互相覆盖 settings.json）。
+* UIA 里能看到托盘图标的方法与不要踩的坑见 `tools/test-tray.ps1` 的注释；回归：
+  `pwsh -NoProfile -File tools\test-tray.ps1`（4 个用例 17 条断言，真鼠标点关闭按钮与托盘图标）。
 
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
@@ -404,77 +546,98 @@ exdir/
 | `Ctrl+T` / `Ctrl+W` | 新建 / 关闭标签页 |
 | `Ctrl+H` | 显示/隐藏隐藏文件 |
 | `Ctrl+B` | 显示/隐藏侧边栏 |
+| `Ctrl+A` | 全选活动窗格文件列表里当前可见的行（焦点在地址栏时仍是文本框全选） |
 | `F6` | 切换活动窗格 |
 | `F10` | 单窗格 / 双窗格切换 |
 | `Ctrl+L` / `Alt+D` | 编辑活动窗格的地址栏（等价于点地址栏空白处） |
 
 另外：`文件列表 / 侧边栏文件夹树` 里的**目录**可以直接拖到工具条右侧的“固定目录”区固定下来。
 
-### 设置对话框（所有配置项的唯一入口）
+### 设置窗口（所有配置项的唯一入口，2026-09 从 ContentDialog 改为独立窗口）
 
-* 菜单栏**「配置 → 设置…」**弹出 `Views/SettingsDialog`（一个 `ContentDialog`），
-  **底部是「保存 / 取消」**（`PrimaryButtonText="保存"` + `CloseButtonText="取消"` +
-  `DefaultButton="Primary"`，即回车 = 保存、Esc = 取消）。
-* **左导航 + 右正文**（2026-09 重构，原来是“一列分组勾选框”）：
-  左侧是配置大类列表（`ListView`）+ 右侧只显示当前分类那一页。当前四个分类：
+* 菜单栏**「配置 → 设置…」**打开 `Views/SettingsWindow`（一个普通 `Window`，标题「设置」）。
+  **同一时刻只开一个**（`MainWindow._settingsWindow` 持有，已开就 `Activate()`），`Closed` 时清掉引用。
+* **改动即时生效**：窗口里没有「保存 / 取消」，任何一项被改动都立刻写回 `AppSettings` 并落盘
+  （`SettingsViewModel.Changed` → `MainWindow` 侧调 `MainViewModel.ApplySettings`）。
+* **Windows 11 风格**：左侧 `NavigationView` 选分类，右侧一列设置卡片 ——
+  每行是社区工具包的 `SettingsCard`（`CommunityToolkit.WinUI.Controls.SettingsControls` 8.2.251219），
+  标题 + 灰色说明在左、控件在右、悬停/圆角/高对比主题全跟系统走，**不再自己写行模板**。
+  当前四个分类：
 
   | 分类 | 配置项 |
   | --- | --- |
-  | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 |
+  | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高（滑块，默认 28） |
   | 外观 | 过渡动画 |
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
-  | 右键菜单 | 系统右键菜单项，逐项开关（动态清单，见第 4 节“右键菜单”） |
+  | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 系统右键菜单项逐项开关（动态清单，见第 4 节“右键菜单”） |
 
-  * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`
-    （列表顺序即导航顺序，`SelectedCategory` 直接绑 `ListView.SelectedItem`，TwoWay）；
-    右侧四页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible` /
+  * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`（列表顺序即导航顺序），
+    绑到 `NavigationView.MenuItemsSource`（`MenuItemTemplate` 的根必须是 `NavigationViewItem`，同 TabView / TreeView）。
+    切换分类**用 `SelectionChanged` 而不是 `ItemInvoked`**：后者只在“用户点了 / 按了”时触发，
+    键盘方向键与程序化选中（自动化脚本的 `SelectionItemPattern`、直接赋 `SelectedItem`）都不触发，
+    那样右侧页面不会跟着换（已踩过）。
+  * 右侧四页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible` /
     `IsShellMenuPageVisible`（`SelectedCategory` 的 setter 里一次性通知这四个，省得每页各写一个枚举转换器）。
-  * 非当前页是 `Visibility=Collapsed`，**UIA 树里根本没有它们**：所以回归脚本
+    非当前页是 `Visibility=Collapsed`，**UIA 树里根本没有它们**：所以回归脚本
     “切到某分类后只看得到该分类的开关”本身就是“切页真的生效”的验证。
-  * 每一行是 `Views/SettingsToggleRow`（`Title` / `Description` / `IsOn` 三个 DP）：
-    左边“标题 + 灰色说明”，右边一个 `ToggleSwitch`（`OnContent`/`OffContent` 留空，
-    否则默认的“开 / 关”文字会把开关推歪）。开关的 UIA 名字就是 `Title`（脚本按名字找它）。
-    `IsOn` 由对话框 `{x:Bind ViewModel.Xxx, Mode=TwoWay}` 绑到快照上。
-  * **对话框尺寸是定死的**（实测约 606×408 DIP，三页完全一致，切分类不跳）：
-    两列都用固定 `GridLength`（`156` / `400`）——星号列不参与 DesiredSize 计算，
-    不写死的话最长的说明文字会把对话框撑成三种宽度；根 `Grid` 用 `MinHeight`（不是 `Height`）
-    兜住最矮的「外观」页，窗口太矮时右侧 `ScrollViewer` 自己出滚动条。
-  * `ContentDialog` 默认最宽只有 548 DIP（`ContentDialogMaxWidth`），装不下两栏，
-    所以在 `ContentDialog.Resources` 里覆盖成 `520 / 680`；同一个地方还要再关一次
-    `ListViewItemSelectionIndicatorVisualEnabled`（见第 6 节第 38 条）。
-  * 导航项**只有文字、没有图标**（为什么见第 6 节第 37 条）。
+  * 每一行用 `{x:Bind}` 把 VM 属性绑到卡片里的控件上（`ToggleSwitch.IsOn` / `Slider.Value` 都是 TwoWay）；
+    开关的 `AutomationProperties.Name` 就是卡片标题（工具包本来也会把 Header 设成内容的名字，显式写一遍更明确），
+    回归脚本按这个名字找它，用 `TogglePattern` 拨；
+    滑块的 UIA 名字也是标题，用 `RangeValuePattern` 读写（`Slider` 没有 `TogglePattern`）。
+  * **窗口默认 860×800 DIP**（`SettingsWindow.DefaultWidthDips/DefaultHeightDips`），交给 `SettingsView`，
+    在工作区居中；工作区放不下就退让（先夹再定）。
+    宽度不能小：`SettingsCard` 在**卡片宽度 < 476 DIP**（工具包里的 `SettingsCardWrapThreshold`）时
+    会把右侧控件换行到标题下方，那就不是 Windows 11 的观感了；
+    按当前布局（左导航 180 + 两侧留白 48）860 宽给卡片 ~625 DIP，留有余量。
+  * **正文是 `Views/SettingsView`（UserControl），不是直接写在 Window 里**：
+    `Window` 不是 `FrameworkElement`，WinUI 为它生成的 `x:Bind` 代码做不了 `{StaticResource}` 转换器查找
+    （编译期报 `CS1503: 无法从 SettingsWindow 转换为 FrameworkElement`），而四页的 `Visibility` 都要用
+    `BoolToVisibility`。`SettingsView.ViewModel` 是依赖属性，由窗口赋值（普通 CLR 属性在
+    `InitializeComponent` 之后赋值时 x:Bind 不会重新求值）。
   * **「右键菜单」页是动态清单**：一行行不是写死在 XAML 里的，而是绑
-    `SettingsViewModel.ShellMenuItems`（`ItemsControl` + `DataTemplate`，每行仍然是
-    `SettingsToggleRow`）。构造快照时先用已记下来的清单填一遍（不碰 COM），
-    对话框 `Loaded` 后再 `DispatcherQueue.TryEnqueue(RefreshShellMenuItems)` 现枚举一次补全，
-    所以打开对话框不会卡一下。重建清单时已有的项保留用户刚拨过的开关。
+    `SettingsViewModel.ShellMenuItems`（`ItemsControl` + `DataTemplate`，每行仍然是 `SettingsCard`）。
+    构造时先用已记下来的清单填一遍（不碰 COM），`SettingsView.Loaded` 后再
+    `DispatcherQueue.TryEnqueue(RefreshShellMenuItems)` 现枚举一次补全，所以打开窗口不会卡一下；
+    现枚举完的那一次也算“改动”，会被落盘（`ShellMenuKnownItems`），下次就不用重新枚举。
+    重建清单时已有的项保留用户刚拨过的开关。
     用 `ItemsControl` 而不是 `ListView`：后者会把没显示出来的行虚拟化掉，回归脚本数不全。
-    新增一项要同时改三处：`ShellMenuItemViewModel`（`Title`/`Description`/`IsEnabled`）、
+    新增一项要同时改三处：`ShellMenuItemViewModel`（`Title`/`Description`/`IsEnabled` —— 它必须是
+    会发通知的 `ObservableObject`，否则窗口与 VM 都不知道用户拨了它）、
     `MainViewModel.ApplySettings`（写回 `ShellMenuDisabledItems` / `ShellMenuKnownItems`）、
     `tools/test-settings.ps1` 的用例 5。
-* **编辑的是快照**（`ViewModels/SettingsViewModel`，构造时从 `AppSettings` 复制一份）：
-  `ShowAsync()` 返回 `Primary` 才调 `MainViewModel.ApplySettings(snapshot)` 写回并**立即落盘**，
-  返回 `Close`（取消）就什么都不做——不需要逐项回滚，也不会误写 `settings.json`。
+* **编辑的是 `SettingsViewModel`（`MainViewModel.CreateSettingsEditor()` 造一份）**，
+  它不再是“快照 + 取消回滚”，而是当前值 + 变更通知：每个属性走 `SetAndNotify`（先 `SetProperty`，
+  真变了才 `Changed?.Invoke`），`ShellMenuItems` 里每行的 `PropertyChanged` 也汇总到同一个 `Changed`。
+  写回只发生在 `MainViewModel.ApplySettings` 一处（写 `AppSettings` → 刷新界面 → `_settings.Save()`）。
 * `MainViewModel.ApplySettings` 里先把值写进 `AppSettings`、再统一刷新界面：
   隐藏文件 / 扩展名会重新枚举目录，所以这两项是“最后只刷一次”；
+  行高 / 列宽自适应只改每个标签页的 `ColumnLayout`（赋同样的值不会重排）；
   过渡动画只改视图行为（`tab.ApplyAnimationSettings()`），不重载目录。
+  拨一次开关会调一次（含一次落盘）—— 滑块拖到底是几十次，实测没有卡顿，所以不做防抖。
 * 「查看」菜单里的工具条 / 侧边栏 / 双窗格（含快捷键）保留：它们是**命令型**菜单项
-  （`MenuFlyoutItem` + `ToggleXxxCommand`，本来就不显示勾选标记），和对话框切的是同一份设置，
+  （`MenuFlyoutItem` + `ToggleXxxCommand`，本来就不显示勾选标记），和设置窗口切的是同一份设置，
   两边不会各说各话（`ApplySettings` 会 `OnPropertyChanged(ShowHiddenFiles/ShowExtensions/…)`，
-  对话框里改完再点菜单项，切的就是新状态）。
-* **新增配置项要动六个地方**：`AppSettings` 字段 → `SettingsViewModel` 属性（放进对应分类的注释段）→
-  `SettingsDialog.xaml` 里**对应分类页**加一行 `SettingsToggleRow` → `MainViewModel.ApplySettings` 应用 →
-  `tools/test-settings.ps1` 的 `$KeyMap`（UIA 名字 → 字段名）与 `$CategoryMap`（分类 → 该页的项）→
+  设置窗口里改完再点菜单项，切的就是新状态）。
+* **新增配置项要动七个地方**：`AppSettings` 字段 → `SettingsViewModel` 属性（放进对应分类的注释段，
+  用 `SetAndNotify`）→ `SettingsView.xaml` 里**对应分类页**加一张 `SettingsCard`
+  （开关就放 `ToggleSwitch`，连续值放 `Slider` + 数值文本）→
+  `MainViewModel.ApplySettings` 应用（别忘了把值推给所有已存在的标签页）→
+  `tools/test-settings.ps1` 的 `$KeyMap`（开关：UIA 名字 → 字段名）与 `$CategoryMap`（开关：分类 → 该页的项）
+  ——**滑块类的项不进这两个映射**（它不是 `ToggleSwitch`，会打乱“这一页有几个开关”的计数），另写用例断言 →
   需要新分类时再往 `SettingsCategory` / `Categories` 里加一项。
-* 回归：`tools/test-settings.ps1`（5 个用例 47 条断言，含「右键菜单」页的系统菜单项默认全开、
-  关掉「属性」后落盘 `verb:properties`、重新打开仍为关、再拨回来就清空）；
-  肉眼看布局用 `tools/shot-settings.ps1`（每个分类截图到 `.artifacts\settings-<分类名>.png`）。
-* 对话框比窗口还大时（窗口被缩到 606×408 DIP 以下）边缘会被裁掉：`ContentDialog`
-  只会把对话框约束在窗口内，不会自己缩小；正常窗口尺寸（默认 1280×800 DIP）下离边很远。
+* 回归：`tools/test-settings.ps1`（6 个用例 48 条断言：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
+  拨一下立即落盘 / 立刻作用到文件列表 / 跨分类与关窗重开读回 / 同一时刻只开一个窗口 /
+  「右键菜单」页的系统菜单项默认全开、关掉「属性」后落盘 `verb:properties`、重开仍为关、再拨回来就清空 /
+  「行高」滑块的初值、切分类读不到、拖完列表行真的变高）。全程走 UIA 模式，不需要前台窗口。
+  肉眼看布局用 `tools/shot-settings.ps1`（每个分类截图到 `.artifacts\settings-<分类名>.png`，需要交互桌面）。
 
 ## 5. 必须遵守的编码约定
 
 * **分层**：`Views` 不直接做 I/O，一律经由 ViewModel → `Services` 接口。
+* **入口点不要改回 XAML 生成的那份**：exdir.csproj 定义了 `DISABLE_XAML_GENERATED_MAIN`，入口点在
+  `Program.cs`（为了把单实例闸门放在 WinUI 初始化之前）。升级 Windows App SDK 时要拿
+  `obj\...\App.g.i.cs` 里生成的那份 `Program.Main` 对一下（初始化 COM Wrappers / 切 SynchronizationContext
+  那几行不能少），见第 4 节“托盘驻留”。
 * **服务成对**：新增能力先加 `IXxxService`，再写实现，最后在 `App.ConfigureServices()` 注册。
 * **异步**：耗时 I/O 走 `Task.Run`（见 `FileSystemService`），
   从 UI 线程 `await` 时**不要** `ConfigureAwait(false)`，让续体回到 UI 线程后再更新 `ObservableCollection`。
@@ -483,11 +646,13 @@ exdir/
   （普通 CLR 属性在 `InitializeComponent` 之后赋值时绑定不会生效。）
 * **主窗口的 ViewModel 用普通只读属性，且必须在 `InitializeComponent()` 之前赋值**，
   因为 `x:Bind` 在 `InitializeComponent` 期间求值。
-  `SettingsDialog`（`ContentDialog` 子类）同理：`ViewModel` 属性在构造函数里先赋值再 `InitializeComponent()`。
-* **新增配置项要动六个地方**（详见第 4 节“设置对话框”）：`AppSettings` 字段 → `SettingsViewModel` 属性 →
-  `SettingsDialog.xaml` 对应分类页里的 `SettingsToggleRow` → `MainViewModel.ApplySettings` 应用 →
-  `tools/test-settings.ps1` 的 `$KeyMap` 与 `$CategoryMap` → 需要时再往 `SettingsCategory` 加分类。
-  对话框只负责编辑快照，落盘与应用只在 `MainViewModel.ApplySettings` 一处发生。
+  `SettingsWindow` 同理（`ViewModel` 在构造函数里先赋值再 `InitializeComponent()`，界面用 `x:Bind ViewModel.X` 绑它），
+  正文 `Views/SettingsView` 则按上一条走依赖属性。
+* **新增配置项要动七个地方**（详见第 4 节“设置窗口”）：`AppSettings` 字段 → `SettingsViewModel` 属性
+  （用 `SetAndNotify`，改动会发 `Changed`）→ `SettingsView.xaml` 对应分类页里的 `SettingsCard` →
+  `MainViewModel.ApplySettings` 应用 → `tools/test-settings.ps1` 的 `$KeyMap` 与 `$CategoryMap` →
+  需要时再往 `SettingsCategory` 加分类。
+  落盘与应用只在 `MainViewModel.ApplySettings` 一处发生（设置窗口自己不写 `settings.json`）。
 * **数据集合整体替换而非增量 Add**：`FolderTabViewModel.Items` 每次导航/排序都新建
   `ObservableCollection` 再赋值，避免逐条 Add 造成 O(n²) 的 UI 开销。
 * **中文注释**、中文 UI 文案。注释解释“为什么”，不要复述代码。
@@ -678,12 +843,15 @@ exdir/
     **也不能信**：同一份布局里 `ToggleSwitch` 报的是 `x≈-1118`，而实际画在对话框右侧）。
     结论/做法：设置对话框的左侧导航**只放文字、不放图标**；也不要靠负 `Margin` 去消除
     `ContentDialogPadding`（想要“通到底”的观感，宁可接受 24 DIP 的卡片式留白）。
+    （2026-09 S17d 之后设置界面已经不是 `ContentDialog` 而是独立窗口 `Views/SettingsWindow`，
+    导航也从 `ListView` 换成了 `NavigationView`，所以这两条现在只是历史记录；
+    以后若再把设置放回 `ContentDialog`，先看这一条。）
 38. **同一个主题资源键，在 `ContentDialog` 里可能读不到 App 级的值**：
     `Themes/ExdirTheme.xaml` 里已经把 `ListViewItemSelectionIndicatorVisualEnabled` 设成 `False`
     （主窗口的文件列表确实没有那条左侧竖条，见第 4 节），但设置对话框里的 `ListView`
     还是画出了强调色竖条；把同一个键再写进该对话框的 `<ContentDialog.Resources>` 就消失了。
     所以“在某个弹层里发现某个主题资源像是没生效”时，先在**这个弹层自己的 `Resources` 里再覆写一遍**，
-    而不是去怀疑 `ExdirTheme.xaml` 的合并顺序。
+    而不是去怀疑 `ExdirTheme.xaml` 的合并顺序。（设置界面现在不是 `ContentDialog` 了，见第 37 条末尾的说明。）
 39. **`TabView` 的默认样式把 `VerticalAlignment` 设成了 `Top`**：
     这不是我们的 XAML 写的，是 WinUI 自带的。后果是**标签页内容只占“内容自己的高度”**：
     列上只有两三个文件时，`DetailsView` 只有 74 DIP 高（表头 24 + 两行 48），
@@ -725,6 +893,111 @@ exdir/
     弹完立刻 `RemoveWindowSubclass`。
     另外“用 `ShowWindow` 把窗口最小化后再关”会让 `AppWindow.Position` 返回 `-32000` 级哨兵值，
     `SaveWindowPlacement` 必须跳过最小化状态与舘兵值（否则下次启动窗口跑到屏幕外）。
+44. **文件列表的行高不能用 `ListViewItem` 的 `MinHeight` 来“配”**：
+    原来 `DetailsView` 的 `ItemContainerStyle` 把 `MinHeight` 固定成 `ExRowHeight`(24)，
+    而 `MinHeight` 是**下限**：把行高设置调成 20 时容器依旧 24，界面没反应（看起来像“设置没生效”）。
+    所以：① 容器 `MinHeight` 归零；② 行高绑在**行模板的 `Grid.Height`**
+    （`{x:Bind Columns.RowHeight}`）上，由内容决定容器高度。
+    另：`Style` 的 `Setter.Value` 不能写 `x:Bind`/`Binding`（只能是资源或字面量），
+    所以想让容器高度跟设置走，也没法在样式里绑——归零 + 内容定高是唯一干净的做法。
+    顺带：行高放在 `ColumnLayout`（每标签页一个、行模板本来就绑着的对象）上，
+    而不是每个 `FileItemViewModel` 上，否则改一次设置要给几千行各发一次通知。
+    滑块类的设置项在 UIA 里用 `RangeValuePattern` 读写（`Find-VisibleFirst` 找名字时要按
+    `ControlType.Slider` 过滤：左边的标题 `TextBlock` 也叫“行高”）。
+45. **行里的“空白处”不是行模板的一部分，挂在行模板上的事件收不到**：
+    文件列表的行（`ListView.ItemTemplate` 的 `Grid`）里，只有文字 / 图标所在的那几小块是
+    可命中的元素，行内上下留白、名称文字右侧、日期/类型/大小列里的空白都没有元素可命中——
+    命中的是 `ListViewItem` 本身。而 `DoubleTapped` 是**冒泡**事件：命中 `ListViewItem` 时它从
+    `ListViewItem` 直接往 `DetailsRoot` 冒，永远不会经过作为其后代的行模板 `Grid`，于是
+    “只有双击到文字/图标上才进目录”。**要么把处理器挂到外层（再用 `FindRowItem` 反查行），
+    要么给行模板根元素加 `Background="Transparent"`**（没有背景的 `Grid` 在空白处不参与命中测试，
+    连 `ToolTipService.ToolTip` 都弹不出来）；`exdir` 两个都做了。
+    同一个道理适用于任何“看起来是整块、其实只有内容是实心”的容器（例如 `ListViewItem` 的
+    `ContextFlyout` / `RightTapped`，见第 40 条）。
+    另：调试这类问题时不要拿“双击某个点”下结论就完事——同一行的不同落点命中路径完全不同，
+    回归脚本 `tools/test-row-dblclick.ps1` 会逐个落点各跑一遍（真鼠标双击）。
+46. **零宽度 Grid 单元格里的子元素收不到指针事件（列宽把手拖不动）**：
+    详细信息列表的拖动把手原本被追加到列头那个带列定义的 `Grid` 里，而它们没写 `Grid.Column`、
+    默认在第 0 列 —— 第 0 列后来变成了“状态”列（云同步状态），**非云目录里宽度为 0**。
+    结果：列头看上去完全正常（把手用 `RenderTransform` 照样画在列边界上、UIA 里也找得到这个元素），
+    但整个把手（包括它自己 layout 所在的 [0,6] 那几像素）都不参与命中测试 —— 鼠标悬停不变鼠标形状、
+    按下去拿到事件的是列头那个铺满整列的排序按钮，任何列都拖不动。
+    云目录里（状态列宽 56）反倒一切正常，所以“偶尔能拖、偶尔不能”很有欺骗性。
+    根治办法：把把手放进一个**没有列定义、整宽**的父层（`HeaderLayer`），把横向滚动的
+    `TranslateTransform` 也挂在这一层上，按钮与把手就始终共享同一个坐标原点。
+    另：不要用 UIA 的 `BoundingRectangle` 判断这类元素“在哪/能不能点”——它是**布局值**、
+    不含 `RenderTransform`（而且被窗格/屏幕裁切后会变成空矩形），判断命中必须真鼠标点。
+    回归：`tools/test-column-resize.ps1`（修前用例 2/3/4 全部没反应）。
+
+47. **`TaskbarIcon.ContextFlyout` 里的菜单项挂 `Click` 是无效的**：
+    H.NotifyIcon 默认的 `ContextMenuMode=PopupMenu` 是把 WinUI 的 `MenuFlyout` **抄成一张 Win32 弹出菜单**
+    （`CreatePopupMenu` + `TrackPopupMenu`），只抄 `Text` / `IsEnabled` / `Command` / `CommandParameter`，
+    然后在 `PopupMenuItem.Click` 里执行 `flyoutItem.Command`。所以托盘菜单项写 `Click="..."` 永远不触发
+    （不报错，只是点了没反应）；必须给 `Command`（本次就是 MainWindow 上的 `ShowWindowCommand` /
+    `ViewModel.ExitCommand`）。顺带：菜单是弹出前现抄的，所以 `Command` 绑的是当时的状态。
+
+48. **关窗口只是隐藏的托盘程序，不能用 `CloseMainWindow()` 收尾**：
+    `Process.CloseMainWindow()` 发的是 `WM_CLOSE`，而 `MainWindow.OnAppWindowClosing` 会 `Cancel` 掉
+    它只把窗口藏进托盘，于是 `WaitForExit(3000/4000/5000)` 白等几秒、再到 `Kill()`。
+    `tools\*.ps1` 的 `Stop-Session` 已全部改成直接 `Kill()`：隐藏时已经
+    `SaveWindowSettings + SaveSession` 落过盘，强杀不会丢列宽/会话（真的要验证退出路径用
+    `tools/test-tray.ps1` 用例 4）。
+
+49. **UIA 量“行高/行宽”时不能用平均值：视口底部那一行是裁过的**：
+    `test-settings.ps1` 用例 6 把行高改成 40、然后统计所有可见数据行的 `BoundingRectangle.Height`，
+    实测得到的是 `[80, 80, 80, 80, 80, 80, 80, 48]` —— 最后一行只露出一半（48 物理像素），
+    平均值 76、离期望 80 差 4 像素，刚好超出 ±2 的容差，于是偶发 FAIL（窗口高一点、矮一点就能翻转）。
+    28 DIP 时那个 4 像素的残条 UIA 干脆不报（`IsOffscreen=true`），所以同样的断言当时是准的。
+    现在取**中位数**（`Get-TypicalRowHeight`）并把逐行高度也打印出来，跟“用中位数不用单行”是同一个道理
+    （见第 35 条）。
+
+50. **`Window` 不是 `FrameworkElement`：写在 `Window` 这一层的 `x:Bind` 用不了 `{StaticResource}` 转换器**：
+    设置窗口原本把 NavigationView + 设置卡片直接写在 `Views/SettingsWindow.xaml` 里，
+    XAML 编译器为这个根生成的代码里有一行 `bindings.SetConverterLookupRoot(this)`，
+    而 `SetConverterLookupRoot` 收的是 `FrameworkElement` —— 编译直接报
+    `error CS1503: 参数 1: 无法从“Exdir.Views.SettingsWindow”转换为“Microsoft.UI.Xaml.FrameworkElement”`。
+    只要这个文件里任何一处 `x:Bind` 带 `Converter={StaticResource ...}` 就会踩到。
+    解法：窗口只当一层薄壳（标题/尺寸/接线），界面正文放进 `Views/SettingsView`（UserControl），
+    它的根是 `FrameworkElement`，转换器随便用。
+    顺带：别的 `Window` 子类（包括 `MainWindow`）同理，别把带转换器的绑定写在 Window 根上。
+
+51. **社区工具包的 `SettingsCard` 在卡片宽度 < 476 DIP 时会把控件换行到标题下方**：
+    它的 `ContentAlignmentStates` 里 `RightWrapped` / `RightWrappedNoIcon` 两个状态由
+    `tk:ControlSizeTrigger` 触发，阀值是资源 `SettingsCardWrapThreshold = 476`
+    （更窄的 `SettingsCardWrapNoIconThreshold = 286` 连 HeaderIcon 一起收掉）。
+    所以“左导航 + 设置卡片”的窗口宽度不能小：设窗口宽 W，卡片宽约 `W - 180（左导航）- 48（两侧留白）`，
+    W = 600 只有 372（换行，不是 Win11 观感），W = 860 约 625（正常）。
+    本机屏幕只有 485 DIP 宽（虚拟机），把窗口拉大到 860 也不会生效 —— Windows 会把窗口尺寸
+    夹到屏幕大小（实测 `MoveWindow` 到 1935 物理像素，拿到手只有 1232），所以这个观感在本机无法肉眼验证，
+    只能靠上面的尺寸推算。
+
+52. **`NavigationView` 换分类要用 `SelectionChanged`，不能用 `ItemInvoked`**：
+    `ItemInvoked` 只在“用户点击 / 按回车”时触发；键盘方向键、程序化赋值 `SelectedItem`、
+    以及自动化脚本的 `SelectionItemPattern.Select()` 都不会触发它 —— 表现为
+    “用 UIA 选中了「外观」，左右导航高亮也变了，但右侧还是「文件列表」那一页”，
+    回归脚本会把上一页的开关当成当前的（当时报“「外观」页显示 3 个开关”）。
+    两个都接上也行，但只接 `SelectionChanged` 就够（它覆盖点击、键盘与程序化三种路径）。
+
+53. **桌面上别的进程也可能有叫「设置」的顶层窗口**：本机就有
+    `ApplicationFrameHost.exe`（某个 UWP 的“设置”页）带着一个标题为「设置」的窗口。
+    自动化脚本按名字从 `RootElement` 找窗口时会把它当成我们的，
+    于是“关掉设置窗口”永远断言不过（关的是自己的，查到的是别人的，而且它的坐标/按钮都是另一套）。
+    所以 `tools/test-settings.ps1` / `shot-settings.ps1` 找窗口时都再加一道
+    `ProcessId -eq $Session.Proc.Id` 过滤；同理，找菜单项（弹出的 MenuFlyout）也按进程过滤。
+
+54. **拖放事件的 `OriginalSource` 是“带 `AllowDrop` 的那个元素”，不是鼠标下面的那一行**：
+    给侧边栏树做“拖到收藏夹分组上收藏”时，原本把 `DragOver` 挂在 `TreeView` 上、再用
+    `FindSidebarNodeForDrag(e.OriginalSource)` 反查行，结果日志里 `e.OriginalSource` 永远是
+    `TreeView`（`source=TreeView`）——因为拖放落点就是**带 `AllowDrop` 的元素**，子元素没写
+    `AllowDrop` 就永远收不到。
+    （指针事件不是这样：指针会命中最深层的元素，所以第 40/45 条那套 `OriginalSource` 反查对
+    `RightTapped`/`DoubleTapped` 有效，对 `DragOver`/`Drop` 无效。）
+    修法：把 `AllowDrop` + `DragOver`/`DragLeave` 写到行模板根那一行（`ListView.ItemTemplate` 的
+    `Grid` / `TreeView.ItemTemplate` 的 `TreeViewItem`）上，用 `sender` 或
+    `TreeView.ItemFromContainer(sender)` 反查数据项。
+    另外 `TreeViewList` 会在自己的类处理器里按“没开重排”把 `AcceptedOperation` 写成 `None`：
+    行上接受不等于最终接受，必须再在 `TreeView` 上 `AddHandler(..., handledEventsToo: true)`
+    接一次 `DragOver`（在路由最后重新赋 `Copy`）与 `Drop`，否则拖过去高亮会亮、松手却什么都不发生。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -741,12 +1014,20 @@ exdir/
 
 已完成（主体框架，可运行，Release 产物已生成）：
 
+* **单窗口 + 常驻托盘**（2026-09，见第 4 节“托盘驻留”）：点关闭按钮 / `Alt+F4` 只把窗口隐藏到
+  通知区域，进程、两个窗格、标签页与会话全部留着，再打开（左键点托盘图标 / 第二次双击 exe）
+  就是一次 `ShowWindow`；托盘右键菜单是「显示主窗口 / 退出 exdir」，菜单里的「退出」才是真退出；
+  单实例闸门跑在 XAML 初始化之前（`Program.cs` + `Helpers/SingleInstance`），第二次双击 exe 只跑几十毫秒。
+  依赖 `H.NotifyIcon.WinUI 2.3.2`（见 exdir.csproj）；回归：`tools/test-tray.ps1`（4 个用例 17 条断言）。
 * 非打包工程改造、单实例主窗口、Mica 背景、自定义标题栏、图标与窗口位置持久化；
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
 * 1/2 窗格 + 自研分隔条、TabView 多标签；
 * 详细信息列表：**目录可就地展开的树形列表**（行内箭头 / `←→` 方向键展开、懒加载、刷新后恢复展开）、
   状态/名称/修改日期/类型/大小五列、点列头排序（含树的每一层）、**列宽可拖动+双击复位+持久化**、
   多选、双击进入目录、无选中蓝色竖条、选中行不随排序/刷新丢失；
+* **行高可配**（2026-09，见第 4 节“行高可配”）：设置窗口「文件列表 → 行高」滑块（20~48 DIP、步进 2，
+  默认 **28 DIP**——比原来固定的 24 更舒展，仍属紧凑密度）；列头保持 26 DIP 不变，
+  图标与名称文字在任何行高下都行内垂直居中；回归：`tools/test-settings.ps1` 用例 6（UIA 量数据行高度）；
 * **行首显示真实的外壳图标**（2026-09，S14，见第 4 节“名称列图标”）：`.exe` / `.lnk` 各自显示
   程序自带的图标（快捷方式还带小箭头覆盖层），文件夹与文件类型与资源管理器一致；
   字形只在“图标还没取到 / 系统里查不到”时兜底；图标懒加载 + 两级缓存，滚动不重复取；
@@ -762,30 +1043,41 @@ exdir/
   路径按目录分段显示（chevron 分隔）、点分段跳转、点当前目录段或右侧空白区就地编辑，回车跳转、Esc 取消；
   超长路径自动滚到最右（当前目录永远可见）并在左端提示省略，编辑入口也有 `Ctrl+L` / `Alt+D`；
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
-* **所有配置项集中在设置对话框**（2026-09，S17a / S17b）：菜单栏「配置 → 设置…」弹出
-  `Views/SettingsDialog`（`ContentDialog`，底部「保存 / 取消」）。**左导航 + 右正文**两栏：
-  左侧四个分类（文件列表 / 外观 / 布局 / 右键菜单，都是纯文字项），右侧只显示当前分类那一页，
-  每项是“标题 + 说明 + 右侧开关”（`Views/SettingsToggleRow`）；
-  前三个分类共 8 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面）、
+* **所有配置项集中在设置窗口**（2026-09 从 ContentDialog 改成独立窗口，S17d）：菜单栏「配置 → 设置…」
+  打开 `Views/SettingsWindow`（`Window`，默认 860×800、工作区居中，同一时刻只开一个）。
+  左侧 `NavigationView` 四个分类（文件列表 / 外观 / 布局 / 右键菜单），右侧一列 Windows 11 风格设置卡片
+  （社区工具包 `SettingsCard`，不再自己写行模板），只显示当前分类那一页；
+  前三个分类共 9 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / **行高**）、
   外观（过渡动画）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）；
-  「右键菜单」页是动态清单（见下面那条与第 4 节）。
-  编辑的是 `SettingsViewModel` 快照，**点“取消”什么都不改、点“保存”立即应用并落盘**（不再等退出才写），
-  应用入口是 `MainViewModel.ApplySettings`；新增固定配置项要同时改 `AppSettings`、`SettingsViewModel`、
-  `SettingsDialog.xaml`、`ApplySettings` 与 `tools/test-settings.ps1` 的 `$KeyMap` / `$CategoryMap`（见第 4 节）。
-  回归：`tools/test-settings.ps1`（5 个用例 47 条断言：分类齐全 / 每页只显示本分类的开关 / 初始值一致 /
-  取消不落盘 / 保存立即落盘并作用到文件列表 / 跨分类读回 / 右键菜单项默认全开且能逐项关闭），
-  布局截图：`tools/shot-settings.ps1`（.artifacts\settings-<分类名>.png）。
+  「右键菜单」页除了「使用内置的轻量右键菜单」这一个开关（默认开）之外，
+  还是系统菜单项的动态清单（见下面那条与第 4 节）。
+  **改动即时生效并立即落盘**（没有「保存 / 取消」）：`SettingsViewModel.Changed` →
+  `MainViewModel.ApplySettings`（写 `AppSettings` + 刷界面 + `Save()`）。
+  新增固定配置项要同时改 `AppSettings`、`SettingsViewModel`、`SettingsView.xaml`、`ApplySettings`
+  与 `tools/test-settings.ps1` 的 `$KeyMap` / `$CategoryMap`（见第 4 节）。
+  回归：`tools/test-settings.ps1`（6 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
+  拨一下立即落盘并作用到文件列表 / 跨分类与关窗重开读回 / 同一时刻只开一个窗口 /
+  菜单风格开关默认开（内置）且拨一下就落盘、系统菜单项默认全开且能逐项关闭 /
+  行高滑块改完列表行真的变高），全程走 UIA 模式（不需要前台窗口）；
+  布局截图：`tools/shot-settings.ps1`（.artifacts\settings-<分类名>.png，需要交互桌面）。
   原先的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）已移除，
-  「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与对话框共享同一份设置）；
-* **系统右键菜单**（2026-09，S8a / S8b，见第 4 节“右键菜单”）：文件列表里右键行 → 该（批）条目的
-  资源管理器同款菜单（7-Zip / Git / VS Code / WPS / 打开方式 / 发送到 等第三方项与子菜单全在），
-  右键空白处 → 当前目录的背景菜单；菜单默认**全部开启**，可在设置对话框「右键菜单」页里逐项关掉
-  （关掉的项在弹出前从 HMENU 里删掉）。服务端是 `IShellContextMenuService` +
-  `Services/Native/ShellContextMenuInterop`（`IContextMenu` + `IContextMenu2/3` + `SetWindowSubclass`）；
-  清单 = 打开设置页时的样本枚举 ∪ 实际右键过的项（`AppSettings.ShellMenuKnownItems`）。
-  回归：`tools/test-context-menu.ps1`（12 条断言全过）；
-  顺带修掉两个拦路的既有 bug：`TabView` 被 WinUI 默认样式压成 `VerticalAlignment=Top`
-  （文件列表只占“内容那么高”）与窗口位置/尺寸存坏（见第 6 节第 39/41 条）；
+  「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与设置窗口共享同一份设置）；
+* **右键菜单有两种风格**（2026-09，见第 4 节“右键菜单”）：文件列表里右键行 → 该（批）条目的菜单，
+  右键空白处 → 当前目录的背景菜单；用哪一种由「设置 → 右键菜单 → 使用内置的轻量右键菜单」决定
+  （**默认开 = 内置菜单**）。
+  * **内置菜单（默认，快）**：`Views/DetailsView` 现场搭的 WinUI `MenuFlyout`，只含 exdir 自己的命令 ——
+    文件行是「打开 / 在资源管理器中显示 / 复制路径 / 属性」，背景是
+    「新建文件夹 / 刷新 / 全选 / 复制当前路径 / 在此处打开终端」；不碰 COM，弹出几乎瞬时。
+    `新建文件夹` 是 exdir 自己建目录（`FolderTabViewModel.CreateNewFolderAsync`），
+    `属性` 走 `IShellService.ShowProperties`；
+  * **系统菜单（关掉开关才用，慢但完整）**：内容来自系统外壳（7-Zip / Git / VS Code / WPS /
+    打开方式 / 发送到 等第三方项与子菜单全在），默认**全部开启**，可在同一页里逐项关掉
+    （关掉的项在弹出前从 HMENU 里删掉）。服务端是 `IShellContextMenuService` +
+    `Services/Native/ShellContextMenuInterop`（`IContextMenu` + `IContextMenu2/3` + `SetWindowSubclass`）；
+    清单 = 打开设置页时的样本枚举 ∪ 实际右键过的项（`AppSettings.ShellMenuKnownItems`）。
+  * 回归：`tools/test-context-menu.ps1`（5 个用例：系统菜单 3 个 + 内置菜单 2 个）；
+    顺带修掉两个拦路的既有 bug：`TabView` 被 WinUI 默认样式压成 `VerticalAlignment=Top`
+    （文件列表只占“内容那么高”）与窗口位置/尺寸存坏（见第 6 节第 39/41 条）；
 * **工具条“固定目录”支持拖放固定**（2026-09）：文件列表 / 侧边栏树里的目录可以直接拖到工具条右侧的
   固定目录区（拖拽时强调色高亮 + “固定到工具条”提示，松手即写 `settings.json`），
   右键固定目录按钮可“取消固定”；最多固定 12 个（`MainViewModel.MaxPinnedFolders`）；
@@ -796,13 +1088,18 @@ exdir/
   要在 `PinnedItemsHost` 上 `AddHandler(..., handledEventsToo: true)` + `StartDragAsync`），
   排序落点走 `MainViewModel.MovePinnedFolder`；`tools/test-pin-drag.ps1` 第 4 个用例验证
   （拖 Documents 到 Downloads 右半边 → 顺序互换）；
+* **侧边栏「收藏夹」镜像工具条固定目录**（2026-09，见第 4 节“收藏夹”那条）：`主目录` 下面多一个
+  `收藏夹` 分组，子项与工具条固定目录同序同名（增删/排序即时同步）；把目录从文件列表或侧边栏
+  拖到「收藏夹」分组或其子行上即收藏（悬停整行强调色高亮），右键收藏项可「取消收藏」；
+  行级落点判定 + `TreeView` 层的 `handledEventsToo` 兜底见第 6 节第 54 条；
+  回归：`tools/test-pin-drag.ps1` 用例 0（镜像一致）与用例 5（拖到收藏夹）；
 * **悬停/按下/选中高亮统一改成强调色**（2026-09）：原来是 WinUI 默认的 8% 白（灰底上几乎看不出来），
   现在工具条按钮悬停是强调色 35%（深色）/ 25%（浅色）、按下 60% / 50%；
   文件列表行 / 侧边栏树 / 标签页头 / 菜单项等大表面用低一档的 `ExSurface*`，
   选中态也是强调色、比悬停略重（层次：选中 > 悬停），见第 4 节；
   验证：`tools/inspect-ui.ps1 -Hover Documents` / `-HoverAt "608,191"` 截图对比；
-  例外：地址栏（面包屑分段 / 右侧空白区）与文件列表行内的展开箭头保持普通灰色悬停，
-  见第 4 节 `ExSubtleButtonStyle`；
+  例外：地址栏左侧的面包屑分段与文件列表行内的展开箭头保持普通灰色悬停，见第 4 节 `ExSubtleButtonStyle`；
+  地址栏右侧的空白区（可点进编辑态）连灰色都不要（`ExGhostButtonStyle`，悬停/按下无底色）；
 * **文件列表区底部状态栏**（2026-09，S3）：一行高（`ExRowHeight`=24 DIP）、贴底显示，
   横跨 1~2 个窗格（侧边栏保持全高），窗格占满其余高度；左边 `N 项`，
   中间是选中摘要 + 合计大小（只统计文件），右边是当前卷的可用 / 总容量；
@@ -815,7 +1112,19 @@ exdir/
   见第 4 节“标签条紧凑”与第 6 节第 36 条；双窗格（含标签溢出时的 ◀ ▶）两边标签栏高度一致。
   验证：`tools/capture.ps1` 截图后量像素（标签条上边紧贴窗格上边框、总高 48 物理像素 @200%），
   `tools/inspect-ui.ps1 -Filter <标签名>`（`TabItem` 高 48 物理像素 = 24 DIP）。
-* 键盘导航（S2：`Ctrl+A` 全选、回车打开、type-ahead 等）尚未实现；右键菜单只做了文件列表
+* **选择**（2026-09）：单击文件列表空白处（列头以下、任何一行之外）取消选择并把焦点留在列表上；
+  `Ctrl+A` 全选列表里当前可见的行（就地展开出来的子行也算）；文件列表里**双击行的任意位置**
+  （不只是名称文字 / 图标那一小块）都进入目录 / 打开文件——行内空白处命中的是 `ListViewItem`，
+  所以双击处理器挂在 `DetailsView` 最外层 Grid 上反查行（见第 4 节“双击的命中范围”与第 6 节第 45 条）；
+  `Ctrl+A` 加速器挂在 `DetailsView` 根 Grid 上，只作用于文件列表 —— 焦点在地址栏时 `Ctrl+A` 仍是文本框自己的全选（见第 4 节“选择”）；
+  回归：`tools/test-list-selection.ps1`（5 个用例 11 条断言，真鼠标点击 + `SendKeys`）、
+  `tools/test-row-dblclick.ps1`（8 个用例 28 条断言，真鼠标双击：6 个落点都能进目录 +
+  展开箭头不进目录 + 列表下方空白处不导航；在改动前的版本上跑会挂 2 个落点）；
+* **列宽拖动**（2026-09 修）：把手移进整宽的 `HeaderLayer`（原来落在隐藏时宽度为 0 的“状态”列单元格里，
+  于是非云目录下列边界完全拖不动），见第 4 节“列宽”与第 6 节第 46 条；
+  回归：`tools/test-column-resize.ps1`（8 个用例 20 条断言，真鼠标拖每个列边界 + 双击复位 +
+  列头与数据行对齐 + 落盘 + 列头排序仍可用；修前用例 2/4/5 全部没反应）；
+* 键盘导航的其余部分（S2：`Ctrl+Shift+A` 反选、回车打开、type-ahead 等）尚未实现；右键菜单只做了文件列表
   （条目 + 空白处），侧边栏 / 固定目录 / 磁盘按钮还没有；
 * 文件操作（复制/移动/删除/重命名/新建/压缩/哈希）**完全未实现**。
 

@@ -215,7 +215,7 @@ foreach ($row in $rowList) {
 }
 
 $bmp.Dispose()
-try { $proc.CloseMainWindow() | Out-Null; $proc.WaitForExit(3000) | Out-Null } catch { }
+# exdir 关窗口只是隐藏到托盘（隐藏时已统一落盘），收尾直接 Kill
 try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
 
 # ------------------------------------------------------------------ 还原

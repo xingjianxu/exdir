@@ -33,6 +33,16 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <!--
+      自定义入口点（Program.cs）。关掉 XAML 生成的 Main 是为了把「单实例闸门」放在
+      XAML/WinUI 初始化之前：exdir 常驻托盘，用户第二次双击 exe 时应该只置位一个内核事件
+      就退出，而不是白跑一遍 WinUI 初始化再退出。Program.cs 里的 Main 与
+      obj\<平台>\<配置>\<TFM>\<RID>\App.g.i.cs 里 XAML 生成的版本逐行一致，只是多这一层判断。
+    -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+
   <!--
     Publish 相关
     ============
@@ -112,6 +122,19 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!--
+      设置窗口里的 SettingsCard / SettingsExpander —— Windows 11 设置界面的卡片式行布局。
+      版本锁 8.2.251219（8.x 里最后一个稳定版）：它出 net8.0-windows10.0.19041 目标，
+      依赖 Microsoft.WindowsAppSDK >= 1.6（本项目是 2.5.1，向上兼容）。
+      8.3.x 只有 preview，暂不跟。
+    -->
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" Version="8.2.251219" />
+    <!--
+      托盘图标（WinUI 3 自身没有托盘 API，见 AGENTS.md 第 4 节“托盘驻留”）。
+      图标本体走 Shell_NotifyIcon，不需要包标识，非打包部署可用；
+      版本锁在 2.3.2：它是最后一个支持 net8.0-windows 的版本（2.4.x 只出 net10.0）。
+    -->
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.3.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
   </ItemGroup>
 

@@ -36,20 +36,35 @@
                 <DataTemplate x:DataType="vm:SidebarNodeViewModel">
                     <TreeViewItem
                         AutomationProperties.Name="{x:Bind Name}"
+                        AllowDrop="True"
+                        ContextRequested="SidebarItem_ContextRequested"
+                        DragLeave="SidebarItem_DragLeave"
+                        DragOver="SidebarItem_DragOver"
                         HasUnrealizedChildren="{x:Bind HasUnrealizedChildren, Mode=TwoWay}"
                         IsExpanded="{x:Bind IsExpanded, Mode=TwoWay}"
                         ItemsSource="{x:Bind Children}"
                         ToolTipService.ToolTip="{x:Bind Tooltip}">
-                        <StackPanel Orientation="Horizontal" Spacing="8" ToolTipService.ToolTip="{x:Bind Tooltip}">
-                            <FontIcon
-                                FontSize="14"
-                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
-                                Glyph="{x:Bind Glyph}" />
-                            <TextBlock
-                                VerticalAlignment="Center"
-                                Text="{x:Bind Name}"
-                                TextTrimming="CharacterEllipsis" />
-                        </StackPanel>
+                        <Grid>
+                            <!-- 拖拽落点高亮：只有悬停在「收藏夹」分组或其行上时才出现（见 SidebarView.xaml.cs） -->
+                            <Border
+                                CornerRadius="4"
+                                IsHitTestVisible="False"
+                                Visibility="{x:Bind IsDropTarget, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                                <Border.Background>
+                                    <SolidColorBrush Color="{ThemeResource SystemAccentColor}" Opacity="0.25" />
+                                </Border.Background>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Spacing="8" ToolTipService.ToolTip="{x:Bind Tooltip}">
+                                <FontIcon
+                                    FontSize="14"
+                                    Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"
+                                    Glyph="{x:Bind Glyph}" />
+                                <TextBlock
+                                    VerticalAlignment="Center"
+                                    Text="{x:Bind Name}"
+                                    TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </Grid>
                     </TreeViewItem>
                 </DataTemplate>
             </TreeView.ItemTemplate>

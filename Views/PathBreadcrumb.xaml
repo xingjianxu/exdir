@@ -80,7 +80,9 @@
 
         <!-- 右侧空白区（面包屑之后到地址栏右边界）的点击目标：点它切到编辑态。
              位置/宽度由 code-behind 按面包屑实际宽度算出来（见 UpdateBlankArea），
-             放在 ScrollViewer 之上，避免被 ScrollViewer 吃掉点击。 -->
+             放在 ScrollViewer 之上，避免被 ScrollViewer 吃掉点击。
+             用 ExGhostButtonStyle：可点，但悬停/按下没有任何底色（它几乎铺满整条地址栏，
+             给灰色悬停会像“整条地址栏被按住了”，见 Themes/ExdirTheme.xaml）。 -->
         <Button
             x:Name="BlankArea"
             Width="0"
@@ -92,7 +94,7 @@
             AutomationProperties.Name="地址栏空白区"
             Click="BlankArea_Click"
             IsTabStop="False"
-            Style="{StaticResource ExSubtleButtonStyle}"
+            Style="{StaticResource ExGhostButtonStyle}"
             ToolTipService.ToolTip="{x:Bind ViewModel.TooltipText, Mode=OneWay}"
             Visibility="Collapsed" />
 

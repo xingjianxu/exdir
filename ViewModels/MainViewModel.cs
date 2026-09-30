@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Exdir.Diagnostics;
+using Exdir.Helpers;
 using Exdir.Models;
 using Exdir.Services;
 
@@ -55,6 +56,11 @@ public sealed partial class MainViewModel : ObservableObject
 
         Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService);
         Sidebar.NavigateRequested += OnSidebarNavigateRequested;
+        Sidebar.PinRequested += OnSidebarPinRequested;
+        Sidebar.UnpinRequested += OnSidebarUnpinRequested;
+
+        // 侧边栏的「收藏夹」分组是工具条固定目录的镜像：增删、拖拽排序都立刻同步过去
+        PinnedFolders.CollectionChanged += (_, _) => Sidebar.SyncFavorites(PinnedFolders);
 
         PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu);
         SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu);
@@ -366,6 +372,23 @@ public sealed partial class MainViewModel : ObservableObject
         PersistPinnedFolders(writeToDisk: true);
     }
 
+    /// <summary>按路径取消固定（侧边栏收藏项的右键「取消收藏」）。</summary>
+    public void UnpinFolderByPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var folder = PinnedFolders.FirstOrDefault(
+            p => string.Equals(p.Path, path, StringComparison.OrdinalIgnoreCase));
+
+        if (folder is not null)
+        {
+            UnpinFolder(folder);
+        }
+    }
+
     /// <summary>
     /// 工具条上的固定目录拖拽排序：把 <paramref name="path" /> 插到第 <paramref name="targetIndex" />
     /// 个之前（<c>0..Count</c>，<c>Count</c> 表示放到最后）。和增删一样立即落盘。
@@ -547,14 +570,16 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Save();
     }
 
-    // ------------------------------------------------------------------ 设置对话框
-
-    /// <summary>给设置对话框做一份“当前设置”的编辑快照（点“取消”就丢掉的副本）。</summary>
-    public SettingsViewModel CreateSettingsSnapshot() => new(_settings.Current, _contextMenu);
+    // ------------------------------------------------------------------ 设置窗口
 
     /// <summary>
-    /// 应用设置对话框里改过的内容（点“保存”时调用）。
-    /// 点“保存”是明确动作，所以结束时立刻落盘，不等到退出。
+    /// 给设置窗口做一份编辑模型。设置是即时生效的，所以它只有一份、窗口关闭就丢掉。
+    /// </summary>
+    public SettingsViewModel CreateSettingsEditor() => new(_settings.Current, _contextMenu);
+
+    /// <summary>
+    /// 应用设置窗口里改过的内容（用户每动一项就调一次，见 <see cref="SettingsViewModel.Changed" />）。
+    /// 因为是明确动作，所以结束时立刻落盘，不等到退出。
     /// </summary>
     public void ApplySettings(SettingsViewModel edited)
     {
@@ -571,6 +596,7 @@ public sealed partial class MainViewModel : ObservableObject
         settings.ShowExtensions = edited.ShowExtensions;
         settings.FoldersFirst = edited.FoldersFirst;
         settings.ColumnAutoFit = edited.ColumnAutoFit;
+        settings.RowHeight = ColumnLayout.NormalizeRowHeight(edited.RowHeight);
 
         OnPropertyChanged(nameof(ShowHiddenFiles));
         OnPropertyChanged(nameof(ShowExtensions));
@@ -585,6 +611,7 @@ public sealed partial class MainViewModel : ObservableObject
                 // 赋值是幂等的：值没变时不会重排 / 不触发列宽回写
                 tab.FoldersFirst = edited.FoldersFirst;
                 tab.Columns.AutoFit = edited.ColumnAutoFit;
+                tab.Columns.RowHeight = settings.RowHeight;
             }
         }
 
@@ -597,7 +624,12 @@ public sealed partial class MainViewModel : ObservableObject
         IsSidebarVisible = edited.ShowSidebar;
         IsDualPane = edited.DualPane;
 
-        // 右键菜单：清单本身也存回去（设置页里新枚举出来的项要留下，否则下次打开又得重新枚举），
+        // 右键菜单：风格（系统 / 内置）与清单。
+        // 风格是视图在每次右键时现读的（见 FolderTabViewModel.UseBuiltInContextMenu），
+        // 所以这里只需写回设置，不需要通知任何界面。
+        settings.UseBuiltInContextMenu = edited.UseBuiltInContextMenu;
+
+        // 清单本身也存回去（设置页里新枚举出来的项要留下，否则下次打开又得重新枚举），
         // 被关掉的只存 Key，弹出菜单前据此把项从 HMENU 里删掉。
         settings.ShellMenuKnownItems = edited.ShellMenuItems.Select(i => i.Item).ToList();
         settings.ShellMenuDisabledItems = edited.ShellMenuItems
@@ -608,10 +640,12 @@ public sealed partial class MainViewModel : ObservableObject
         _settings.Save();
 
         Log.Write(
-            $"设置已保存：隐藏文件={edited.ShowHiddenFiles} 扩展名={edited.ShowExtensions} "
+            $"设置已应用：隐藏文件={edited.ShowHiddenFiles} 扩展名={edited.ShowExtensions} "
             + $"文件夹优先={edited.FoldersFirst} 动画={edited.EnableListAnimations} 列宽自适应={edited.ColumnAutoFit} "
+            + $"行高={settings.RowHeight:0} "
             + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane} "
-            + $"右键菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
+            + $"右键菜单={(edited.UseBuiltInContextMenu ? "内置" : "系统")} "
+            + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
     }
 
     /// <summary>磁盘热插拔后刷新磁盘条与侧边栏。</summary>
@@ -620,6 +654,9 @@ public sealed partial class MainViewModel : ObservableObject
     {
         ReloadDrives();
         Sidebar.BuildTree();
+
+        // BuildTree 重建了「收藏夹」分组（新节点是空的），把固定目录重新灌一遍
+        Sidebar.SyncFavorites(PinnedFolders);
     }
 
     // ------------------------------------------------------------------ 内部
@@ -792,6 +829,15 @@ public sealed partial class MainViewModel : ObservableObject
             _ = tab.NavigateAsync(path);
         }
     }
+
+    /// <summary>侧边栏里把目录拖到「收藏夹」分组上：和拖到工具条固定目录区是同一条链路。</summary>
+    private void OnSidebarPinRequested(object? sender, IReadOnlyList<string> paths)
+    {
+        var added = PinFolders(paths);
+        Log.Write($"侧边栏收藏：拖入 {paths.Count} 项，新增 {added} 项");
+    }
+
+    private void OnSidebarUnpinRequested(object? sender, string path) => UnpinFolderByPath(path);
 
     private void OnPaneNavigated(object? sender, string path)
     {

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Exdir.Helpers;
 
 namespace Exdir.Models;
 
@@ -40,6 +41,13 @@ public sealed class AppSettings
     /// <summary>名称列是否自动填满窗格剩余宽度（用户手动拖过名称列后为 false）。</summary>
     public bool ColumnAutoFillName { get; set; } = true;
 
+    /// <summary>
+    /// 文件列表每一行的行高（DIP），可在设置窗口「文件列表 → 行高」里调。
+    /// 图标与名称在行内仍然垂直居中，行高只改变上下留白；
+    /// 取值范围与夹取逻辑见 <see cref="ColumnLayout.NormalizeRowHeight" />。
+    /// </summary>
+    public double RowHeight { get; set; } = ColumnLayout.DefaultRowHeight;
+
     /// <summary>列宽是否整体自适应窗格宽度（用户拖动过列宽后为 false）。</summary>
     public bool ColumnAutoFit { get; set; } = true;
 
@@ -69,6 +77,16 @@ public sealed class AppSettings
     public List<QuickCommand> QuickCommands { get; set; } = new();
 
     // ---------- 右键菜单 ----------
+
+    /// <summary>
+    /// 文件列表的右键菜单用哪一种：
+    /// true（默认）= exdir 自己用 WinUI <c>MenuFlyout</c> 现搭一份轻量菜单，弹出几乎瞬时，
+    ///               但内容只含 exdir 自己实现的那几个命令；
+    /// false = 现场向系统外壳要 <c>IContextMenu</c>（内容完整，含 7-Zip / Git 这类第三方扩展，
+    ///         但要建 COM 对象、枚举菜单，弹出明显慢）。
+    /// 详见 AGENTS.md 第 4 节“右键菜单”。
+    /// </summary>
+    public bool UseBuiltInContextMenu { get; set; } = true;
 
     /// <summary>
     /// 已经在设置里见过、可以逐项开关的系统右键菜单项。

@@ -35,19 +35,29 @@
   - 地址栏（S9 主体完成，2026-09）：路径按目录切分成可点击的面包屑（chevron 分隔），
     点分段跳转、点当前段或右侧空白区切到可编辑输入框（回车前往、Esc/失焦取消），
     编辑入口也有 `Ctrl+L` / `Alt+D`；超长路径滚到最右并在左端提示省略。
-  - 菜单栏**「配置 → 设置…」= 统一设置对话框**（2026-09，S17a / S17b / S8b）：**左导航 + 右正文**两栏，
-    左侧四个分类（文件列表 / 外观 / 布局 / 右键菜单），右侧每项是“标题 + 说明 + 开关”，
-    前三类共八项（过渡动画 / 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 列宽自适应 /
+  - 菜单栏**「配置 → 设置…」= 统一设置窗口**（2026-09，S17a / S17b / S17d / S8b）：
+    独立窗口（`Views/SettingsWindow`，默认 860×800），左侧 `NavigationView` 四个分类
+    （文件列表 / 外观 / 布局 / 右键菜单），右侧一列 Windows 11 风格设置卡片（社区工具包 `SettingsCard`，
+    标题 + 说明 + 右侧控件），只显示当前分类那一页；
+    前三类共九项（过渡动画 / 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高 / 列宽自适应 /
     工具条 / 侧边栏 / 双窗格），「右键菜单」类是系统菜单项的逐项开关（默认全开，见 S8b）；
-    对话框是一个 `ContentDialog`（`Views/SettingsDialog`），
-    底部「保存 / 取消」；点在快照上、点保存才应用并立即落盘（取消什么都不改）；
-    回归脚本 `tools/test-settings.ps1`，布局截图 `tools/shot-settings.ps1`。
-  - 系统右键菜单（2026-09，S8a / S8b）：文件列表条目 / 空白处的真系统菜单 + 设置页逐项开关，见下面的 S8。
+    **改任何一项都即时生效并立即落盘**（没有「保存 / 取消」）；
+    回归脚本 `tools/test-settings.ps1`（全程 UIA 模式），布局截图 `tools/shot-settings.ps1`。
+  - 右键菜单（2026-09，S8a / S8b / S8c）：默认是 exdir 自建的轻量菜单（弹出瞬时），
+    可在设置里切回**系统真实菜单**（文件列表条目 / 空白处）+ 逐项开关，见下面的 S8。
+  - **单窗口 + 常驻托盘**（2026-09）：点关闭按钮 / `Alt+F4` 只把窗口隐藏到通知区域，进程、窗格、
+    标签页与会话全部留着，再打开（左键点托盘图标 / 第二次双击 exe）就是一次 `ShowWindow`（瞬时）；
+    托盘右键菜单「显示主窗口 / 退出 exdir」，菜单里的「退出」才是真退出；
+    单实例闸门（命名内核事件 `Local\exdir.activate`）跑在 XAML 初始化之前（`Program.cs`），
+    第二次双击 exe 只跑几十毫秒，不会出现第二个托盘图标 / 两份会话互相覆盖；
+    依赖 `H.NotifyIcon.WinUI 2.3.2`，回归脚本 `tools/test-tray.ps1`，见 AGENTS.md 第 4 节“托盘驻留”。
   - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
     松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
     `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
   - 工具条“固定目录”支持**拖拽排序**（2026-09，S7b）：按住固定目录按钮横向拖到兄弟按钮上就换位，
     拖动时有插入位置提示条，松手立即写 `settings.json`（也是“工具条上的拖拽是由应用自己识别手势的”首个实现）。
+  - 侧边栏“收藏夹”分组（2026-09，S7c）：`主目录` 下面多一个 `收藏夹` 分组，子项与工具条固定目录
+    同序同名；把目录从文件列表 / 侧边栏拖到该分组或其子行上即收藏；右键收藏项可取消收藏。
   - 云文件夹的同步状态列（2026-09，S23）：云同步目录（OneDrive / WPS 云盘 / 其它 CFAPI 同步根）
     的列表最前面多出一列状态图标（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步），
     可点列头排序；非云目录整列隐藏。
@@ -72,9 +82,13 @@
    建议先 A，后续需要再逐步替换成 B。
 3. **右键菜单**：直接弹**系统真实右键菜单**（`IContextMenu` + `SHBindToParent`，能拿到第三方 shell 扩展，但 UI 风格不统一、难以自动化测试）
    还是**自建菜单**（风格统一、可测试，但只能用自己实现的命令）？建议：自建为主 + “显示系统菜单”兜底项。
-   **已决定（2026-09）：直接弹系统真实菜单**（`Views/DetailsView` → `IShellContextMenuService`），
-   菜单项从系统读出来后在设置对话框「右键菜单」页里逐项开关（默认全开），
-   关掉的项在 `TrackPopupMenu` 之前从 HMENU 里删掉；自建菜单（打开 / 复制路径 / 压缩…）仍未做。
+   **已决定（2026-09）：两种都做，由设置切换，默认用自建（内置）菜单**：
+   - 内置菜单（默认）：`Views/DetailsView` 用 WinUI `MenuFlyout` 现场搭（打开 / 在资源管理器中显示 /
+     复制路径 / 属性；背景是 新建文件夹 / 刷新 / 全选 / 复制当前路径 / 在此处打开终端），不建 COM，弹出瞬时；
+   - 系统菜单（把「设置 → 右键菜单 → 使用内置的轻量右键菜单」关掉才用）：
+     `IShellContextMenuService`，菜单项从系统读出来后在设置页逐项开关（默认全开），
+     关掉的项在 `TrackPopupMenu` 之前从 HMENU 里删掉。
+   仍未做：压缩 / 复制粘贴删除重命名这类文件操作（见 S4–S6）。
 4. **视图形态**：目前只有“详细信息列表”。后续要不要 图标/缩略图/紧凑 三种？优先级如何？
 5. **快捷菜单**首批要内置哪些命令（当前按需求留空，只保留了数据驱动的框架）。
 6. **是否需要单元测试工程**（`exdir.Tests`，xUnit）？如果要，建议在第 3 步之前建立，之后每步补测试。
@@ -97,6 +111,11 @@
           `←/→` 方向键展开/折叠，双击仍是“进入目录”；
     - [x] 窗格过窄不再出现“列被挤出可视区”：自动模式各列按余量等比压缩，一旦手动拖过列宽就切到手动模式
           （固定列宽 + `ScrollViewer` 横向滚动，`HeaderContent` 跟随 `HorizontalOffset` 平移）；
+    - [x] 双击的命中范围 = 整条行高亮区（2026-09）：行内任意落点（左边距 / 名称文字右侧空白 /
+          类型列与大小列的空白处 / 行内上下留白）双击都进入目录 / 打开文件；
+          双击处理器改挂在 `DetailsView` 最外层 Grid 上（行内空白处命中的是 `ListViewItem`，
+          挂在行模板 Grid 上收不到），行模板 Grid 补 `Background="Transparent"`；
+          回归 `tools/test-row-dblclick.ps1`（改动前的版本上跑会挂 2 个落点）；
     - [ ] 列头排序增加“名称自然排序”（`strings like file2 < file10`，实现 `NaturalStringComparer`）；
     - [ ] 右键列头 → 显示/隐藏列菜单（先只做 UI 骨架，行为在 S1 实现）。
   - 验收：拖动把手列宽变化且重启后保持（已用 `tools/inspect-ui.ps1` 量列边界验证）；把窗格拖到 400 DIP 宽时不出现列被裁掉；
@@ -109,6 +128,10 @@
   - 内容：`Ctrl+A` 全选、`Ctrl+Shift+A` 反选、`Enter` 打开、`Backspace` 上一级（仅当焦点在列表时，不要抢占路径框输入）、
     `Home/End/PageUp/PageDown`、输入字母快速定位（type-ahead）、`Esc` 清空选择、
     多选状态下 `Enter` 只打开第一项且目录全部在新标签页打开（可配置）。
+  - [x] `Ctrl+A` 全选 + 单击列表空白处取消选择（2026-09）：加速器挂在 `DetailsView` 根 Grid 上，
+        只对文件列表生效（焦点在地址栏时 `Ctrl+A` 仍是文本框全选）；空白处单击靠 `FindRowItem` 排除行内点击，
+        清空后把焦点留在列表上；回归 `tools/test-list-selection.ps1`（5 个用例 12 条断言，真鼠标 + `SendKeys`）。
+  - [ ] 其余：`Ctrl+Shift+A` 反选、`Enter` 打开、`Backspace` 上一级、`Home/End/PageUp/PageDown`、type-ahead、`Esc` 清空选择。
   - 验收：`inspect-ui.ps1 -Keys` 发送按键后控件树中选中项数量正确；路径框输入 `Backspace` 不受影响。
   - 预估：~250 行，3 个文件。
 
@@ -177,6 +200,19 @@
     `AddHandler(..., handledEventsToo: true)` 自己识别手势，移动超过阈值后调 `StartDragAsync`。
     验收：`tools/test-pin-drag.ps1` 第 4 个用例（把最左边两个固定目录中排在前面的那个拖到另一个的
     右半边 → `settings.json` 的 `PinnedFolders` 前两项互换），拖拽中的截图里能看到插入位置提示条。
+  - [x] **S7c 侧边栏「收藏夹」分组**（2026-09）：侧边栏 `主目录` 下面多一个 `收藏夹` 分组，子项与
+    工具条固定目录同序同名（增删 / 排序即时同步）；把目录从文件列表 / 侧边栏拖到该分组或其子行上
+    即收藏（悬停整行强调色高亮）；右键收藏项可「取消收藏」（工具条隐藏时的移除入口）。
+    改 `ViewModels/SidebarViewModel.cs`（`SidebarNodeKind.FavoritesGroup/Favorite`、`IsDropTarget`、
+    `SyncFavorites`、`PinRequested`/`UnpinRequested`）、`ViewModels/MainViewModel.cs`（订阅
+    `PinnedFolders.CollectionChanged`、`UnpinFolderByPath`）、`Views/SidebarView.xaml(.cs)`、
+    `Helpers/FileTypeHelper.cs`（`FavoriteGlyph`）、`tools/test-pin-drag.ps1`（用例 0 / 用例 5）。
+    踩到的坑（已记入 `AGENTS.md` 第 6 节第 54 条）：拖放事件的 `e.OriginalSource` 永远是带 `AllowDrop`
+    的那个元素（挂在 TreeView 上只能拿到 TreeView），落点必须写在行模板根上、用
+    `TreeView.ItemFromContainer` 反查；`TreeViewList` 还会把 `AcceptedOperation` 改回 `None`，
+    要在 `TreeView` 上用 `handledEventsToo` 再确认一次，否则松手没有 Drop。
+    验收：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `settings.json` 一致）、
+    用例 5（拖 `音乐` 到收藏夹 → `settings.json` 新增 `…\Music`，侧边栏同步出现）。
   - [ ] 其余（文件本身可拖出到资源管理器、拖到目录行上悬停进入目录）仍未做。
 
 ### Phase 3 — 交互增强
@@ -204,16 +240,26 @@
     Win11 的外壳菜单是自绘的，UIA 里读不到菜单项），另跑了 test-status-bar / test-shell-icons /
     test-settings / measure-row-align 全绿。
   - [x] **S8b 设置页「右键菜单」分类**（2026-09，~180 行，6 个文件）：
-    设置对话框左侧多一个「右键菜单」分类，右侧列出系统右键菜单项（含第三方扩展，默认全部开启）
+    设置页左侧多一个「右键菜单」分类，右侧列出系统右键菜单项（含第三方扩展，默认全部开启）
     逐项开关；关掉的项存进 `ShellMenuDisabledItems`（key 优先用规范动词，例如 `verb:properties`），
     弹出菜单前把这些项从 HMENU 里删掉（顺带清空子菜单、清理多余分隔符）。
     清单来源 = 打开设置页时用样本目标现枚举（样本 .txt / 配置目录 / 配置目录背景）
     ∪ 实际右键过的项（落盘在 `ShellMenuKnownItems`）。新增 `Models/SettingsCategory.ShellMenu`、
-    `ViewModels/ShellMenuItemViewModel`、`Views/SettingsDialog` 里一页 `ItemsControl`。
+    `ViewModels/ShellMenuItemViewModel`；页面本身后来在 S17d 里搬到了 `Views/SettingsView`。
     验收：`tools/test-settings.ps1` 扩成 5 个用例 47 条断言（含“系统菜单项默认全开”、
     “关掉「属性」后落盘 verb:properties”、“重新打开仍为关”、“再拨回来就清空”），
     截图 `tools/shot-settings.ps1`（.artifacts\settings-右键菜单.png）。
-  - [ ] 未做：自建菜单部分（打开 / 在新标签页打开 / 复制路径 / 在终端打开 / 压缩…）、
+  - [x] **S8c 内置（自建）轻量右键菜单 + 风格切换**（2026-09）：
+    新增 `AppSettings.UseBuiltInContextMenu`（默认 **true**）与设置页「右键菜单」页的
+    「使用内置的轻量右键菜单」开关；`Views/DetailsView` 每次右键时现读该值：
+    内置菜单用 WinUI `MenuFlyout` 现场搭（文件行：打开 / 在资源管理器中显示 / 复制路径 / 属性；
+    背景：新建文件夹 / 刷新 / 全选 / 复制当前路径 / 在此处打开终端），不建 COM、弹出瞬时；
+    `FolderTabViewModel.CreateNewFolderAsync`（exdir 自己建目录并选中）与
+    `IShellService.ShowProperties`（`ProcessStartInfo.Verb="properties"`）是新增的两个命令；
+    内容与系统菜单**故意不同**，两种菜单不共享清单。
+    验收：`tools/test-context-menu.ps1` 扩成 5 个用例（系统菜单 3 个 + 内置菜单 2 个，含
+    「内置菜单不是 #32768」「UIA 能按名字读到菜单项」「点「新建文件夹」真的建出目录」）。
+  - [ ] 未做：内置菜单里的「在新标签页打开」「压缩…」等仍需要文件操作能力（见 S4–S6）；
     列头与侧边栏节点的菜单（侧边栏 / 固定目录 / 磁盘按钮现在都还没有右键菜单）。
   - 预估：~550 行，6 个文件（实际 ~1080 行，17 个文件——系统菜单这一块比预想的细）。 
 
@@ -338,6 +384,45 @@
       默认停在「文件列表」/ 每页只看得到本分类的开关 / 初始值与 settings.json 一致 / 取消不落盘 /
       保存立即落盘并作用到文件列表 / 跨分类改「布局」后重新打开能读回）；
       新增 `tools/shot-settings.ps1` 给每个分类截一张图（`.artifacts\settings-<分类名>.png`）。
+  - [x] **S17c 设置对话框加「行高」滑块**（2026-09，改 8 个文件 / 新增 2 个，~150 行）
+    - 内容：文件列表的行高可调（20~48 DIP、步进 2），默认 **28 DIP**（原来固定 24）；
+      设置对话框「文件列表」页最后一行是「行高」滑块 + 常驻当前值。
+      行高只改变上下留白，图标与名称仍在行内垂直居中；列头保持 26 DIP 不变。
+    - 做法：`AppSettings.RowHeight`（默认 `ColumnLayout.DefaultRowHeight`，夹取在 `NormalizeRowHeight`）
+      → `SettingsViewModel.RowHeight` → 新增 `Views/SettingsSliderRow.xaml(.cs)`
+      （Title/Description/Value/Minimum/Maximum/StepFrequency，与 SettingsToggleRow 同一套行式布局）
+      → `DetailsView.xaml` 行模板 `Height="{x:Bind Columns.RowHeight}"`、`ItemContainerStyle.MinHeight` 归零
+      → `MainViewModel.ApplySettings` 把值推给所有已存在标签页的 `ColumnLayout.RowHeight`
+      （新建标签页在 `FolderTabViewModel` 构造里读设置）。
+    - 踩坑（已记入 `AGENTS.md` 第 6 节第 44 条）：`MinHeight` 是**下限**，用它配行高会让“调小”不生效；
+      行高放在每标签页共享的 `ColumnLayout` 上，而不是每个 `FileItemViewModel` 上。
+    - 验收：`tools/test-settings.ps1` 用例 6（6 条断言：初值一致 / 切分类读不到 / 保存落盘 /
+      UIA 量 `ListItem` 高度 = 28 DIP 与 40 DIP）全绿；`tools/measure-row-align.ps1`
+      在 28 与 48 两种行高下都通过（中位数偏差 2.5 物理像素）。
+  - [x] **S17d 设置对话框 → Windows 11 风格独立设置窗口**（2026-09，删 6 个文件 / 新增 2 个，~450 行）
+    - 内容：不再自己写对话框内容与行模板，改用 WinUI 推荐的做法：
+      独立 `Window`（默认 860×800、工作区居中、同一时刻只开一个，已开就 `Activate`），
+      左侧 `NavigationView` 四个分类，右侧一列 Windows 11 风格设置卡片
+      （社区工具包 `CommunityToolkit.WinUI.Controls.SettingsControls` 8.2.251219 的 `SettingsCard`），
+      并改成 **改动即时生效 + 立即落盘**（没有「保存 / 取消」）。
+    - 做法：删除 `Views/SettingsDialog.xaml(.cs)`、`Views/SettingsToggleRow.xaml(.cs)`、
+      `Views/SettingsSliderRow.xaml(.cs)`；新增 `Views/SettingsWindow.xaml(.cs)`（外壳：标题/尺寸/接线）
+      与 `Views/SettingsView.xaml(.cs)`（正文：NavigationView + SettingsCard，ViewModel 是 DP）；
+      `SettingsViewModel` 从“快照”改成“当前值 + `Changed` 事件”（每个属性走 `SetAndNotify`，
+      `ShellMenuItemViewModel` 改成 `ObservableObject` 以便把开关改动汇报上去）；
+      `MainViewModel.CreateSettingsSnapshot()` → `CreateSettingsEditor()`；
+      `MainWindow.Settings_Click` 改成开窗口并复用。
+    - 踩坑（已记入 `AGENTS.md` 第 6 节第 50—53 条）：
+      `Window` 不是 `FrameworkElement` → 写在 Window 根上的 `x:Bind` 用不了 `{StaticResource}` 转换器
+      （CS1503），所以正文必须包一层 UserControl；
+      `SettingsCard` 在卡片宽 < 476 DIP 时把控件换行到标题下方（`SettingsCardWrapThreshold`）
+      → 窗口宽度不能小（600 宽只有 ~372 的卡片，取 860）；
+      `NavigationView` 换页要接 `SelectionChanged`，`ItemInvoked` 在键盘 / 程序化选中时不触发；
+      自动化脚本找「设置」窗口必须再按进程号过滤（桌面上 `ApplicationFrameHost` 也有同名窗口）。
+    - 验收：`tools/test-settings.ps1` 重写为 6 个用例 48 条断言全绿（分类齐全 /
+      每页只显示本分类的项 / 初始值一致 / 拨一下立即落盘 / 立刻作用到文件列表 /
+      跨分类与关窗重开读回 / 同一时刻只开一个窗口 / 右键菜单项默认全开且能逐项关闭 /
+      行高滑块改完列表行真的变高），全程 UIA 模式驱动（不需要前台窗口 / 真鼠标）。
 
 - [ ] **S18 文件系统监视自动刷新**
   - 目标：`FileSystemWatcher` 监视当前目录，外部变动时增量刷新（去抖），保持选中与滚动位置。
@@ -420,15 +505,15 @@
 | 大目录枚举无分批 | 一次性构建整个 `ObservableCollection`（已用整体替换避免 O(n²)，但内存与首次渲染仍是瓶颈） | S21 |
 | 无文件系统监视 | 外部改动需手动 F5 | S18 |
 | 快捷菜单为空 | 按需求刻意留空，仅数据驱动 | S17 |
-| 设置对话框尺寸写死（606×408 DIP），窗口比它小时边缘会被裁 | 两列固定宽度 + 根 `Grid` 的 `MinHeight`；`ContentDialog` 只会把对话框约束在窗口内，不会自己缩（右侧正文仍有 `ScrollViewer`） | 需要时改成按窗口尺寸自适应 |
+| 设置窗口宽度有下限 | `SettingsCard` 在卡片宽 < 476 DIP 时把控件换行到标题下方，所以窗口默认 860 DIP 宽；屏幕比 860 DIP 还窄时会被系统夹小，卡片就换成竖排 | 需要时把左导航收成 compact（48 DIP）或调小 `SettingsCardWrapThreshold` |
 | 提权运行后拖放失效 | Windows 不允许高完整性级别（管理员）进程参与拖放：`DragItemsStarting` 会触发，但永远收不到 `DragOver`/`Drop`；以普通权限运行则正常（见 AGENTS.md 第 6 节第 21 条） | 系统限制，无解；必要时在界面上提示 |
-| 拖放只做了“目录 → 工具条固定目录”与“工具条固定目录之间排序” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
+| 拖放只做了“目录 → 工具条固定目录”“工具条固定目录之间排序”与“目录 → 侧边栏收藏夹” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
 | 固定目录最多 12 个 | 工具条固定目录区不滚动，太多了会把左侧磁盘区挤没（`MainViewModel.MaxPinnedFolders`） | 需要时改成横向滚动 / 溢出菜单 |
 | 无右键菜单 | 需求未明确，需先确认路线 | S8（已解决 S8a/S8b：文件列表条目 + 空白处弹系统真菜单，设置页可逐项关闭；侧边栏/列头与自建命令项仍未做） |
 | 文件列表只有“内容那么高” | `TabView` 默认样式是 `VerticalAlignment=Top`，列上只有两三个文件时列表下面一大片空白既点不到也没有右键 | 已修（S8a 兼带：`PaneView` 的 TabView 显式 `Stretch`，见 AGENTS.md 第 6 节第 39 条） |
 | 窗口位置/尺寸可能存坏 | DIP 下限被当成物理像素夹（高分屏下窗口只有下限的一半宽）；最小化时存下 `-32000` 哨兵值 | 已修（S8a 兼带，见 AGENTS.md 第 6 节第 41 条） |
 | 侧边栏同步是“尽力而为” | 只在已加载节点里查找，深层目录不会自动展开定位 | S10（可加“展开到当前路径”） |
-| 单实例未处理 | 多次启动会有多个进程 | S19 |
+| 单实例 | 已解决（2026-09，托盘驻留）：命名事件 `Local\exdir.activate` 做闸门，闸门跑在 XAML 初始化之前，第二次双击 exe 只唤回已有窗口；不再是“多个进程” | — |
 | 只有 x64 验证过 | x86/ARM64 未测试 | 需要时再验证 |
 | 展开的子项不随文件变化刷新 | 已展开目录的子项只在展开时枚举一次，需要 F5 刷新整个标签页 | 将来做文件系统监视时一并处理 |
 | 无单元测试 | 纯逻辑可测但尚未建工程 | S20 |

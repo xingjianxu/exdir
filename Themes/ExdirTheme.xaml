@@ -58,6 +58,11 @@
 
     <x:Double x:Key="ExToolbarHeight">34</x:Double>
     <x:Double x:Key="ExListHeaderHeight">26</x:Double>
+    <!--
+        状态栏（文件列表区底部那一条）的高度。列头也是同一密度（ExListHeaderHeight）。
+        注意：文件列表“数据行”的行高**不再用这个资源**——它由设置里的「行高」决定，
+        绑在 Views/DetailsView.xaml 行模板的 Grid.Height 上（默认 28，见 ColumnLayout.DefaultRowHeight）。
+    -->
     <x:Double x:Key="ExRowHeight">24</x:Double>
     <x:Double x:Key="ExSplitterWidth">6</x:Double>
 
@@ -169,10 +174,24 @@
     </Style>
 
     <!--
-        例外：地址栏的面包屑分段/空白区、以及文件列表行内的展开箭头，悬停**保持普通灰色**
+        列头排序按钮：铺满整列——整列宽度、整个表头高度都是命中区（不再只有文字那一小块），
+        悬停底色是直角矩形（普通扁平按钮那 4 DIP 圆角铺满一列宽后像一张“卡片”）。
+        最左/最右那一列还会在 DetailsView 的 code-behind 里各往外多铺 6 DIP（= ExRowPadding
+        的左右内边距），让列头的高亮范围与数据行的行高亮范围完全对齐。
+        文字仍然靠左（“大小”列靠右，与它下面的数字对齐），由使用处覆盖 HorizontalContentAlignment。
+    -->
+    <Style x:Key="ExColumnHeaderButtonStyle" TargetType="Button" BasedOn="{StaticResource ExFlatButtonStyle}">
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+    </Style>
+
+    <!--
+        例外：地址栏的面包屑分段、以及文件列表行内的展开箭头，悬停**保持普通灰色**
         （即 ExSubtleButtonBackgroundPointerOver/Pressed：深色主题叠白、浅色主题叠黑），不要强调色——
-        地址栏空白区几乎铺满整条地址栏、行内展开箭头只有 18px，这两处一上强调色就喧宾夺主，
-        反而看不清当前指着的到底是哪一段路径/哪一行。
+        地址栏分段与行内展开箭头一上强调色就喧宾夺主，反而看不清当前指着的到底是哪一段路径/哪一行。
+        （地址栏右侧的空白区连灰色都不要，走下面的 ExGhostButtonStyle。）
 
         与 ExToolbarButtonStyle 的唯一差别就是悬停/按下用的画刷是 WinUI 自带的那两个键，
         而 Storyboard 里的 {ThemeResource} 是写死在模板里的（BasedOn 改不了），所以模板要另写一份；
@@ -254,6 +273,71 @@
     <Style x:Key="ExFlatSubtleButtonStyle" TargetType="Button" BasedOn="{StaticResource ExSubtleButtonStyle}">
         <Setter Property="MinHeight" Value="0" />
         <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <!--
+        地址栏右侧的空白区（点击进编辑态）：可点，但**有意一点悬停/按下底色都没有**。
+        它几乎铺满整条地址栏的剩余宽度，哪怕只是 ExSubtleButtonStyle 那种很淡的灰，
+        鼠标划过地址栏右侧也会整片变色，看起来像“地址栏被按住了/整条地址栏是一个按钮”。
+        所以这个模板里 PointerOver / Pressed 是空状态（只留 Disabled 的默认观感），
+        尺寸类 setter 与 ExSubtleButtonStyle 保持一致，用的时候照常覆盖即可。
+    -->
+    <Style x:Key="ExGhostButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BackgroundSizing" Value="InnerBorderEdge" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{ThemeResource ButtonForeground}" />
+        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Padding" Value="8,1,8,1" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="FontFamily" Value="{ThemeResource ContentControlThemeFontFamily}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontSize" Value="{ThemeResource ControlContentThemeFontSize}" />
+        <Setter Property="UseSystemFocusVisuals" Value="{StaticResource UseSystemFocusVisuals}" />
+        <Setter Property="FocusVisualMargin" Value="-3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <ContentPresenter
+                        x:Name="ContentPresenter"
+                        AutomationProperties.AccessibilityView="Raw"
+                        Background="{TemplateBinding Background}"
+                        BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        Content="{TemplateBinding Content}"
+                        ContentTemplate="{TemplateBinding ContentTemplate}"
+                        ContentTransitions="{TemplateBinding ContentTransitions}"
+                        CornerRadius="{TemplateBinding CornerRadius}"
+                        Foreground="{TemplateBinding Foreground}"
+                        HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}"
+                        Padding="{TemplateBinding Padding}"
+                        VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <!-- 悬停/按下故意不换任何画刷，见上面的说明 -->
+                                <VisualState x:Name="PointerOver" />
+                                <VisualState x:Name="Pressed" />
+                                <VisualState x:Name="Disabled">
+                                    <Storyboard>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Background">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ButtonBackgroundDisabled}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                        <ObjectAnimationUsingKeyFrames Storyboard.TargetName="ContentPresenter" Storyboard.TargetProperty="Foreground">
+                                            <DiscreteObjectKeyFrame KeyTime="0" Value="{ThemeResource ButtonForegroundDisabled}" />
+                                        </ObjectAnimationUsingKeyFrames>
+                                    </Storyboard>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </ContentPresenter>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!--

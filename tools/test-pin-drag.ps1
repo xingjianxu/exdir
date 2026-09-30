@@ -1,10 +1,11 @@
-# 验证“把目录从文件列表 / 侧边栏拖到工具条固定目录区”与“工具条上拖拽固定目录排序”两条交互链路。
+# 验证“把目录从文件列表 / 侧边栏拖到工具条固定目录区”与“工具条上拖拽固定目录排序”两条交互链路，
+# 以及“把目录拖到侧边栏「收藏夹」分组”这条平行链路。
 #
 # 本机没有交互桌面时，鼠标事件送不到窗口（见 AGENTS.md 第 6 节第 18 条），脚本会先探测前台窗口。
 # 拖动必须用 MOUSEEVENTF_ABSOLUTE 逐步移动（SetCursorPos 不会让 WinUI 收到 PointerMoved，见第 13 条）。
 #
 # 用法:
-#   pwsh -NoProfile -File tools\test-pin-drag.ps1                 # Debug 版，跑“列表 + 侧边栏 + 取消固定 + 排序”四个用例
+#   pwsh -NoProfile -File tools\test-pin-drag.ps1                 # Debug 版，跑全部用例
 #   pwsh -NoProfile -File tools\test-pin-drag.ps1 -Exe dist\win-x64\exdir.exe
 #
 # 脚本会临时往固定的目录里塞两个条目，结束时从备份还原 settings.json（并杀掉 exdir）。
@@ -14,6 +15,8 @@ param(
     [string]$ShotDir = "$PSScriptRoot\..\.artifacts",
     [string]$ListFolder = '.cargo',
     [string]$TreeFolder = '图片',
+    # 拖到侧边栏「收藏夹」的源目录（必须不在默认固定目录里，否则得不出“新增”的结论）
+    [string]$FavoriteSourceFolder = '音乐',
     # 默认以普通权限启动 exdir（Windows 不允许提权进程参与拖放，详见 AGENTS.md）
     [switch]$AsAdmin
 )
@@ -58,7 +61,7 @@ if ($hadSettings) { Copy-Item $settingsPath $backupPath -Force }
 
 function Show-DragLog {
     if (-not (Test-Path $logPath)) { return }
-    $lines = Select-String -Path $logPath -Pattern '拖拽|拖放|固定目录' | Select-Object -Last 8
+    $lines = Select-String -Path $logPath -Pattern '拖拽|拖放|固定目录|收藏' | Select-Object -Last 8
     foreach ($line in $lines) { Write-Host "    log> $($line.Line)" -ForegroundColor DarkGray }
 }
 
@@ -117,6 +120,25 @@ function Get-PinName {
     $name = [System.IO.Path]::GetFileName($trimmed)
     if ([string]::IsNullOrEmpty($name)) { return $trimmed }
     return $name
+}
+
+# 侧边栏「收藏夹」分组的子行：WinUI TreeView 在 UIA 里是平铺的（子项不是父项的 UIA 后代），
+# 所以按 Y 坐标取“收藏夹”与下一个分组“云存储”之间的 TreeItem，顺序就是树里的顺序。
+function Get-FavoriteRows {
+    $fav = Find-Element -Name '收藏夹' -Type 'TreeItem'
+    $cloud = Find-Element -Name '云存储' -Type 'TreeItem'
+    if ($null -eq $fav -or $null -eq $cloud) { return @() }
+
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::TreeItem)
+    $fr = Get-Rect $fav
+    $cr = Get-Rect $cloud
+
+    return @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond) `
+        | Where-Object { $_.Current.Name -and $_.Current.BoundingRectangle.Width -gt 0 } `
+        | Where-Object { $_.Current.BoundingRectangle.Y -gt $fr.Y -and $_.Current.BoundingRectangle.Y -lt $cr.Y } `
+        | Sort-Object { $_.Current.BoundingRectangle.Y })
 }
 
 function Find-Element {
@@ -219,13 +241,33 @@ try {
 
     $failures = 0
 
+    # ---------------- 用例 0：侧边栏「收藏夹」分组镜像工具条固定目录 ----------------
+    Write-Host "`n[0] 侧边栏「收藏夹」分组镜像固定目录" -ForegroundColor Cyan
+    $favoritesNode = Find-Element -Name '收藏夹' -Type 'TreeItem'
+    if ($null -eq $favoritesNode) {
+        Write-Host '  侧边栏找不到「收藏夹」分组' -ForegroundColor Red
+        $failures++
+    }
+    else {
+        $expected = @(Get-Pins | ForEach-Object { Get-PinName $_ })
+        $actual = @(Get-FavoriteRows | ForEach-Object { $_.Current.Name })
+        Write-Host "  收藏夹子项 $($actual.Count) 个 / settings 里 $($expected.Count) 个: $($actual -join ', ')"
+        if (($actual -join '|') -eq ($expected -join '|')) {
+            Write-Host '  子项与固定目录一致（含顺序）' -ForegroundColor Green
+        }
+        else {
+            Write-Host "  子项不匹配（期望: $($expected -join ', ')）" -ForegroundColor Red
+            $failures++
+        }
+    }
+
     # ---------------- 用例 1：文件列表里的目录行 ----------------
     $before = Get-Pins
     Write-Host "`n[1] 文件列表：'$ListFolder' → 工具条" -ForegroundColor Cyan
     $row = Find-Element -Name $ListFolder
     if ($null -eq $row) {
-        Write-Host "  找不到列表项 '$ListFolder'（当前目录里没有？）" -ForegroundColor Yellow
-        $failures++
+        # 当前目录里没有这个文件夹时只是跳过（脚本默认假定工作目录里有 .cargo）
+        Write-Host "  当前目录里没有 '$ListFolder'，跳过本用例" -ForegroundColor Yellow
     }
     else {
         $r = Get-Rect $row
@@ -368,6 +410,53 @@ try {
 
             Show-DragLog
         }
+    }
+
+    # ---------------- 用例 5：拖动目录到侧边栏「收藏夹」分组 ----------------
+    Write-Host "`n[5] 侧边栏：'$FavoriteSourceFolder' → 「收藏夹」分组" -ForegroundColor Cyan
+    $before = Get-Pins
+    $favoritesNode = Find-Element -Name '收藏夹' -Type 'TreeItem'
+    $sourceNode = Find-Element -Name $FavoriteSourceFolder -Type 'TreeItem'
+    if ($null -eq $favoritesNode -or $null -eq $sourceNode) {
+        Write-Host "  找不到「收藏夹」分组或 '$FavoriteSourceFolder' 树节点" -ForegroundColor Yellow
+        $failures++
+    }
+    elseif ($before -contains (Join-Path $env:USERPROFILE $FavoriteSourceFolder)) {
+        Write-Host "  '$FavoriteSourceFolder' 已经是固定目录，无法验证“新增”" -ForegroundColor Yellow
+    }
+    else {
+        $fr = Get-Rect $favoritesNode
+        $sr = Get-Rect $sourceNode
+        $fromX = [int]($sr.X + [math]::Min(150, $sr.Width * 0.8))
+        $fromY = [int]($sr.Y + $sr.Height / 2)
+        $toX = [int]($fr.X + [math]::Min(140, $fr.Width * 0.7))
+        $toY = [int]($fr.Y + $fr.Height / 2)
+        Write-Host "  从 ($fromX,$fromY) 拖到收藏夹 ($toX,$toY)"
+        Invoke-Drag -FromX $fromX -FromY $fromY -ToX $toX -ToY $toY -ShotDuring 'favorites-dragover'
+        Save-Shot -Name 'favorites-dropped'
+
+        $after = Get-Pins
+        $added = @($after | Where-Object { $_ -notin $before })
+        if ($added.Count -eq 1) {
+            Write-Host "  收藏新增: $($added[0])" -ForegroundColor Green
+        }
+        else {
+            Write-Host "  未新增收藏（新增 $($added.Count) 项）: $($after -join ', ')" -ForegroundColor Red
+            $failures++
+        }
+
+        # 侧边栏也应该同步出现这个新的收藏项
+        $addedName = if ($added.Count -eq 1) { Get-PinName $added[0] } else { $FavoriteSourceFolder }
+        $rowNames = @(Get-FavoriteRows | ForEach-Object { $_.Current.Name })
+        if ($rowNames -contains $addedName) {
+            Write-Host "  侧边栏收藏夹里已出现 '$addedName'（现为: $($rowNames -join ', ')）" -ForegroundColor Green
+        }
+        else {
+            Write-Host "  侧边栏收藏夹里没找到 '$addedName'（现为: $($rowNames -join ', ')）" -ForegroundColor Red
+            $failures++
+        }
+
+        Show-DragLog
     }
 
     Write-Host "`n结论: $(if ($failures -eq 0) { '全部通过' } else { "$failures 个用例失败" })" -ForegroundColor $(if ($failures -eq 0) { 'Green' } else { 'Red' })

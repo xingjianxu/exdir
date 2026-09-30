@@ -17,6 +17,12 @@ public static class DpiHelper
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
+    /// <summary>通知区域图标边长（物理像素），随主显示器 DPI 变化。</summary>
+    private const int SmCxSmIcon = 49;
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
     /// <summary>返回窗口当前的缩放因子（96 DPI = 1.0）。无法获取时回退到 1.0。</summary>
     public static double GetScale(Window window)
     {
@@ -52,6 +58,25 @@ public static class DpiHelper
 
     /// <summary>DIP → 物理像素。</summary>
     public static int ToPhysical(double dips, double scale) => (int)Math.Round(dips * scale);
+
+    /// <summary>
+    /// 通知区域（托盘）图标在当前 DPI 下的物理像素边长。
+    /// <c>SM_CXSMICON</c> 正是这个值（100% → 16、150% → 24、200% → 32），
+    /// 与 <c>ShellIconExtractor</c> 取列表小图标用的是同一个口径；
+    /// 按它选 .ico 里的那一张，托盘图标在任何缩放下都不会被系统重采样得发虚。
+    /// </summary>
+    public static int GetSmallIconSize()
+    {
+        try
+        {
+            var size = GetSystemMetrics(SmCxSmIcon);
+            return size > 0 ? size : 16;
+        }
+        catch (Exception)
+        {
+            return 16;
+        }
+    }
 
     /// <summary>物理像素 → DIP。</summary>
     public static double ToDips(int physical, double scale) => scale <= 0 ? physical : physical / scale;

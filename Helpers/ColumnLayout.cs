@@ -6,7 +6,7 @@ using Microsoft.UI.Xaml;
 namespace Exdir.Helpers;
 
 /// <summary>
-/// 详细信息视图的列宽状态（同步状态 / 名称 / 修改日期 / 类型 / 大小）。
+/// 详细信息视图的布局度量：列宽（同步状态 / 名称 / 修改日期 / 类型 / 大小）与行高。
 ///
 /// 这里要区分两个概念：
 /// <list type="bullet">
@@ -57,6 +57,21 @@ public sealed class ColumnLayout : ObservableObject
     /// <summary>状态列最小宽度：刚好放得下列头“状态”两个字再加排序字形。</summary>
     public const double SyncStateMinWidth = 40;
 
+    /// <summary>
+    /// 文件列表行高的默认值（DIP）。比 24 的“密集”行高更舒展一些，但仍属于紧凑密度：
+    /// 16 DIP 的图标与名称文字在行内垂直居中后上下各留 6 DIP。
+    /// </summary>
+    public const double DefaultRowHeight = 28;
+
+    /// <summary>行高下限：行内 18 DIP 的展开箭头与 16 DIP 的图标都还放得下。</summary>
+    public const double MinRowHeight = 20;
+
+    /// <summary>行高上限：再高就不像紧凑的文件管理器了，一屏能看到的行数也会太少。</summary>
+    public const double MaxRowHeight = 48;
+
+    /// <summary>设置里行高的步进（DIP），滑块的 StepFrequency 用它。</summary>
+    public const double RowHeightStep = 2;
+
     /// <summary>行/列头的左右内边距之和（6 + 6），与 Themes/ExdirTheme.xaml 的 ExRowPadding 保持一致。</summary>
     public const double RowPaddingWidth = 12;
 
@@ -72,6 +87,7 @@ public sealed class ColumnLayout : ObservableObject
     private bool _autoFillName = true;
     private bool _autoFit = true;
     private bool _showSyncColumn;
+    private double _rowHeight = DefaultRowHeight;
 
     public ColumnLayout() => _rendered[SyncStateIndex] = 0;
 
@@ -115,6 +131,39 @@ public sealed class ColumnLayout : ObservableObject
             NotifyRendered();
         }
     }
+
+    /// <summary>
+    /// 文件列表每一行的行高（DIP），由设置窗口里的「行高」决定（默认 <see cref="DefaultRowHeight" />）。
+    ///
+    /// 为什么放在这里、而不是每个行对象上：行模板本来就绑定着本对象（列宽用的是同一个实例），
+    /// 所以“改一次设置 → 同一标签页的所有行立刻跟着变”不需要任何额外管道，
+    /// 也不用给几千个行对象各备一份值。行高只改变上下留白，
+    /// 图标与名称依旧是“行内垂直居中”（见 Views/DetailsView.xaml）。
+    /// </summary>
+    public double RowHeight
+    {
+        get => _rowHeight;
+        set
+        {
+            var clamped = NormalizeRowHeight(value);
+            if (Math.Abs(clamped - _rowHeight) < 0.01)
+            {
+                return;
+            }
+
+            _rowHeight = clamped;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// 把任意来源的行高夹进可用范围并取整（settings.json 可能被手改过，
+    /// 或旧版本写下的值超出了现在的区间）。
+    /// </summary>
+    public static double NormalizeRowHeight(double value)
+        => double.IsFinite(value)
+            ? Math.Clamp(Math.Round(value), MinRowHeight, MaxRowHeight)
+            : DefaultRowHeight;
 
     /// <summary>整体自适应窗格宽度（默认开启；拖动过列宽后关闭，双击列边界可恢复）。</summary>
     public bool AutoFit

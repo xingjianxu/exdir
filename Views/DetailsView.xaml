@@ -11,6 +11,13 @@
     mc:Ignorable="d">
 
     <Grid x:Name="DetailsRoot" Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+        <!-- Ctrl+A 全选本列表的行（就地展开出来的子行也算，它们就是列表里的行）。
+             挂在这一层而不是 ListView 上，是为了让焦点在列头按钮 / 行内展开箭头时也生效；
+             地址栏在 NavigationBarView 里，不在本控件内，所以那里的 Ctrl+A 仍然是文本框全选。 -->
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="A" Modifiers="Control" Invoked="SelectAllAccelerator_Invoked" />
+        </Grid.KeyboardAccelerators>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -18,8 +25,8 @@
         </Grid.RowDefinitions>
 
         <!-- ===================== 列头 =====================
-             列宽来自 ViewModel.Columns（本标签页共享），拖动把手由 code-behind 放进 HeaderContent。
-             HeaderContent 会跟随列表的横向滚动一起平移（见 code-behind），HeaderRow 负责裁剪。 -->
+             列宽来自 ViewModel.Columns（本标签页共享），拖动把手由 code-behind 放进 HeaderLayer。
+             HeaderLayer 会跟随列表的横向滚动一起平移（见 code-behind），HeaderRow 负责裁剪。 -->
         <Grid
             x:Name="HeaderRow"
             Grid.Row="0"
@@ -29,97 +36,102 @@
             BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
             BorderThickness="0,0,0,1"
             SizeChanged="HeaderRow_SizeChanged">
-            <Grid x:Name="HeaderContent">
+            <!--
+                把手层：本身**没有列定义**（整层就是一列 = 表头整宽），拖动把手由 code-behind 追加在这里，
+                水平位置用 RenderTransform 推。
+                为什么不把把手直接放进下面那个带列定义的 HeaderContent：它的第 0 列是“状态”列，
+                非云目录里宽度为 0，而**零宽单元格里的子元素收不到指针事件**（实测：把手既不响应悬停、
+                也拖不动，见 AGENTS.md“踩过的坑”），所以把手必须待在一个整宽的父层里。
+                横向滚动的平移挂在**这一层**上，于是按钮与把手一起平移。
+            -->
+            <Grid x:Name="HeaderLayer">
                 <Grid.RenderTransform>
                     <TranslateTransform x:Name="HeaderTransform" />
                 </Grid.RenderTransform>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="{x:Bind ViewModel.Columns.SyncStateWidth, Mode=OneWay}" />
-                    <ColumnDefinition Width="{x:Bind ViewModel.Columns.NameWidth, Mode=OneWay}" />
-                    <ColumnDefinition Width="{x:Bind ViewModel.Columns.DateWidth, Mode=OneWay}" />
-                    <ColumnDefinition Width="{x:Bind ViewModel.Columns.TypeWidth, Mode=OneWay}" />
-                    <ColumnDefinition Width="{x:Bind ViewModel.Columns.SizeWidth, Mode=OneWay}" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
 
-                <!-- 同步状态列只在云同步目录里出现（宽度为 0 时这里也隐藏，免得留下一个点不到的排序按钮） -->
-                <Button
-                    Grid.Column="0"
-                    Height="24"
-                    Padding="0"
-                    HorizontalAlignment="Left"
-                    Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
-                    CommandParameter="SyncState"
-                    Style="{StaticResource ExFlatButtonStyle}"
-                    Visibility="{x:Bind ViewModel.Columns.ShowSyncColumn, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
-                    AutomationProperties.Name="按同步状态排序">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <TextBlock FontSize="12" Text="状态" />
-                        <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.SyncStateSortGlyph, Mode=OneWay}" />
-                    </StackPanel>
-                </Button>
+                <!-- 数据列：列定义 + 铺满整列的排序按钮（列宽与数据行绑定的是同一份 rendered 宽度） -->
+                <Grid x:Name="HeaderContent">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="{x:Bind ViewModel.Columns.SyncStateWidth, Mode=OneWay}" />
+                        <ColumnDefinition Width="{x:Bind ViewModel.Columns.NameWidth, Mode=OneWay}" />
+                        <ColumnDefinition Width="{x:Bind ViewModel.Columns.DateWidth, Mode=OneWay}" />
+                        <ColumnDefinition Width="{x:Bind ViewModel.Columns.TypeWidth, Mode=OneWay}" />
+                        <ColumnDefinition Width="{x:Bind ViewModel.Columns.SizeWidth, Mode=OneWay}" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
 
-                <Button
-                    Grid.Column="1"
-                    Height="24"
-                    Padding="0"
-                    HorizontalAlignment="Left"
-                    Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
-                    CommandParameter="Name"
-                    Style="{StaticResource ExFlatButtonStyle}"
-                    AutomationProperties.Name="按名称排序">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <TextBlock FontSize="12" Text="名称" />
-                        <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.NameSortGlyph, Mode=OneWay}" />
-                    </StackPanel>
-                </Button>
+                    <!-- 同步状态列只在云同步目录里出现（宽度为 0 时这里也隐藏，免得留下一个点不到的排序按钮）。
+                         列头按钮铺满整列：整列宽度 + 整个表头高度都是排序的命中区（见 ExColumnHeaderButtonStyle）。 -->
+                    <Button
+                        x:Name="SyncStateHeader"
+                        Grid.Column="0"
+                        Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
+                        CommandParameter="SyncState"
+                        Style="{StaticResource ExColumnHeaderButtonStyle}"
+                        Visibility="{x:Bind ViewModel.Columns.ShowSyncColumn, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                        AutomationProperties.Name="按同步状态排序">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock FontSize="12" Text="状态" />
+                            <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.SyncStateSortGlyph, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
 
-                <Button
-                    Grid.Column="2"
-                    Height="24"
-                    Padding="0"
-                    HorizontalAlignment="Left"
-                    Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
-                    CommandParameter="LastWriteTime"
-                    Style="{StaticResource ExFlatButtonStyle}"
-                    AutomationProperties.Name="按修改日期排序">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <TextBlock FontSize="12" Text="修改日期" />
-                        <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.DateSortGlyph, Mode=OneWay}" />
-                    </StackPanel>
-                </Button>
+                    <Button
+                        x:Name="NameHeader"
+                        Grid.Column="1"
+                        Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
+                        CommandParameter="Name"
+                        Style="{StaticResource ExColumnHeaderButtonStyle}"
+                        AutomationProperties.Name="按名称排序">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock FontSize="12" Text="名称" />
+                            <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.NameSortGlyph, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
 
-                <Button
-                    Grid.Column="3"
-                    Height="24"
-                    Padding="0"
-                    HorizontalAlignment="Left"
-                    Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
-                    CommandParameter="Type"
-                    Style="{StaticResource ExFlatButtonStyle}"
-                    AutomationProperties.Name="按类型排序">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <TextBlock FontSize="12" Text="类型" />
-                        <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.TypeSortGlyph, Mode=OneWay}" />
-                    </StackPanel>
-                </Button>
+                    <Button
+                        x:Name="DateHeader"
+                        Grid.Column="2"
+                        Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
+                        CommandParameter="LastWriteTime"
+                        Style="{StaticResource ExColumnHeaderButtonStyle}"
+                        AutomationProperties.Name="按修改日期排序">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock FontSize="12" Text="修改日期" />
+                            <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.DateSortGlyph, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
 
-                <Button
-                    Grid.Column="4"
-                    Height="24"
-                    Padding="0"
-                    HorizontalAlignment="Right"
-                    Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
-                    CommandParameter="Size"
-                    Style="{StaticResource ExFlatButtonStyle}"
-                    AutomationProperties.Name="按大小排序">
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <TextBlock FontSize="12" Text="大小" />
-                        <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.SizeSortGlyph, Mode=OneWay}" />
-                    </StackPanel>
-                </Button>
+                    <Button
+                        x:Name="TypeHeader"
+                        Grid.Column="3"
+                        Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
+                        CommandParameter="Type"
+                        Style="{StaticResource ExColumnHeaderButtonStyle}"
+                        AutomationProperties.Name="按类型排序">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock FontSize="12" Text="类型" />
+                            <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.TypeSortGlyph, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
 
-            <!-- 列宽拖动把手由 code-behind 追加到 HeaderContent.Children（比按钮后加，所以在最上层） -->
+                    <!-- “大小”列里的数字是靠右的，所以列头文字也靠右，否则悬停整列时会觉得标签飘在中间 -->
+                    <Button
+                        x:Name="SizeHeader"
+                        Grid.Column="4"
+                        HorizontalContentAlignment="Right"
+                        Command="{x:Bind ViewModel.SortByCommand, Mode=OneWay}"
+                        CommandParameter="Size"
+                        Style="{StaticResource ExColumnHeaderButtonStyle}"
+                        AutomationProperties.Name="按大小排序">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <TextBlock FontSize="12" Text="大小" />
+                            <FontIcon FontSize="9" Glyph="{x:Bind ViewModel.SizeSortGlyph, Mode=OneWay}" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+
+                <!-- 列宽拖动把手由 code-behind 追加到 HeaderLayer.Children（在按钮层之上） -->
             </Grid>
         </Grid>
 
@@ -142,18 +154,34 @@
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
                     <Setter Property="Padding" Value="0" />
-                    <Setter Property="MinHeight" Value="{StaticResource ExRowHeight}" />
+                    <!--
+                        行高不再由容器锁死：它由设置决定，绑在下面行模板的 Grid.Height 上。
+                        这里必须归零（默认的 ListViewItemMinHeight=24），否则把行高调到 24 以下就不生效。
+                        列头行（ExListHeaderHeight=26）不跟着变，仍然是紧凑表头。
+                    -->
+                    <Setter Property="MinHeight" Value="0" />
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 </Style>
             </ListView.ItemContainerStyle>
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="vm:FileItemViewModel">
+                    <!--
+                        行高 = 设置里的「行高」（Columns 是本标签页共享的布局对象，见 ColumnLayout.RowHeight）。
+                        行内每一格仍然 VerticalAlignment=Center，所以行高只改变上下留白：
+                        图标与名称文字始终在行内垂直居中（图标的 1 DIP 下推见下）。
+                    -->
+                    <!--
+                        Background 必须是透明画刷（哪怕是 Transparent）：没有背景的 Grid 在“空白处”
+                        不参与命中测试，那样的区域会落到 ListViewItem 上，整行就只有文字/图标
+                        那几小块能双击、能弹提示框。
+                        双击本身不在这里处理，挂在最外层 Grid 上（见 code-behind）。
+                    -->
                     <Grid
-                        Height="{StaticResource ExRowHeight}"
+                        Height="{x:Bind Columns.RowHeight, Mode=OneWay}"
                         MinWidth="{x:Bind Columns.RowMinWidth, Mode=OneWay}"
                         Padding="{StaticResource ExRowPadding}"
+                        Background="Transparent"
                         AutomationProperties.Name="{x:Bind DisplayName}"
-                        DoubleTapped="Row_DoubleTapped"
                         ToolTipService.ToolTip="{x:Bind Tooltip}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="{x:Bind Columns.SyncStateWidth, Mode=OneWay}" />

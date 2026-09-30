@@ -1,18 +1,21 @@
+using CommunityToolkit.Mvvm.ComponentModel;
 using Exdir.Models;
 
 namespace Exdir.ViewModels;
 
 /// <summary>
-/// 设置对话框「右键菜单」页里的一行：标题 + 灰色说明 + 右侧开关。
-/// 直接包着 <see cref="ShellMenuItem" />，点“保存”时把整份清单连同开关状态写回设置。
+/// 设置窗口「右键菜单」页里的一行：标题 + 灰色说明 + 右侧开关。
+/// 直接包着 <see cref="ShellMenuItem" />，改动由 <see cref="SettingsViewModel" /> 汇总后写回设置。
 /// </summary>
-public sealed class ShellMenuItemViewModel
+public sealed class ShellMenuItemViewModel : ObservableObject
 {
+    private bool _isEnabled;
+
     public ShellMenuItemViewModel(ShellMenuItem item, string title, bool isEnabled)
     {
         Item = item;
         Title = title;
-        IsEnabled = isEnabled;
+        _isEnabled = isEnabled;
     }
 
     /// <summary>对应的菜单项（含 <c>Key</c>，关闭时存的就是它）。</summary>
@@ -33,6 +36,14 @@ public sealed class ShellMenuItemViewModel
         }
     }
 
-    /// <summary>开关状态：true = 保留在右键菜单里（默认全开）。</summary>
-    public bool IsEnabled { get; set; }
+    /// <summary>
+    /// 开关状态：true = 保留在右键菜单里（默认全开）。
+    /// 必须是会发通知的属性：设置窗口把它绑到 <c>ToggleSwitch.IsOn</c> 上，
+    /// <see cref="SettingsViewModel" /> 也靠这条通知知道用户拨了哪一项。
+    /// </summary>
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set => SetProperty(ref _isEnabled, value);
+    }
 }

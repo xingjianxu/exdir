@@ -2,7 +2,7 @@ using Exdir.Models;
 
 namespace Exdir.ViewModels;
 
-/// <summary>设置对话框左侧导航的一项（一个配置大类）。</summary>
+/// <summary>设置窗口左侧导航的一项（一个配置大类）。</summary>
 public sealed class SettingsCategoryViewModel
 {
     public SettingsCategoryViewModel(SettingsCategory key, string name)
@@ -18,9 +18,8 @@ public sealed class SettingsCategoryViewModel
     public string Name { get; }
 
     /// <summary>
-    /// <c>ListViewItem</c> 的 UIA 名字在没显式设置 <c>AutomationProperties.Name</c> 时取自
-    /// 数据项自己的 <c>ToString()</c>；回归脚本（tools/test-settings.ps1）靠这个名字点左侧导航，
-    /// 所以这里返回名字而不是类型名。
+    /// <c>NavigationViewItem</c> 的 UIA 名字取自数据项自己的 <c>ToString()</c>（内容就是它），
+    /// 回归脚本（tools/test-settings.ps1）靠这个名字选左侧导航，所以这里返回名字而不是类型名。
     /// </summary>
     public override string ToString() => Name;
 }

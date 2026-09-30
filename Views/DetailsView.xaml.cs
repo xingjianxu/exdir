@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Linq;
+using System.Windows.Input;
 using Exdir.Controls;
 using Exdir.Diagnostics;
 using Exdir.Helpers;
@@ -11,6 +12,7 @@ using Exdir.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
@@ -53,6 +55,17 @@ public sealed partial class DetailsView : UserControl
         // RightTapped 负责鼠标右键，ContextRequested 负责键盘菜单键；两者不会同时触发，用时间戳防重复。
         DetailsRoot.AddHandler(UIElement.RightTappedEvent, new RightTappedEventHandler(DetailsRoot_RightTapped), true);
         DetailsRoot.AddHandler(UIElement.ContextRequestedEvent, new TypedEventHandler<UIElement, ContextRequestedEventArgs>(DetailsRoot_ContextRequested), true);
+
+        // 左键单击空白处取消选择：行上的点击虽然由 ListView 自己处理，但它可能把事件标记成 Handled，
+        // 所以这里也必须 handledEventsToo（靠 FindRowItem 把“落在某一行上”的点击排除掉）。
+        DetailsRoot.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(DetailsRoot_PointerPressed), true);
+
+        // 双击一行：目录进入、文件用默认程序打开。
+        // 同样挂在最外层 Grid 上（handledEventsToo）：行里绝大部分区域（文字右侧、日期/类型/大小的空白处、
+        // 行内上下留白）本来没有可命中的元素，命中的是 ListViewItem 自己 —— 事件从 ListViewItem 直接往上冒，
+        // 永远经过不了行模板里那个 Grid，于是只有双击到文字/图标上才有效。挂在这一层再用 FindRowItem
+        // 反查行，整条高亮区（= 鼠标悬停会高亮的那一块）就都能双击了。
+        DetailsRoot.AddHandler(UIElement.DoubleTappedEvent, new DoubleTappedEventHandler(DetailsRoot_DoubleTapped), true);
     }
 
     public static readonly DependencyProperty ViewModelProperty = DependencyProperty.Register(
@@ -150,8 +163,10 @@ public sealed partial class DetailsView : UserControl
     {
         for (var i = 0; i < _handles.Length; i++)
         {
-            // 直接放在列头 Grid 里（垂直拉伸撑满表头），水平位置用 RenderTransform 推，
+            // 放在 HeaderLayer（整宽、无列定义）里，垂直拉伸撑满表头，水平位置用 RenderTransform 推，
             // 这样不依赖 Canvas 的实测高度，也不影响列宽计算。
+            // 不能放在带列定义的 HeaderContent 里：它的第 0 列是“状态”列，非云目录里宽度为 0，
+            // 零宽单元格里的子元素收不到指针事件（把手会变成完全点不到、也拖不动的装饰）。
             var handle = new ColumnResizeHandle
             {
                 Tag = i,
@@ -167,7 +182,7 @@ public sealed partial class DetailsView : UserControl
             handle.ResetRequested += OnHandleResetRequested;
 
             _handles[i] = handle;
-            HeaderContent.Children.Add(handle);
+            HeaderLayer.Children.Add(handle);
         }
     }
 
@@ -256,6 +271,43 @@ public sealed partial class DetailsView : UserControl
                 transform.X = Math.Round(x - (ColumnResizeHandle.HandleWidth / 2));
             }
         }
+
+        UpdateHeaderInsets();
+    }
+
+    /// <summary>
+    /// 列头按钮的左右外扩：最左那一列往左、最右的“大小”列往右各多铺一个行内边距（6 DIP），
+    /// 于是“从窗格边缘到列边界的整条表头”都能点、都有悬停高亮，与数据行的行高亮范围一致
+    /// （数据行的高亮是整条 ListViewItem，从窗格左边缘一直到右边）；
+    /// 外扩量同时补成同侧的内边距，所以标签文字位置不变（列头依旧与数据行对齐）。
+    /// 最左可见列会随“状态”列的显隐变化，因此每次重排列宽都重算一遍。
+    /// </summary>
+    private void UpdateHeaderInsets()
+    {
+        if (_layout is null)
+        {
+            return;
+        }
+
+        var inset = HeaderRow.Padding.Left;
+        var syncFirst = _layout.ShowSyncColumn;
+
+        ExtendHeader(SyncStateHeader, syncFirst ? inset : 0);
+        ExtendHeader(NameHeader, syncFirst ? 0 : inset);
+        ExtendHeader(DateHeader, 0);
+        ExtendHeader(TypeHeader, 0);
+        ExtendHeader(SizeHeader, 0, inset);
+    }
+
+    /// <summary>
+    /// 把列头按钮往左/右各扩大 <paramref name="left" /> / <paramref name="right" />，
+    /// 并用等量内边距把内容顶回原位（内容位置与不做外扩时完全一样）。
+    /// 用负 Margin 而不是改列宽：列宽是列头与数据行共用的对齐基准，动了它会连数据行一起错位。
+    /// </summary>
+    private static void ExtendHeader(Button button, double left, double right = 0)
+    {
+        button.Margin = new Thickness(-left, 0, -right, 0);
+        button.Padding = new Thickness(left, 0, right, 0);
     }
 
     private void OnHandleDragStarted(object? sender, EventArgs e)
@@ -448,11 +500,63 @@ public sealed partial class DetailsView : UserControl
     private void EntryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         => ViewModel?.SetSelection(EntryList.SelectedItems.OfType<FileItemViewModel>());
 
-    // ------------------------------------------------------------------ 系统右键菜单
+    // ------------------------------------------------------------------ 选择
 
     /// <summary>
-    /// 右键 / 菜单键：点在行上 → 该（批）条目的系统菜单；点在空白处 → 当前目录的背景菜单。
-    /// 菜单项完全交给系统外壳（含第三方扩展），exdir 只管定位与被关掉的项。
+    /// 单击列表空白处（列头以下、任何一行之外）取消当前选择。
+    /// 行首箭头、行内文字这些仍算“行上”，交给 ListView 自己处理选择，这里不插手。
+    /// </summary>
+    private void DetailsRoot_PointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        if (ViewModel is null)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(DetailsRoot);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        // 列头有自己的行为（排序 / 拖列宽），不算空白处
+        if (point.Position.Y <= HeaderRow.ActualHeight || FindRowItem(e.OriginalSource) is not null)
+        {
+            return;
+        }
+
+        if (EntryList.SelectedItems.Count > 0)
+        {
+            EntryList.SelectedItems.Clear();
+        }
+
+        // 空白处自身不可聚焦，不在这儿抢一把的话焦点会留在点空白之前的控件上
+        // （紧接着按 Ctrl+A / 方向键就不作用于文件列表了）
+        EntryList.Focus(FocusState.Pointer);
+    }
+
+    /// <summary>
+    /// Ctrl+A：全选列表里当前可见的行。
+    /// 加速器挂在 <c>DetailsRoot</c> 上，焦点在列表 / 列头 / 行内箭头时都生效。
+    /// </summary>
+    private void SelectAllAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+
+        if (ViewModel is null)
+        {
+            return;
+        }
+
+        EntryList.SelectAll();
+        EntryList.Focus(FocusState.Programmatic);
+    }
+
+    // ------------------------------------------------------------------ 右键菜单
+
+    /// <summary>
+    /// 右键 / 菜单键：点在行上 → 该（批）条目的菜单；点在空白处 → 当前目录的背景菜单。
+    /// 用哪一种菜单（exdir 自建的轻量菜单 / 系统外壳菜单）由设置决定，见 <see cref="ShowContextMenu" />。
     /// </summary>
     private void DetailsRoot_ContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
@@ -462,7 +566,7 @@ public sealed partial class DetailsView : UserControl
         }
 
         var position = args.TryGetPosition(DetailsRoot, out var local) ? local : default;
-        ShowShellContextMenu(viewModel, args.OriginalSource, position);
+        ShowContextMenu(viewModel, args.OriginalSource, position);
         args.Handled = true;
     }
 
@@ -474,11 +578,15 @@ public sealed partial class DetailsView : UserControl
             return;
         }
 
-        ShowShellContextMenu(viewModel, args.OriginalSource, args.GetPosition(DetailsRoot));
+        ShowContextMenu(viewModel, args.OriginalSource, args.GetPosition(DetailsRoot));
         args.Handled = true;
     }
 
-    private void ShowShellContextMenu(FolderTabViewModel viewModel, object? source, Point position)
+    /// <summary>
+    /// 按设置决定弹哪一种菜单：内置（现搭的 WinUI <c>MenuFlyout</c>，弹出瞬时）还是系统外壳菜单。
+    /// 两种菜单内容不要求一致 —— 内置只含 exdir 自己实现的命令，系统菜单内容完整但慢。
+    /// </summary>
+    private void ShowContextMenu(FolderTabViewModel viewModel, object? source, Point position)
     {
         // 列头上右键不弹菜单（它的排序按钮有自己的行为，弹一个目录背景菜单只会让人困惑）
         if (position.Y <= HeaderRow.ActualHeight)
@@ -486,24 +594,43 @@ public sealed partial class DetailsView : UserControl
             return;
         }
 
-        // RightTapped 与 ContextRequested 可能为同一次右键都冒上来：菜单是模态弹出的，
-        // 第一个处理完（用户关掉菜单）之后第二个才会被调用，所以拿“刚刚弹过”的时间戳防重复
+        // RightTapped 与 ContextRequested 可能为同一次右键都冒上来：系统菜单是模态弹出的，
+        // 第一个处理完（用户关掉菜单）之后第二个才会被调用；而内置菜单的 ShowAt 立即返回，
+        // 第二个事件只差几毫秒，所以两种都要靠时间戳挡一下
         if (Environment.TickCount64 - _lastContextMenuTicks < DuplicateContextMenuGuardMs)
         {
             return;
         }
 
-        var screen = DpiHelper.ToScreenPoint(DetailsRoot, MainWindowHandle, position);
         var item = FindRowItem(source);
+
+        if (item is not null && !EntryList.SelectedItems.Contains(item))
+        {
+            // 右键点到没选中的行：先把选择换成它（与资源管理器一致），菜单作用于刚刚选中的这批
+            EntryList.SelectedItem = item;
+        }
+
+        if (viewModel.UseBuiltInContextMenu)
+        {
+            ShowBuiltInContextMenu(viewModel, item is not null, position);
+        }
+        else
+        {
+            ShowShellContextMenu(viewModel, position, item);
+        }
+
+        // 记在“菜单弹过之后”，这样紧跟着来的重复事件（间隔约 0 ms）会被挡掉，
+        // 而用户过一会儿真的再点一次右键不受影响
+        _lastContextMenuTicks = Environment.TickCount64;
+    }
+
+    /// <summary>系统外壳菜单：位置要换算成屏幕物理像素（<c>TrackPopupMenuEx</c> 用的是屏幕坐标）。</summary>
+    private void ShowShellContextMenu(FolderTabViewModel viewModel, Point position, FileItemViewModel? item)
+    {
+        var screen = DpiHelper.ToScreenPoint(DetailsRoot, MainWindowHandle, position);
 
         if (item is not null)
         {
-            // 右键点到没选中的行：先把选择换成它（与资源管理器一致），菜单作用于刚刚选中的这批
-            if (!EntryList.SelectedItems.Contains(item))
-            {
-                EntryList.SelectedItem = item;
-            }
-
             var paths = EntryList.SelectedItems.OfType<FileItemViewModel>().Select(i => i.FullPath).ToList();
             if (paths.Count > 0)
             {
@@ -518,10 +645,63 @@ public sealed partial class DetailsView : UserControl
                 (int)screen.X,
                 (int)screen.Y);
         }
+    }
 
-        // 记在“菜单关掉之后”，这样紧跟着来的重复事件（间隔约 0 ms）会被挡掉，
-        // 而用户过一会儿真的再点一次右键不受影响
-        _lastContextMenuTicks = Environment.TickCount64;
+    /// <summary>
+    /// 内置菜单：现场搭一个 <c>MenuFlyout</c>（几个静态项，几毫秒的事），命令直接绑到标签页 VM 上，
+    /// 不碰 COM、不问外壳，所以弹出几乎瞬时。
+    /// 菜单项集合故意与系统菜单不同 —— 这里只有 exdir 自己实现的命令（见 AGENTS.md 第 4 节）。
+    /// </summary>
+    private void ShowBuiltInContextMenu(FolderTabViewModel viewModel, bool onRow, Point position)
+    {
+        // “此电脑”这种没有路径的标签页里没有可用的背景命令
+        if (!onRow && string.IsNullOrEmpty(viewModel.CurrentPath))
+        {
+            return;
+        }
+
+        var flyout = new MenuFlyout();
+
+        if (onRow)
+        {
+            AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+            AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand);
+            flyout.Items.Add(new MenuFlyoutSeparator());
+            AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
+            AddContextMenuItem(flyout, "属性", viewModel.ShowPropertiesCommand);
+        }
+        else
+        {
+            AddContextMenuItem(flyout, "新建文件夹", viewModel.CreateNewFolderCommand);
+            AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
+            AddContextMenuAction(flyout, "全选", SelectAllRows);
+            flyout.Items.Add(new MenuFlyoutSeparator());
+            AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand);
+            AddContextMenuItem(flyout, "在此处打开终端", viewModel.OpenTerminalCommand);
+        }
+
+        // 回归脚本的断言依据（内置菜单在 UIA 里读得到，不像系统菜单那样只能看 #32768）
+        Log.Write($"内置右键菜单：{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项");
+
+        // Position 是相对 DetailsRoot 的 DIP 坐标，ShowAt 自己会换算，所以这里不做 DPI 换算
+        flyout.ShowAt(DetailsRoot, new FlyoutShowOptions { Position = position });
+    }
+
+    private static void AddContextMenuItem(MenuFlyout flyout, string text, ICommand command)
+        => flyout.Items.Add(new MenuFlyoutItem { Text = text, Command = command });
+
+    private static void AddContextMenuAction(MenuFlyout flyout, string text, Action action)
+    {
+        var item = new MenuFlyoutItem { Text = text };
+        item.Click += (_, _) => action();
+        flyout.Items.Add(item);
+    }
+
+    /// <summary>内置菜单里的「全选」：和 Ctrl+A 走同一条路（要顺手把焦点抢回列表）。</summary>
+    private void SelectAllRows()
+    {
+        EntryList.SelectAll();
+        EntryList.Focus(FocusState.Programmatic);
     }
 
     /// <summary>同一次右键里两个事件都冒上来时，用来去重的时间窗（毫秒）。</summary>
@@ -581,22 +761,32 @@ public sealed partial class DetailsView : UserControl
         }
     }
 
-    /// <summary>双击一行：目录进入，文件交给默认程序（与列表行为一致）。</summary>
-    private void Row_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    /// <summary>
+    /// 双击一行：目录进入、文件交给默认程序。
+    /// 整行高亮区内任意位置都算（行内边距、名称文字右侧、日期/类型/大小的空白处都行），
+    /// 只有行首那个展开箭头除外（它自己负责折叠/展开）。
+    /// </summary>
+    private void DetailsRoot_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { DataContext: FileItemViewModel item } row)
+        if (ViewModel is not { } viewModel)
+        {
+            return;
+        }
+
+        var item = FindRowItem(e.OriginalSource);
+        if (item is null)
         {
             return;
         }
 
         // 点在行首展开箭头上不算双击行（否则会既折叠又进目录）
-        if (IsInsideInteractivePart(e.OriginalSource as DependencyObject, row))
+        if (IsInsideRowButton(e.OriginalSource as DependencyObject))
         {
             e.Handled = true;
             return;
         }
 
-        ViewModel?.OpenItem(item);
+        viewModel.OpenItem(item);
         e.Handled = true;
     }
 
@@ -630,9 +820,13 @@ public sealed partial class DetailsView : UserControl
         }
     }
 
-    private static bool IsInsideInteractivePart(DependencyObject? source, DependencyObject rowRoot)
+    /// <summary>
+    /// 命中的元素是不是行内某个按钮（目前只有名称列那个 18px 展开箭头）的一部分。
+    /// 往上走到文件列表为止：列表外面（列头排序按钮等）不在判断范围里，那些位置 FindRowItem 本来就返回 null。
+    /// </summary>
+    private bool IsInsideRowButton(DependencyObject? source)
     {
-        while (source is not null && !ReferenceEquals(source, rowRoot))
+        while (source is not null && !ReferenceEquals(source, EntryList) && !ReferenceEquals(source, DetailsRoot))
         {
             if (source is Button)
             {

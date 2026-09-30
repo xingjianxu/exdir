@@ -1,5 +1,6 @@
 using System;
 using Exdir.Diagnostics;
+using Exdir.Helpers;
 using Exdir.Services;
 using Exdir.Services.Native;
 using Exdir.ViewModels;
@@ -42,13 +43,18 @@ public partial class App : Application
             // 否则“同步状态”列可能只能拿到固定的“同步挂起”，放在枚举任何目录之前调用
             ShellPropertyStore.EnsurePlaceholdersExposed();
 
-            MainWindow = Services.GetRequiredService<MainWindow>();
+            var window = Services.GetRequiredService<MainWindow>();
+            MainWindow = window;
 
             // 系统右键菜单需要一个宿主窗口句柄（TrackPopupMenu / GetUIObjectOf 都要用）
             Services.GetRequiredService<IShellContextMenuService>().OwnerWindow =
-                WinRT.Interop.WindowNative.GetWindowHandle(MainWindow);
+                WinRT.Interop.WindowNative.GetWindowHandle(window);
 
-            MainWindow.Activate();
+            window.Activate();
+
+            // 托盘驻留：用户第二次双击 exe（或被系统唤起）时，把已在运行的这只窗口叫出来
+            // （单实例闸门在 Program.Main 里就已经就位，这里只是把回调补上）
+            SingleInstance.Listen(window.ShowFromTray);
 
             Log.Write("应用已启动");
         }

@@ -79,11 +79,22 @@ public sealed partial class FolderTabViewModel : ObservableObject
             settings.Current.ColumnWidths,
             settings.Current.ColumnAutoFillName,
             settings.Current.ColumnAutoFit);
+
+        // 行高不是列宽的一部分，单独从设置里取（越界值会被 ColumnLayout 夹回来）
+        Columns.RowHeight = settings.Current.RowHeight;
         Columns.RequestedChanged += OnColumnLayoutChanged;
     }
 
     /// <summary>列宽状态：本标签页的列头与所有行共享同一个实例。</summary>
     public ColumnLayout Columns { get; }
+
+    /// <summary>
+    /// 文件列表的右键菜单用哪一种（见 <see cref="AppSettings.UseBuiltInContextMenu" />）：
+    /// true = exdir 自己用 WinUI <c>MenuFlyout</c> 现搭的轻量菜单（弹出瞬时），
+    /// false = 系统外壳菜单（内容完整但慢）。
+    /// 视图在**每次右键时现读**这个值，所以设置里改完立即生效、不需要任何通知。
+    /// </summary>
+    public bool UseBuiltInContextMenu => _settings.Current.UseBuiltInContextMenu;
 
     /// <summary>列表整体重建后需要恢复的选中项路径（视图在重建后读取）。</summary>
     public IReadOnlyList<string> PendingSelection => _pendingSelection;
@@ -204,6 +215,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
                 OpenSelectionCommand.NotifyCanExecuteChanged();
                 CopySelectionPathCommand.NotifyCanExecuteChanged();
                 RevealInExplorerCommand.NotifyCanExecuteChanged();
+                ShowPropertiesCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -588,6 +600,56 @@ public sealed partial class FolderTabViewModel : ObservableObject
         {
             _shell.RevealInFileExplorer(item.FullPath);
         }
+    }
+
+    /// <summary>弹出选中项的“属性”对话框（内置右键菜单用；多选时只取第一项）。</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void ShowProperties()
+    {
+        var item = _selection.FirstOrDefault();
+        if (item is not null)
+        {
+            _shell.ShowProperties(item.FullPath);
+        }
+    }
+
+    /// <summary>
+    /// 在当前目录新建一个“新建文件夹”（重名时自动加 (2)(3)…），建完立刻选中它。
+    /// 内置右键菜单的空白处菜单用它 —— 系统菜单的新建走外壳，exdir 自己这条不依赖 IContextMenu。
+    /// </summary>
+    [RelayCommand]
+    private async Task CreateNewFolderAsync()
+    {
+        if (string.IsNullOrEmpty(_currentPath))
+        {
+            return;
+        }
+
+        var directory = _currentPath;
+        var candidate = Path.Combine(directory, "新建文件夹");
+        var index = 2;
+
+        while (_fileSystem.DirectoryExists(candidate) || _fileSystem.FileExists(candidate))
+        {
+            candidate = Path.Combine(directory, $"新建文件夹 ({index++})");
+        }
+
+        try
+        {
+            Directory.CreateDirectory(candidate);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"无法新建文件夹：{ex.Message}";
+            Log.Write($"新建文件夹失败：{candidate}（{ex.Message}）");
+            return;
+        }
+
+        Log.Write($"新建文件夹：{candidate}");
+
+        // 重新枚举一次（而不是往列表里插一行）：新建后目录的排序位置不一定在末尾，
+        // 而且选中项要靠 NavigateAsync 的 selectPath 在新集合里找回
+        await NavigateAsync(directory, pushHistory: false, selectPath: candidate).ConfigureAwait(true);
     }
 
     [RelayCommand]

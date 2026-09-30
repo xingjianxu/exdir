@@ -28,6 +28,12 @@ public enum SidebarNodeKind
     /// <summary>驱动器。</summary>
     Drive,
 
+    /// <summary>「收藏夹」分组标题（内容镜像工具条上的固定目录，可折叠，本身不可导航）。</summary>
+    FavoritesGroup,
+
+    /// <summary>收藏夹里的一个目录（等价于工具条上的一个固定目录）。</summary>
+    Favorite,
+
     /// <summary>普通文件夹。</summary>
     Folder,
 }
@@ -37,6 +43,7 @@ public sealed partial class SidebarNodeViewModel : ObservableObject
 {
     private bool _isExpanded;
     private bool _hasUnrealizedChildren;
+    private bool _isDropTarget;
 
     public SidebarNodeViewModel(
         string name,
@@ -75,6 +82,16 @@ public sealed partial class SidebarNodeViewModel : ObservableObject
         set => SetProperty(ref _hasUnrealizedChildren, value);
     }
 
+    /// <summary>
+    /// 拖拽经过时的高亮标记：只在「收藏夹」分组及其子项上会被置为 true
+    /// （这两个位置才是“收藏目录”的落点，见 <see cref="SidebarView" />）。
+    /// </summary>
+    public bool IsDropTarget
+    {
+        get => _isDropTarget;
+        set => SetProperty(ref _isDropTarget, value);
+    }
+
     /// <summary>子节点是否已经加载过（避免重复枚举）。</summary>
     public bool ChildrenLoaded { get; set; }
 
@@ -98,6 +115,9 @@ public sealed partial class SidebarViewModel : ObservableObject
 
     private readonly Dictionary<string, SidebarNodeViewModel> _index = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>「收藏夹」分组的节点引用（每次 BuildTree 重建；内容由 <see cref="SyncFavorites" /> 填充）。</summary>
+    private SidebarNodeViewModel? _favoritesGroup;
+
     public SidebarViewModel(
         IFileSystemService fileSystem,
         IKnownFolderService knownFolders,
@@ -113,6 +133,15 @@ public sealed partial class SidebarViewModel : ObservableObject
     /// <summary>用户点击树节点时请求导航。参数为目录路径。</summary>
     public event EventHandler<string>? NavigateRequested;
 
+    /// <summary>
+    /// 用户把目录拖到「收藏夹」分组（或其行上）时请求固定。参数是被拖入的目录路径。
+    /// 侧边栏不认识工具条的固定目录集合，所以只发事件、由 MainViewModel 去真正固定并落盘。
+    /// </summary>
+    public event EventHandler<IReadOnlyList<string>>? PinRequested;
+
+    /// <summary>用户右键收藏项选择「取消收藏」。参数为要移除的目录路径。</summary>
+    public event EventHandler<string>? UnpinRequested;
+
     public ObservableCollection<SidebarNodeViewModel> Roots { get; } = new();
 
     /// <summary>重新构建整棵树（磁盘热插拔后调用）。</summary>
@@ -122,6 +151,8 @@ public sealed partial class SidebarViewModel : ObservableObject
         _index.Clear();
 
         Roots.Add(BuildHomeGroup());
+        _favoritesGroup = BuildFavoritesGroup();
+        Roots.Add(_favoritesGroup);
         Roots.Add(BuildCloudGroup());
         Roots.Add(BuildComputerGroup());
 
@@ -185,6 +216,56 @@ public sealed partial class SidebarViewModel : ObservableObject
         }
     }
 
+    /// <summary>请求把一批目录加入收藏（由视图层的拖放处理调用）。</summary>
+    public void RequestPin(IReadOnlyList<string> paths)
+    {
+        if (paths.Count > 0)
+        {
+            PinRequested?.Invoke(this, paths);
+        }
+    }
+
+    /// <summary>请求把某个目录移出收藏（右键收藏项的「取消收藏」）。</summary>
+    public void RequestUnpin(string path)
+    {
+        if (!string.IsNullOrEmpty(path))
+        {
+            UnpinRequested?.Invoke(this, path);
+        }
+    }
+
+    /// <summary>
+    /// 把工具条上的固定目录镜像到「收藏夹」分组。固定目录增删或重排时由 MainViewModel 调用。
+    /// 只重建这一个分组的子节点，其它分组（以及用户在树里展开的状态）不受影响。
+    /// </summary>
+    public void SyncFavorites(IEnumerable<PinnedFolderViewModel> pinnedFolders)
+    {
+        if (_favoritesGroup is null)
+        {
+            return;
+        }
+
+        _favoritesGroup.Children.Clear();
+
+        foreach (var folder in pinnedFolders)
+        {
+            if (string.IsNullOrWhiteSpace(folder.Path))
+            {
+                continue;
+            }
+
+            // 收藏项可以有子目录（展开时同样走 ExpandAsync 懒加载），因此 canExpand 保持默认 true
+            _favoritesGroup.Children.Add(new SidebarNodeViewModel(
+                folder.Name,
+                folder.Path,
+                FileTypeHelper.FavoriteGlyph,
+                SidebarNodeKind.Favorite));
+        }
+
+        // 收藏夹的内容是完整的固定目录清单，不存在“还没枚举过的子项”
+        _favoritesGroup.HasUnrealizedChildren = false;
+    }
+
     /// <summary>尝试在已展开的节点中定位并选中路径（尽力而为）。</summary>
     public SidebarNodeViewModel? FindNode(string path)
         => _index.TryGetValue(path, out var node) ? node : null;
@@ -205,6 +286,20 @@ public sealed partial class SidebarViewModel : ObservableObject
         }
 
         _index[_knownFolders.UserProfile] = group;
+        return group;
+    }
+
+    private SidebarNodeViewModel BuildFavoritesGroup()
+    {
+        // 即使一个收藏都没有，这个分组也要留着（它就是“拖到这里收藏”的落点）；
+        // 它没有可枚举的子目录，所以先把 HasUnrealizedChildren 清掉，不画展开箭头。
+        var group = new SidebarNodeViewModel(
+            "收藏夹",
+            string.Empty,
+            FileTypeHelper.FavoriteGlyph,
+            SidebarNodeKind.FavoritesGroup);
+        group.HasUnrealizedChildren = false;
+        group.ChildrenLoaded = true;
         return group;
     }
 

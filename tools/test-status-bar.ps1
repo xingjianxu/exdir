@@ -117,7 +117,7 @@ function Start-Session {
 
 function Stop-Session {
     param($Session)
-    try { $Session.Proc.CloseMainWindow() | Out-Null; $Session.Proc.WaitForExit(3000) | Out-Null } catch { }
+    # exdir 关窗口只是隐藏到托盘（隐藏时已统一落盘），收尾直接 Kill
     try { if (-not $Session.Proc.HasExited) { $Session.Proc.Kill() } } catch { }
 }
 

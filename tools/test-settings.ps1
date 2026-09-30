@@ -1,23 +1,28 @@
-# 设置对话框（「配置 → 设置…」）的 UIA 回归脚本。
+# 设置窗口（「配置 → 设置…」）的 UIA 回归脚本。
 #
 # 用法:
 #   pwsh -NoProfile -File tools\test-settings.ps1
 #   pwsh -NoProfile -File tools\test-settings.ps1 -Exe dist\win-x64\exdir.exe
 #
-# 五个用例（每次都真的启动 exdir、用真鼠标点菜单，再点对话框按钮）：
-#   1. 对话框结构：左侧 4 个分类（文件列表 / 外观 / 布局 / 右键菜单）、默认停在「文件列表」，
-#      右侧只有当前分类的开关（切分类真的换页），初始值与 settings.json 一致；
-#   2. 改一项后点「取消」→ settings.json 不变；
-#   3. 改一项后点「保存」→ 立即落盘，并且真的作用到文件列表（关掉扩展名后行名里的 ".xxx" 消失）；
-#   4. 跨分类读取：在「布局」页改双窗格，重新打开对话框读到的是刚落盘的值。
-#   5. 「右键菜单」页：列出系统右键菜单项（默认全开），关掉「属性」保存后
-#      ShellMenuDisabledItems 里有 verb:properties，重新打开时它仍是关的，再拨回来就清空。
+# 六个用例：
+#   1. 窗口结构：左侧 4 个分类（文件列表 / 外观 / 布局 / 右键菜单）、默认停在「文件列表」，
+#      右侧只有当前分类的项（切分类真的换页），初始值与 settings.json 一致；
+#   2. 即时生效：拨一下开关，settings.json 立刻变（没有「保存 / 取消」按钮）；
+#   3. 生效到界面：关掉「显示文件扩展名」，文件列表行名里的 ".xxx" 立刻消失；
+#   4. 跨分类 + 关窗重开：在「布局」页打开双窗格 → 主窗口真变双窗格；重新打开设置窗口仍是新值；
+#   5. 「右键菜单」页：列出系统右键菜单项（默认全开），菜单风格开关默认开（内置），
+#      关掉「属性」后立即落盘 verb:properties，重新打开窗口时它仍是关的，再拨回来就清空；
+#   6. 「文件列表」页的「行高」滑块：初值与 settings.json 一致、切到别的分类就读不到，
+#      拖动后立即落盘，并且文件列表的数据行**真的**变高（UIA 量 ListItem 的高度，取中位数）。
 #
-# 说明：配置项现在是 SettingsToggleRow 里的 ToggleSwitch，UIA 里的类型是 Button（不是 CheckBox），
-#       所以要靠 TogglePattern 认它；而且非当前分类的开关是 Visibility=Collapsed 的，
-#       UIA 树里根本没有 —— 断言“某分类下能读到哪几个开关”本身就是“切分类有效”的验证。
+# 说明：开关类配置项是社区工具包 SettingsCard 里的 ToggleSwitch（Windows 11 设置的那种卡片行），
+#       UIA 里的类型是 Button（不是 CheckBox），所以要靠 TogglePattern 认它；
+#       「行高」是 Slider，靠 RangeValuePattern 读写。
+#       非当前分类的页是 Collapsed 的，UIA 树里根本没有 ——
+#       “某分类下能读到哪几个项”本身就是“切分类有效”的验证。
 #
-# 脚本要求有交互桌面（真实鼠标点击 + 截图）；无桌面时请改用 tools\inspect-ui.ps1。
+# 全程用 UIA 模式（Invoke / Toggle / SelectionItem / RangeValue / Window.Close）驱动，
+# 不模拟鼠标：设置窗口是普通窗口，不需要前台焦点，脚本在任何会话里都能跑。
 # 跑完会还原 settings.json 的原始内容。
 
 param(
@@ -32,12 +37,10 @@ using System;
 using System.Runtime.InteropServices;
 public static class Native {
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, IntPtr extra);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     public const int DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
-    public const uint LEFTDOWN = 0x0002;
-    public const uint LEFTUP = 0x0004;
+    public const uint WM_CLOSE = 0x0010;
 }
 '@
 
@@ -57,8 +60,8 @@ function Assert {
     else { Write-Host "FAIL $Message"; $script:failures++ }
 }
 
-# 配置项：UIA 名字（= SettingsToggleRow 的 Title）→ settings.json 里的字段名。
-# 名字必须和 Views/SettingsDialog.xaml 里的 Title 一模一样。
+# 配置项：UIA 名字（= SettingsCard 的 Header，也是里面 ToggleSwitch 的 AutomationProperties.Name）
+# → settings.json 里的字段名。名字必须和 Views/SettingsView.xaml 里的 Header 一模一样。
 $KeyMap = [ordered]@{
     '显示隐藏文件'           = 'hidden'
     '显示文件扩展名'         = 'extension'
@@ -68,10 +71,13 @@ $KeyMap = [ordered]@{
     '显示工具条'             = 'toolbar'
     '显示侧边栏'             = 'sidebar'
     '双窗格模式'             = 'dualPane'
+    '使用内置的轻量右键菜单' = 'builtInContextMenu'
 }
 
-# 左侧分类 → 该分类下应有的固定配置项（顺序即导航顺序）。必须和 SettingsViewModel 里的一致。
+# 左侧分类 → 该分类下应有的开关（顺序即导航顺序）。必须和 SettingsViewModel 里的一致。
 # 「右键菜单」页是动态清单（系统里装了什么就有什么），所以这里给 $null，单独在用例 5 里断言。
+# 注意：这里只列 ToggleSwitch（开关）类的项；「文件列表」页里的「行高」是滑块，
+#       它不是开关、也不参与“这一页有几个开关”的计数，单独在用例 6 里断言。
 $CategoryMap = [ordered]@{
     '文件列表' = @('hidden', 'extension', 'foldersFirst')
     '外观'     = @('animations')
@@ -99,7 +105,7 @@ function Set-Setting {
     $json | ConvertTo-Json -Depth 10 | Set-Content $script:settingsPath -Encoding utf8
 }
 
-# ------------------------------------------------------------------ 会话与对话框
+# ------------------------------------------------------------------ 会话与设置窗口
 
 function Start-Session {
     Get-Process -Name 'exdir' -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch { } }
@@ -122,12 +128,13 @@ function Start-Session {
         Handle  = $handle
         Root    = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
         Desktop = [System.Windows.Automation.AutomationElement]::RootElement
+        Scale   = [Native]::GetDpiForWindow($handle) / 96.0
     }
 }
 
 function Stop-Session {
     param($Session)
-    try { $Session.Proc.CloseMainWindow() | Out-Null; $Session.Proc.WaitForExit(3000) | Out-Null } catch { }
+    # exdir 关窗口只是隐藏到托盘（隐藏时已统一落盘），收尾直接 Kill
     try { if (-not $Session.Proc.HasExited) { $Session.Proc.Kill() } } catch { }
 }
 
@@ -146,31 +153,19 @@ function Find-First {
     return $null
 }
 
-# 菜单/对话框这类弹层关掉之后，它的元素可能还留在 UIA 树里（只是 IsOffscreen），
-# 所以要找“真的在屏上、且有大小”的那个，否则第二次打开点到的是上一次的旧元素。
+# 弹层（菜单/窗口）关掉之后它的元素可能还留在 UIA 树里（只是 IsOffscreen），
+# 所以找“真的在、且有大小”的那个，否则第二次打开会拿到上一次的旧元素。
 function Find-VisibleFirst {
-    param($From, [string]$Name, $ControlType)
+    param($From, [string]$Name, $ControlType, [int]$ProcessId = 0)
     foreach ($el in (Find-Elements -From $From -Name $Name)) {
         if ($null -ne $ControlType -and $el.Current.ControlType -ne $ControlType) { continue }
+        if ($ProcessId -ne 0 -and $el.Current.ProcessId -ne $ProcessId) { continue }
         if ($el.Current.IsOffscreen) { continue }
         $r = $el.Current.BoundingRectangle
         if ($r.Width -le 0 -or $r.Height -le 0) { continue }
         return $el
     }
     return $null
-}
-
-function Click-Element {
-    param($Session, $Element)
-    $r = $Element.Current.BoundingRectangle
-    [void][Native]::SetForegroundWindow($Session.Handle)
-    Start-Sleep -Milliseconds 300
-    [void][Native]::SetCursorPos([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
-    Start-Sleep -Milliseconds 250
-    [Native]::mouse_event([Native]::LEFTDOWN, 0, 0, 0, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 90
-    [Native]::mouse_event([Native]::LEFTUP, 0, 0, 0, [IntPtr]::Zero)
-    Start-Sleep -Seconds 2
 }
 
 function Get-ToggleState {
@@ -180,18 +175,68 @@ function Get-ToggleState {
 
 function Toggle-Element {
     param($Element)
+    if ($null -eq $Element) { throw '要拨的开关不在当前页上' }
     $Element.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-    Start-Sleep -Milliseconds 600
+    Start-Sleep -Milliseconds 800
 }
 
-# 对话框里当前可见的开关：名字 → 元素。
-# ToggleSwitch 在 UIA 里是 Button 类型（不是 CheckBox），认它的依据是支持 TogglePattern。
+# ------------------------------------------------------------------ 行高（滑块）
+
+# 滑块在 UIA 里是 Slider 类型，支持 RangeValuePattern（读写数值）；
+# 左边的标题 TextBlock 的 UIA 名字也是“行高”，所以必须按 ControlType 过滤。
+function Find-Slider {
+    param($Settings, [string]$Name)
+    return Find-VisibleFirst -From $Settings.Window -Name $Name -ControlType ([System.Windows.Automation.ControlType]::Slider)
+}
+
+function Get-SliderValue {
+    param($Element)
+    return $Element.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).Current.Value
+}
+
+function Set-SliderValue {
+    param($Element, [double]$Value)
+    $Element.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue($Value)
+    Start-Sleep -Milliseconds 900
+}
+
+# 文件列表数据行的实际高度（物理像素）。只取名字里带 "." 的行：
+# 侧边栏树节点在 UIA 里也是 ListItem，但它们没有扩展名，这样能排除掉。
+function Get-RowHeights {
+    param($Session)
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
+    $heights = @()
+    foreach ($el in $Session.Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+        if ($el.Current.IsOffscreen) { continue }
+        if ($el.Current.Name -notmatch '\.') { continue }
+        $r = $el.Current.BoundingRectangle
+        if ($r.Height -gt 0) { $heights += $r.Height }
+    }
+    return $heights
+}
+
+# 一行到底多高：取**中位数**，不要取平均值。
+# 视口底部那一行通常只露出一截，UIA 报的是被裁过的矩形（实测 40 DIP 行高时它只剩 48 物理像素），
+# 平均值会被它拉低几个像素，恰好落在容差边上就会偶发 FAIL；中位数对“少数被裁的行”免疫。
+function Get-TypicalRowHeight {
+    param($Session)
+    $heights = @(Get-RowHeights -Session $Session)
+    if ($heights.Count -eq 0) { return 0 }
+
+    $sorted = @($heights | Sort-Object)
+    return $sorted[[int][Math]::Floor($sorted.Count / 2)]
+}
+
+# 设置窗口里当前可见的开关：名字 → 元素。
+# ToggleSwitch 在 UIA 里是 Button 类型（不是 CheckBox），认它的依据是支持 TogglePattern；
+# 外面的 SettingsCard 也是 ButtonBase，但它没有 TogglePattern，会被排除掉。
 function Get-VisibleToggles {
-    param($Dialog)
+    param($Settings)
     $toggles = @{}
     $cond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
-    foreach ($el in $Dialog.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+    foreach ($el in $Settings.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
         $pattern = $null
         if (-not $el.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) { continue }
         $toggles[$el.Current.Name] = $el
@@ -199,30 +244,31 @@ function Get-VisibleToggles {
     return $toggles
 }
 
-# 左侧导航点某个分类（用 SelectionItemPattern，不受弹层入场动画影响）
+# 左侧导航点某个分类（NavigationViewItem 在 UIA 里是 ListItem，支持 SelectionItemPattern）
 function Select-Category {
-    param($Dialog, [string]$Name)
-    $item = Find-VisibleFirst -From $Dialog.Window -Name $Name -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+    param($Settings, [string]$Name)
+    $item = Find-VisibleFirst -From $Settings.Window -Name $Name -ControlType ([System.Windows.Automation.ControlType]::ListItem)
     if ($null -eq $item) { throw "左侧导航里找不到分类「$Name」" }
     $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
-    Start-Sleep -Milliseconds 700
+    Start-Sleep -Milliseconds 800
 }
 
 function Get-NavNames {
-    param($Dialog)
+    param($Settings)
     $names = @()
     $cond = New-Object System.Windows.Automation.PropertyCondition(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)
-    foreach ($el in $Dialog.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+    foreach ($el in $Settings.Window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
         $names += $el.Current.Name
     }
     return $names
 }
 
 function Get-CurrentCategoryKey {
-    param($Dialog)
+    param($Settings)
     foreach ($name in $CategoryMap.Keys) {
-        $item = Find-VisibleFirst -From $Dialog.Window -Name $name -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+        if ($name -eq '右键菜单') { continue }
+        $item = Find-VisibleFirst -From $Settings.Window -Name $name -ControlType ([System.Windows.Automation.ControlType]::ListItem)
         if ($null -eq $item) { continue }
         $pattern = $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
         if ($pattern.Current.IsSelected) { return $name }
@@ -231,54 +277,59 @@ function Get-CurrentCategoryKey {
 }
 
 function Find-Toggle {
-    param($Dialog, [string]$Key)
-    return (Get-VisibleToggles -Dialog $Dialog)[$NameOfKey[$Key]]
+    param($Settings, [string]$Key)
+    return (Get-VisibleToggles -Settings $Settings)[$NameOfKey[$Key]]
 }
 
 # 切到某个分类，读该分类下某个开关的状态
 function Get-ToggleStateByKey {
-    param($Dialog, [string]$Category, [string]$Key)
-    Select-Category -Dialog $Dialog -Name $Category
-    $el = Find-Toggle -Dialog $Dialog -Key $Key
+    param($Settings, [string]$Category, [string]$Key)
+    Select-Category -Settings $Settings -Name $Category
+    $el = Find-Toggle -Settings $Settings -Key $Key
     if ($null -eq $el) { return 'MISSING' }
     return Get-ToggleState -Element $el
 }
 
+# 切到某个分类，拨一下该分类下的某个开关
+function Invoke-ToggleByKey {
+    param($Settings, [string]$Category, [string]$Key)
+    Select-Category -Settings $Settings -Name $Category
+    $el = Find-Toggle -Settings $Settings -Key $Key
+    if ($null -eq $el) { Assert $false "分类「$Category」下找不到开关 $($NameOfKey[$Key])"; return }
+    Toggle-Element -Element $el
+}
+
 # 「右键菜单」页的清单要现枚举系统菜单，慢的话要等一会儿；等不到就先返回已经有的
 function Wait-ShellToggles {
-    param($Dialog)
+    param($Settings)
     $toggles = @{}
     for ($i = 0; $i -lt 30; $i++) {
-        $toggles = Get-VisibleToggles -Dialog $Dialog
+        $toggles = Get-VisibleToggles -Settings $Settings
         if ($toggles.Count -ge 10) { return $toggles }
         Start-Sleep -Milliseconds 500
     }
     return $toggles
 }
 
-# 切到某个分类，拨一下该分类下的某个开关
-function Invoke-ToggleByKey {
-    param($Dialog, [string]$Category, [string]$Key)
-    Select-Category -Dialog $Dialog -Name $Category
-    $el = Find-Toggle -Dialog $Dialog -Key $Key
-    if ($null -eq $el) { Assert $false "分类「$Category」下找不到开关 $($NameOfKey[$Key])"; return }
-    Toggle-Element -Element $el
-}
-
 # 打开「配置 → 设置…」。
-# 弹层不在主窗口的 UIA 子树里（见 AGENTS.md 第 6 节第 24 条），要从 AutomationElement.RootElement 往下找；
-# 而且菜单有入场动画（开始那几帧坐标还在动），反复“点菜单栏→点菜单项”命中不稳定，
-# 所以这里用 UIA 模式：MenuBarItem 的 ExpandCollapsePattern 打开菜单、菜单项的 InvokePattern 打开对话框。
-# 对话框本身是一个独立的弹出窗口（顶层 Window，名字就是标题「设置」）。
-function Find-DialogWindow {
+# 菜单不在主窗口的 UIA 子树里（见 AGENTS.md 第 6 节第 24 条），要从 AutomationElement.RootElement 往下找；
+# 菜单有入场动画（开始那几帧坐标还在动），所以用 UIA 模式：MenuBarItem 的 ExpandCollapsePattern
+# 打开菜单、菜单项的 InvokePattern 打开窗口。设置窗口是顶层 Window，标题「设置」。
+function Find-SettingsWindow {
     param($Session)
     foreach ($el in (Find-Elements -From $Session.Desktop -Name '设置')) {
-        if ($el.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window -and -not $el.Current.IsOffscreen) { return $el }
+        if ($el.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { continue }
+        # 必须限定在当前进程：桌面上别的程序（例如 ApplicationFrameHost 里的 UWP 设置页）
+        # 也可能有一个叫“设置”的顶层窗口，不过滤就会把它的坐标/按钮当成我们的
+        if ($el.Current.ProcessId -ne $Session.Proc.Id) { continue }
+        if ($el.Current.IsOffscreen) { continue }
+        return $el
     }
     return $null
 }
 
-function Open-SettingsDialog {
+# 点「配置 → 设置…」菜单项（菜单有入场动画，用 UIA 模式找，见 AGENTS.md 第 6 节第 26 条）
+function Invoke-SettingsMenuItem {
     param($Session)
 
     $menuBarItem = Find-VisibleFirst -From $Session.Root -Name '配置' -ControlType ([System.Windows.Automation.ControlType]::MenuItem)
@@ -289,34 +340,68 @@ function Open-SettingsDialog {
     $settingsItem = $null
     for ($i = 0; $i -lt 24 -and $null -eq $settingsItem; $i++) {
         Start-Sleep -Milliseconds 250
-        $settingsItem = Find-VisibleFirst -From $Session.Desktop -Name '设置' -ControlType ([System.Windows.Automation.ControlType]::MenuItem)
+        $settingsItem = Find-VisibleFirst -From $Session.Desktop -Name '设置' -ControlType ([System.Windows.Automation.ControlType]::MenuItem) -ProcessId $Session.Proc.Id
     }
     if ($null -eq $settingsItem) { throw '「配置」菜单里找不到「设置…」' }
 
     $settingsItem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-
-    $dialogWindow = $null
-    for ($i = 0; $i -lt 24 -and $null -eq $dialogWindow; $i++) {
-        Start-Sleep -Milliseconds 250
-        $dialogWindow = Find-DialogWindow -Session $Session
-    }
-    if ($null -eq $dialogWindow) { throw '设置对话框没有出现' }
-
-    Start-Sleep -Milliseconds 500
-
-    return [pscustomobject]@{
-        Window = $dialogWindow
-        Save   = Find-First -From $dialogWindow -Name '保存' -ControlType ([System.Windows.Automation.ControlType]::Button)
-        Cancel = Find-First -From $dialogWindow -Name '取消' -ControlType ([System.Windows.Automation.ControlType]::Button)
-    }
 }
 
-function Test-DialogClosed {
+function Open-Settings {
     param($Session)
-    return $null -eq (Find-DialogWindow -Session $Session)
+
+    Invoke-SettingsMenuItem -Session $Session
+
+    $window = $null
+    for ($i = 0; $i -lt 30 -and $null -eq $window; $i++) {
+        Start-Sleep -Milliseconds 250
+        $window = Find-SettingsWindow -Session $Session
+    }
+    if ($null -eq $window) { throw '设置窗口没有出现' }
+
+    Start-Sleep -Seconds 1
+
+    return [pscustomobject]@{ Window = $window; Session = $Session }
 }
 
-# 取行名里带扩展名的行数（用来验证「显示文件扩展名」真的作用到了列表）
+# 本进程当前开着几个设置窗口（用来验证“同一时刻只开一个”）
+function Get-SettingsWindowCount {
+    param($Session)
+    $count = 0
+    foreach ($el in (Find-Elements -From $Session.Desktop -Name '设置')) {
+        if ($el.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { continue }
+        if ($el.Current.ProcessId -ne $Session.Proc.Id) { continue }
+        if ($el.Current.IsOffscreen) { continue }
+        $count++
+    }
+    return $count
+}
+
+# 关设置窗口：先试 UIA 的 WindowPattern.Close，不行再用 WM_CLOSE 兜底，
+# 最后一定要等到它在 UIA 树里消失（元素不是马上就没的，直接断言会偶发 FAIL）。
+function Close-Settings {
+    param($Settings)
+    $session = $Settings.Session
+
+    try { $Settings.Window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close() } catch { }
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Milliseconds 250
+        if ($null -eq (Find-SettingsWindow -Session $session)) { return }
+    }
+
+    try { [void][Native]::PostMessage([IntPtr]$Settings.Window.Current.NativeWindowHandle, [Native]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) } catch { }
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Milliseconds 250
+        if ($null -eq (Find-SettingsWindow -Session $session)) { return }
+    }
+}
+
+function Test-SettingsClosed {
+    param($Session)
+    return $null -eq (Find-SettingsWindow -Session $Session)
+}
+
+# 取所有行的名字（用来验证「显示文件扩展名」真的作用到了列表）
 function Get-Rows {
     param($Session)
     $cond = New-Object System.Windows.Automation.PropertyCondition(
@@ -335,33 +420,41 @@ function Get-DotRowCount {
 
 # ================================================================== 用例 1：结构 + 初始状态
 
-Write-Host '--- 用例 1：对话框结构（左导航 / 右正文）与初始状态 ---'
+Write-Host '--- 用例 1：设置窗口结构（左导航 / 右卡片）与初始状态 ---'
 # 除了两个用来验证“初始值一致”的项，双窗格也要先归零：
 # 用例 4 会按“现在单窗格 → 拨开 → 断言双窗格”推，而 settings.json 里上次退出时的值是不确定的。
 Set-Setting 'EnableListAnimations' $true
 Set-Setting 'ShowExtensions' $true
 Set-Setting 'IsDualPane' $false
-# 右键菜单默认全部开启：不先清空的话，用例 5 的“关掉某项”断言会被历史值干扰
+# 行高也要先归位：用例 6 要断言“滑块初值 = settings.json”，历史值（或被手改过）会让它不可控
+Set-Setting 'RowHeight' 28
+# 右键菜单默认全部开启，且默认用内置菜单：不先归位的话，用例 5 的断言会被历史值干扰
 Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
+Set-Setting 'UseBuiltInContextMenu' $true
 
 $session = Start-Session
-$dialog = Open-SettingsDialog -Session $session
+$settings = Open-Settings -Session $session
 
-$navNames = Get-NavNames -Dialog $dialog
+$navNames = Get-NavNames -Settings $settings
 Write-Host ("  左侧导航: {0}" -f ($navNames -join ' / '))
 Assert ($navNames.Count -eq $CategoryMap.Count) "左侧有 $($CategoryMap.Count) 个分类（实际 $($navNames.Count)）"
-Assert (($navNames -join '/') -eq (($CategoryMap.Keys) -join '/')) '左侧分类就是「文件列表 / 外观 / 布局」且顺序一致'
-Assert ((Get-CurrentCategoryKey -Dialog $dialog) -eq '文件列表') '默认选中的是第一个分类「文件列表」'
-Assert ($null -ne $dialog.Save) '底部有「保存」按钮'
-Assert ($null -ne $dialog.Cancel) '底部有「取消」按钮'
+Assert (($navNames -join '/') -eq (($CategoryMap.Keys) -join '/')) '左侧分类就是「文件列表 / 外观 / 布局 / 右键菜单」且顺序一致'
+Assert ((Get-CurrentCategoryKey -Settings $settings) -eq '文件列表') '默认选中的是第一个分类「文件列表」'
+Assert ($null -eq (Find-First -From $settings.Window -Name '保存' -ControlType ([System.Windows.Automation.ControlType]::Button))) '设置窗口里没有「保存」按钮（改了就生效）'
+Assert ($null -eq (Find-First -From $settings.Window -Name '取消' -ControlType ([System.Windows.Automation.ControlType]::Button))) '设置窗口里没有「取消」按钮'
+
+# 同一时刻只开一个：再点一次菜单项应该只是把已有窗口提到前台
+Invoke-SettingsMenuItem -Session $session
+Start-Sleep -Seconds 2
+Assert ((Get-SettingsWindowCount -Session $session) -eq 1) '再点一次「配置 → 设置…」不会开出第二个设置窗口'
 
 # 每个分类下只应能看到该分类自己的开关（其余分类是 Collapsed，UIA 里读不到）
 foreach ($category in $CategoryMap.Keys) {
     $expected = $CategoryMap[$category]
     if ($null -eq $expected) { continue }   # 「右键菜单」是动态清单，见用例 5
 
-    Select-Category -Dialog $dialog -Name $category
-    $toggles = Get-VisibleToggles -Dialog $dialog
+    Select-Category -Settings $settings -Name $category
+    $toggles = Get-VisibleToggles -Settings $settings
     $foundKeys = @($toggles.Keys | ForEach-Object { $KeyMap[$_] } | Where-Object { $_ })
     Assert ($toggles.Count -eq $expected.Count) "「$category」页显示 $($expected.Count) 个开关（实际 $($toggles.Count)）"
     Assert (((($foundKeys | Sort-Object) -join ',') -eq (($expected | Sort-Object) -join ','))) "「$category」页的开关正是: $($expected -join ' / ')"
@@ -373,28 +466,41 @@ foreach ($pair in $CategoryMap.GetEnumerator()) {
     $category = $pair.Key
     if ($null -eq $pair.Value) { continue }   # 「右键菜单」的动态清单不在这一步断言
     foreach ($key in $pair.Value) {
-        $states[$key] = Get-ToggleStateByKey -Dialog $dialog -Category $category -Key $key
+        $states[$key] = Get-ToggleStateByKey -Settings $settings -Category $category -Key $key
     }
 }
 foreach ($key in $KeyMap.Values) { Write-Host ("  {0,-14} = {1}" -f $key, $states[$key]) }
-Assert ($states['animations'] -eq 'On') '对话框读到的「过渡动画」与 settings.json（true）一致'
-Assert ($states['extension'] -eq 'On') '对话框读到的「显示文件扩展名」与 settings.json（true）一致'
+Assert ($states['animations'] -eq 'On') '设置窗口读到的「过渡动画」与 settings.json（true）一致'
+Assert ($states['extension'] -eq 'On') '设置窗口读到的「显示文件扩展名」与 settings.json（true）一致'
 
-# ================================================================== 用例 2：取消不落盘
+# 非开关类的项单独认：『文件列表』页里的「行高」滑块
+$rowHeightSetting = [double](Get-Setting 'RowHeight')
+Select-Category -Settings $settings -Name '文件列表'
+$slider = Find-Slider -Settings $settings -Name '行高'
+Assert ($null -ne $slider) '「文件列表」页里有「行高」滑块'
+if ($null -ne $slider) {
+    $sliderValue = Get-SliderValue -Element $slider
+    Write-Host ("  行高滑块 = {0}（settings.json = {1}）" -f $sliderValue, $rowHeightSetting)
+    Assert ($sliderValue -eq $rowHeightSetting) '行高滑块的初值与 settings.json 一致'
+}
 
-Write-Host '--- 用例 2：取消不落盘 ---'
-Invoke-ToggleByKey -Dialog $dialog -Category '外观' -Key 'animations'
-Assert ((Get-ToggleStateByKey -Dialog $dialog -Category '外观' -Key 'animations') -eq 'Off') '勾选状态可以切换（改的是快照，不是设置本身）'
+# ================================================================== 用例 2：即时生效（没有保存按钮）
 
-Click-Element -Session $session -Element $dialog.Cancel
-Start-Sleep -Seconds 1
-Assert (Test-DialogClosed -Session $session) '点「取消」后对话框关闭'
-Assert ((Get-Setting 'EnableListAnimations') -eq $true) '点「取消」后 settings.json 没有被修改'
+Write-Host '--- 用例 2：拨一下开关就立刻落盘（没有「保存 / 取消」） ---'
+Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'animations'
+Assert ((Get-Setting 'EnableListAnimations') -eq $false) '拨一下「过渡动画」后 settings.json 立刻变成 false'
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'animations') -eq 'Off') '窗口里的开关状态也变了'
+Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'animations'
+Assert ((Get-Setting 'EnableListAnimations') -eq $true) '再拨回来又立刻落盘（true）'
+
+Close-Settings -Settings $settings
+Assert (Test-SettingsClosed -Session $session) '关掉设置窗口'
+Assert ((Get-Setting 'EnableListAnimations') -eq $true) '关窗不需要“保存”，改动已经落盘了'
 Stop-Session -Session $session
 
-# ================================================================== 用例 3：保存立即落盘并生效
+# ================================================================== 用例 3：即时作用到文件列表
 
-Write-Host '--- 用例 3：保存立即落盘并作用到文件列表 ---'
+Write-Host '--- 用例 3：改设置立刻作用到文件列表 ---'
 # 换到一个有真实文件的目录，才能看出「显示文件扩展名」的效果
 Set-Setting 'PrimaryTabs' ([string[]]@($repoDir))
 Set-Setting 'EnableListAnimations' $true
@@ -405,42 +511,34 @@ $rowsBefore = Get-Rows -Session $session
 Assert (@($rowsBefore | Where-Object { $_ -match 'AGENTS' }).Count -gt 0) '会话已打开仓库目录（能看到 AGENTS 开头的行）'
 $dotsBefore = Get-DotRowCount -Session $session
 
-$dialog = Open-SettingsDialog -Session $session
-Invoke-ToggleByKey -Dialog $dialog -Category '文件列表' -Key 'extension'
-Click-Element -Session $session -Element $dialog.Save
-Start-Sleep -Seconds 1
-
-Assert (Test-DialogClosed -Session $session) '点「保存」后对话框关闭'
-Assert ((Get-Setting 'ShowExtensions') -eq $false) '点「保存」后立即落盘（ShowExtensions=false）'
+$settings = Open-Settings -Session $session
+Invoke-ToggleByKey -Settings $settings -Category '文件列表' -Key 'extension'
+Assert ((Get-Setting 'ShowExtensions') -eq $false) '拨一下「显示文件扩展名」就立即落盘（ShowExtensions=false）'
 
 Start-Sleep -Seconds 2
 $dotsAfter = Get-DotRowCount -Session $session
 Write-Host ("  行名里带扩展名的行数: {0} -> {1}" -f $dotsBefore, $dotsAfter)
 Assert ($dotsAfter -lt $dotsBefore) '关掉「显示文件扩展名」后文件列表里的扩展名真的消失了'
 
-# 改回来（这次也顺便验证「保存」能把设置改回去）
-$dialog = Open-SettingsDialog -Session $session
-Invoke-ToggleByKey -Dialog $dialog -Category '文件列表' -Key 'extension'
-Click-Element -Session $session -Element $dialog.Save
+Invoke-ToggleByKey -Settings $settings -Category '文件列表' -Key 'extension'
 Start-Sleep -Seconds 2
-Assert ((Get-Setting 'ShowExtensions') -eq $true) '再点一次「保存」把设置改回来'
+Assert ((Get-Setting 'ShowExtensions') -eq $true) '再拨回来立即落盘'
 Assert ((Get-DotRowCount -Session $session) -eq $dotsBefore) '重新打开扩展名后行名恢复原样'
 
-# ================================================================== 用例 4：跨分类改「布局」并读回
+# ================================================================== 用例 4：跨分类改「布局」、关窗重开读回
 
-Write-Host '--- 用例 4：在「布局」页改设置、保存、重新打开读回 ---'
+Write-Host '--- 用例 4：在「布局」页改设置、关窗重开读回 ---'
 $singlePaneRows = (Get-Rows -Session $session).Count
-$dialog = Open-SettingsDialog -Session $session
-Invoke-ToggleByKey -Dialog $dialog -Category '布局' -Key 'dualPane'
-Click-Element -Session $session -Element $dialog.Save
+Invoke-ToggleByKey -Settings $settings -Category '布局' -Key 'dualPane'
 Start-Sleep -Seconds 3
-Assert ((Get-Setting 'IsDualPane') -eq $true) '打开「双窗格模式」后落盘 IsDualPane=true'
+Assert ((Get-Setting 'IsDualPane') -eq $true) '打开「双窗格模式」后立即落盘 IsDualPane=true'
 Assert ((Get-Rows -Session $session).Count -ge ($singlePaneRows * 2)) '双窗格打开后列表行数明显变多（第二个窗格也开了同一个目录）'
-$dialog = Open-SettingsDialog -Session $session
-Assert ((Get-CurrentCategoryKey -Dialog $dialog) -eq '文件列表') '重新打开对话框时仍默认停在「文件列表」'
-Assert ((Get-ToggleStateByKey -Dialog $dialog -Category '布局' -Key 'dualPane') -eq 'On') '切到「布局」页读到的就是刚落盘的值'
-Invoke-ToggleByKey -Dialog $dialog -Category '布局' -Key 'dualPane'
-Click-Element -Session $session -Element $dialog.Save
+
+Close-Settings -Settings $settings
+$settings = Open-Settings -Session $session
+Assert ((Get-CurrentCategoryKey -Settings $settings) -eq '文件列表') '重新打开设置窗口时仍默认停在「文件列表」'
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '布局' -Key 'dualPane') -eq 'On') '切到「布局」页读到的就是刚落盘的值'
+Invoke-ToggleByKey -Settings $settings -Category '布局' -Key 'dualPane'
 Start-Sleep -Seconds 3
 Assert ((Get-Setting 'IsDualPane') -eq $false) '再关掉「双窗格模式」也立即落盘'
 Assert ((Get-Rows -Session $session).Count -eq $singlePaneRows) '关掉双窗格后回到单个窗格'
@@ -448,36 +546,81 @@ Assert ((Get-Rows -Session $session).Count -eq $singlePaneRows) '关掉双窗格
 # ================================================================== 用例 5：「右键菜单」页
 
 Write-Host '--- 用例 5：「右键菜单」页 —— 系统菜单项清单 + 关掉某项 ---'
-$dialog = Open-SettingsDialog -Session $session
-Select-Category -Dialog $dialog -Name '右键菜单'
-$shellToggles = Wait-ShellToggles -Dialog $dialog
+Select-Category -Settings $settings -Name '右键菜单'
+$shellToggles = Wait-ShellToggles -Settings $settings
 Write-Host ("  系统菜单项 {0} 个，前几个：{1}" -f $shellToggles.Count, (($shellToggles.Keys | Select-Object -First 8) -join ' / '))
 Assert ($shellToggles.Count -ge 10) "「右键菜单」页列出了系统菜单项（实际 $($shellToggles.Count) 个）"
+Assert ($shellToggles.ContainsKey('使用内置的轻量右键菜单')) '「右键菜单」页有菜单风格开关（内置 / 系统）'
+if ($shellToggles.ContainsKey('使用内置的轻量右键菜单')) {
+    Assert ((Get-ToggleState -Element $shellToggles['使用内置的轻量右键菜单']) -eq 'On') '默认使用内置的轻量右键菜单（On）'
+    Toggle-Element -Element $shellToggles['使用内置的轻量右键菜单']
+    Assert ((Get-Setting 'UseBuiltInContextMenu') -eq $false) '关掉风格开关后立即落盘（UseBuiltInContextMenu=false，回到系统菜单）'
+    Toggle-Element -Element $shellToggles['使用内置的轻量右键菜单']
+    Assert ((Get-Setting 'UseBuiltInContextMenu') -eq $true) '再拨回来又立即落盘（UseBuiltInContextMenu=true）'
+}
 Assert ($shellToggles.ContainsKey('打开')) '清单里有「打开」'
 Assert ($shellToggles.ContainsKey('属性')) '清单里有「属性」'
 Assert ((Get-ToggleState -Element $shellToggles['打开']) -eq 'On') '系统菜单项默认全部开启（「打开」= On）'
 
 Toggle-Element -Element $shellToggles['属性']
-Click-Element -Session $session -Element $dialog.Save
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 1
 
 Assert ((@(Get-Setting 'ShellMenuDisabledItems') -contains 'verb:properties')) '关掉「属性」后立即落盘（ShellMenuDisabledItems 里有 verb:properties）'
 $known = @(Get-Setting 'ShellMenuKnownItems')
 Write-Host ("  ShellMenuKnownItems 落了 {0} 项" -f $known.Count)
-Assert ($known.Count -ge 10) '保存时把菜单项清单也落盘了（ShellMenuKnownItems）'
+Assert ($known.Count -ge 10) '菜单项清单也落盘了（ShellMenuKnownItems）'
 
 # 重新打开：被关掉的项应该还是关着的（关掉的状态真的读回来了）
-$dialog = Open-SettingsDialog -Session $session
-Select-Category -Dialog $dialog -Name '右键菜单'
-$shellToggles = Wait-ShellToggles -Dialog $dialog
-Assert ((Get-ToggleState -Element $shellToggles['属性']) -eq 'Off') '重新打开对话框时「属性」仍是关着的'
+# 注意：改设置前必须先关掉旧窗口（它手里那份编辑模型会把 settings.json 覆盖回去）
+Close-Settings -Settings $settings
+$settings = Open-Settings -Session $session
+Select-Category -Settings $settings -Name '右键菜单'
+$shellToggles = Wait-ShellToggles -Settings $settings
+Assert ((Get-ToggleState -Element $shellToggles['属性']) -eq 'Off') '重新打开设置窗口时「属性」仍是关着的'
 
-# 刷回来并保存（顺便验证清空被关列表）
+# 拨回来（顺便验证清空被关列表）
 Toggle-Element -Element $shellToggles['属性']
-Click-Element -Session $session -Element $dialog.Save
-Start-Sleep -Seconds 2
-Assert (@(Get-Setting 'ShellMenuDisabledItems').Count -eq 0) '再拨回来并保存后被关掉的项清空了（回到默认全开）'
+Start-Sleep -Seconds 1
+Assert (@(Get-Setting 'ShellMenuDisabledItems').Count -eq 0) '再拨回来后被关掉的项清空了（回到默认全开）'
 
+# ================================================================== 用例 6：行高滑块
+
+Write-Host '--- 用例 6：「文件列表」页的「行高」滑块 ---'
+$defaultRowHeight = [double](Get-Setting 'RowHeight')
+$rowPxBefore = Get-TypicalRowHeight -Session $session
+$rowRawBefore = @(Get-RowHeights -Session $session)
+Write-Host ("  设置里的行高 {0} DIP，实测数据行高 {1:N1} 物理像素（{2:N1} DIP，缩放 {3:N2}）；逐行 = [{4}]" -f `
+    $defaultRowHeight, $rowPxBefore, ($rowPxBefore / $session.Scale), $session.Scale, ($rowRawBefore -join ', '))
+Assert ($rowPxBefore -gt 0) '能量到文件列表的数据行'
+Assert ([Math]::Abs($rowPxBefore - ($defaultRowHeight * $session.Scale)) -le 2) `
+    "默认行高真的按设置画出来了（$defaultRowHeight DIP；图标与名称仍是行内垂直居中，见 measure-row-align.ps1）"
+
+Select-Category -Settings $settings -Name '文件列表'
+$slider = Find-Slider -Settings $settings -Name '行高'
+Assert ($null -ne $slider) '重新切回「文件列表」页时「行高」滑块还在'
+if ($null -eq $slider) { Close-Settings -Settings $settings; Stop-Session -Session $session; Write-Host ("SUMMARY failures={0}" -f $failures); exit 1 }
+
+# 切到别的分类后它应该读不到（右侧一次只显示一页）
+Select-Category -Settings $settings -Name '外观'
+Assert ($null -eq (Find-Slider -Settings $settings -Name '行高')) '切到「外观」页后读不到「行高」滑块（只显示当前分类的项）'
+
+$newRowHeight = if ($defaultRowHeight -ge 40) { 24 } else { 40 }
+Select-Category -Settings $settings -Name '文件列表'
+Set-SliderValue -Element (Find-Slider -Settings $settings -Name '行高') -Value $newRowHeight
+
+Assert ((Get-Setting 'RowHeight') -eq $newRowHeight) "拖滑块就立即落盘（RowHeight=$newRowHeight）"
+
+Start-Sleep -Seconds 1
+$rowPxAfter = Get-TypicalRowHeight -Session $session
+$rowRawAfter = @(Get-RowHeights -Session $session)
+Write-Host ("  改后实测数据行高 {0:N1} 物理像素（{1:N1} DIP）；逐行 = [{2}]" -f $rowPxAfter, ($rowPxAfter / $session.Scale), ($rowRawAfter -join ', '))
+Assert ([Math]::Abs($rowPxAfter - ($newRowHeight * $session.Scale)) -le 2) "文件列表的数据行真的变成 $newRowHeight DIP 高"
+
+# 改回默认值，后面的脚本 / 人手看界面都回到原样
+Set-SliderValue -Element (Find-Slider -Settings $settings -Name '行高') -Value $defaultRowHeight
+Assert ((Get-Setting 'RowHeight') -eq $defaultRowHeight) '把行高改回默认值也立即落盘'
+
+Close-Settings -Settings $settings
 Stop-Session -Session $session
 
 # ------------------------------------------------------------------ 还原设置文件

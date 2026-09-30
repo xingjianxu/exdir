@@ -148,6 +148,6 @@ $bitmap.Dispose()
 Write-Host ("已保存 {0}  ({1}x{2})" -f $outFile, $w, $h)
 
 if (-not $KeepRunning) {
-    try { $proc.CloseMainWindow() | Out-Null; $proc.WaitForExit(4000) | Out-Null } catch { }
+    # exdir 关窗口只是隐藏到托盘（隐藏时已统一落盘），收尾直接 Kill
     try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
 }
