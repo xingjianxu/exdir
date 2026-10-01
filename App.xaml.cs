@@ -50,7 +50,17 @@ public partial class App : Application
             Services.GetRequiredService<IShellContextMenuService>().OwnerWindow =
                 WinRT.Interop.WindowNative.GetWindowHandle(window);
 
-            window.Activate();
+            if (CommandLine.IsPreload)
+            {
+                // 开机自启（--preload）：这一份**不显示主窗口**，只把会话与首屏图标先备好。
+                // 之后用户双击 exe / 点托盘图标时，单实例闸门会把请求转给这份进程，
+                // ShowWindow 一下就能出现 —— 自启时弹出一个主窗口正是要避开的。
+                window.StartPreload();
+            }
+            else
+            {
+                window.Activate();
+            }
 
             // 托盘驻留 + 命令行：第二个实例（双击 exe 或 exdir <path>）的请求都从这里进来——
             // 把已在运行的这只窗口叫出来，并打开它带来的目录

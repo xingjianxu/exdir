@@ -38,6 +38,7 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _showToolbar;
     private bool _showSidebar;
     private bool _dualPane;
+    private bool _startWithWindows;
     private double _rowHeight;
     private bool _useBuiltInContextMenu;
     private int _themeIndex;
@@ -62,6 +63,7 @@ public sealed class SettingsViewModel : ObservableObject
             new(SettingsCategory.FileList, "文件列表"),
             new(SettingsCategory.Appearance, "外观"),
             new(SettingsCategory.Layout, "布局"),
+            new(SettingsCategory.Startup, "启动"),
             new(SettingsCategory.Sidebar, "侧边栏"),
             new(SettingsCategory.ShellMenu, "右键菜单"),
         };
@@ -94,6 +96,7 @@ public sealed class SettingsViewModel : ObservableObject
         _sidebarHomeMusic = settings.SidebarHomeMusic;
         _sidebarHomeVideos = settings.SidebarHomeVideos;
         _useBuiltInContextMenu = settings.UseBuiltInContextMenu;
+        _startWithWindows = settings.StartWithWindows;
 
         // 主题下拉框：0 = 跟随系统 / 1 = 浅色 / 2 = 深色（见 ThemeHelper，与 SettingsView.xaml 里的项顺序一致）
         _themeIndex = ThemeHelper.ToIndex(settings.Theme);
@@ -132,6 +135,7 @@ public sealed class SettingsViewModel : ObservableObject
             OnPropertyChanged(nameof(IsFileListPageVisible));
             OnPropertyChanged(nameof(IsAppearancePageVisible));
             OnPropertyChanged(nameof(IsLayoutPageVisible));
+            OnPropertyChanged(nameof(IsStartupPageVisible));
             OnPropertyChanged(nameof(IsSidebarPageVisible));
             OnPropertyChanged(nameof(IsShellMenuPageVisible));
         }
@@ -145,6 +149,9 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>右侧是否显示「布局」页。</summary>
     public bool IsLayoutPageVisible => _selectedCategory.Key == SettingsCategory.Layout;
+
+    /// <summary>右侧是否显示「启动」页。</summary>
+    public bool IsStartupPageVisible => _selectedCategory.Key == SettingsCategory.Startup;
 
     /// <summary>右侧是否显示「侧边栏」页。</summary>
     public bool IsSidebarPageVisible => _selectedCategory.Key == SettingsCategory.Sidebar;
@@ -362,6 +369,19 @@ public sealed class SettingsViewModel : ObservableObject
     {
         get => _dualPane;
         set => SetAndNotify(ref _dualPane, value);
+    }
+
+    // ------------------------------------------------------------------ 启动
+
+    /// <summary>
+    /// 开机自启：登录时在后台启动 exdir（不显示主窗口，只恢复上次的会话与首屏图标），
+    /// 这样之后双击 exe / 点托盘图标几乎是瞬时的。
+    /// 实际写注册表在 <see cref="MainViewModel.ApplySettings" />（设置应用只有那一个入口）。
+    /// </summary>
+    public bool StartWithWindows
+    {
+        get => _startWithWindows;
+        set => SetAndNotify(ref _startWithWindows, value);
     }
 
     // ------------------------------------------------------------------ 侧边栏

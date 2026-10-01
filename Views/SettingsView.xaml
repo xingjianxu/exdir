@@ -166,6 +166,23 @@
                     </controls:SettingsCard>
                 </StackPanel>
 
+                <!-- ============================ 启动 ============================ -->
+                <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.IsStartupPageVisible, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock
+                        Margin="4,0,0,12"
+                        Style="{ThemeResource TitleTextBlockStyle}"
+                        Text="启动" />
+
+                    <!-- 开机自启：登录时把进程起在后台备好（不显示主窗口），之后双击 exe / 点托盘图标几乎是瞬时的。 -->
+                    <controls:SettingsCard Description="登录后在后台启动 exdir（不显示主窗口，只把上次的目录与首屏图标备好）；之后双击 exe / 点托盘图标几乎瞬时就能打开" Header="开机时自动启动 exdir">
+                        <ToggleSwitch
+                            AutomationProperties.Name="开机时自动启动 exdir"
+                            IsOn="{x:Bind ViewModel.StartWithWindows, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+                </StackPanel>
+
                 <!-- ============================ 侧边栏 ============================ -->
                 <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.IsSidebarPageVisible, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                     <TextBlock

@@ -93,6 +93,11 @@
     系统窗口按钮（最小-最大-关闭）要自己按主题上色；设置窗口是另一个 `Window`，自己接一份主题，
     并顺带修掉了它在浅色主题下左侧导航“黑底黑字”的问题（加 Mica 背板）；
     回归脚本 `tools/test-settings.ps1` 用例 9，见 AGENTS.md 第 4 节“主题”与第 6 节第 68 条。
+  - 开机自启 + 预热启动（2026-09，S30）：设置窗口「启动」页可以开关“开机时自动启动 exdir”
+    （写 / 删 `HKCU\...\Run` 里的 `"<exe>" --preload`）；带 `--preload` 启动的那一份**不显示主窗口**，
+    只恢复上次的目录会话并预取首屏图标，之后双击 exe 几乎是瞬时的；
+    回归 `tools/test-autostart.ps1` 与 `tools/test-settings.ps1` 用例 10，
+    见 AGENTS.md 第 4 节“开机自启 / 预热启动”与第 6 节第 75 条。
   - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%LOCALAPPDATA%\exdir\settings.json`。
   - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
   - 工具脚本：`capture.ps1`（截图）、`inspect-ui.ps1`（UIA 控件树 / 点击）、`publish.ps1`（Release 产物）、`make-icon.ps1`。
@@ -622,6 +627,34 @@
     所以关掉再打开一个文件夹时它已展开的子目录与展开状态都还在（与分组开关同一个理由）。
   - 验收：`tools/test-settings.ps1` 用例 7 追加了相应断言（默认只有桌面 / 下载；
     打开「文档」后树里真的出现；关掉「桌面」后真的消失；用完还原）。
+
+- [x] **S30 开机自启 + 预热启动（`--preload`）**（2026-09，新增 3 个文件 / 改 9 个，~350 行）
+  - 目标：设置里能给 exdir 开“开机自启”；登录时起来的那一份**不显示主窗口**，
+    只把系统中该预读 / 准备好的东西做掉，让之后双击 exe（或点托盘图标）几乎瞬时就能出窗口。
+  - 涉及：新增 `Helpers/AutoStart.cs`、`tools/test-autostart.ps1`；
+    改 `Models/AppSettings.cs`（`StartWithWindows` + 结构版本 7→8）、`Models/SettingsCategory.cs`、
+    `Helpers/CommandLine.cs`（`--preload` / `@preload` / `IsPreload`）、
+    `ViewModels/SettingsViewModel.cs`（`StartWithWindows` + `IsStartupPageVisible`）、
+    `Views/SettingsView.xaml`（「启动」页）、`ViewModels/MainViewModel.cs`（自愈写注册表 + 幂等会话恢复 + `PreloadIconsAsync`）、
+    `ViewModels/FolderTabViewModel.cs`（`PreloadIconsAsync`）、`MainWindow.xaml.cs`（`StartPreload` / 预热请求不弹窗口）、
+    `App.xaml.cs`（`--preload` 时不 `Activate`）、`tools/test-settings.ps1`（用例 10）。
+  - 做法：
+    * 自启项 = `HKCU\...\CurrentVersion\Run` 里的 `exdir` = `"<exe>" --preload`（非打包应用用不了
+      `StartupTask`，写 HKCU 不要管理员权限）；设置一拨就写 / 删，启动时按设置重写一遍（换目录自愈）。
+    * 预热进程：不 `Activate()`（窗口从未显示），但把“已隐藏到托盘”的状态记上；
+      预热 = 恢复会话（枚举上次打开的目录 + 侧边栏树）+ 预取首屏几十行的外壳图标（提取是串行的）；
+      窗口位置恢复 / 菜单构建留给真正显示时的 `Loaded`（那时才有真实 DPI）。
+    * 用户之后双击 exe：第二个进程把“唤回窗口”送进管道，预热进程 `ShowWindow` 一下就行；
+      `--preload` 的请求载荷是约定值 `@preload`（收到它**不弹窗口**，空串才是只唤窗口）。
+  - 坑（已记入 `AGENTS.md` 第 6 节第 75 条）：预热进程必须自己置 `_hiddenToTray`，
+    否则 `ShowFromTray` 会走“只是被最小化”那条分支、窗口永远出不来；不能指望 `RootGrid.Loaded`
+    触发预热（窗口没显示过，第一帧布局不一定跑），所以会话恢复要从 `Loaded` 里挖出来做成幂等
+    （`??=` 一个共享 `Task`，用 bool 会在“第一次还没跑完”时误判成已完成）。
+  - 验收：`tools/test-autostart.ps1` 3 个用例 18 条断言全绿（预热进程驻留且**没有可见主窗口**、
+    日志有「预热启动：…」「预热完成：… 目录=… 图标=…」（实测 ~600 ms / 37 个图标）、
+    第二次启动 ~70 ms 退出并把窗口真的唤出来、带路径的请求照样能转发进来新开标签页）；
+    `tools/test-settings.ps1` 10 个用例全绿（含用例 10：拨开关真的写 / 删 HKCU 的 Run 项，用完还原注册表）；
+    `tools/test-command-line.ps1` 10 个用例全绿（命令行路径没被 `--preload` 改坏）。
 
 ---
 

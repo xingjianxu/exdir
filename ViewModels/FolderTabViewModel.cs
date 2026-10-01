@@ -586,6 +586,28 @@ public sealed partial class FolderTabViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 预热：一次性把前面 <paramref name="count" /> 行的图标取好，返回取到的个数。
+    /// 只给待机预热用（见 <see cref="MainViewModel.PreloadIconsAsync" />）：没有可见窗口时行容器不会创建，
+    /// 图标就不会被按需取到，首屏差的就是那几百毫秒。失败与单行一样只记日志。
+    /// </summary>
+    public async Task<int> PreloadIconsAsync(int count)
+    {
+        var loaded = 0;
+
+        foreach (var item in Items.Take(Math.Max(0, count)).ToList())
+        {
+            await EnsureIconAsync(item).ConfigureAwait(true);
+
+            if (item.HasIcon)
+            {
+                loaded++;
+            }
+        }
+
+        return loaded;
+    }
+
     /// <summary>双击 / 回车打开某一项。</summary>
     public void OpenItem(FileItemViewModel item)
     {

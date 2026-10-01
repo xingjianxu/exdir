@@ -6,7 +6,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%LOCALAPPDATA%\exdir\settings.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 7;
+    public const int CurrentSchemaVersion = 8;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -58,6 +58,17 @@ public sealed class AppSettings
 
     /// <summary>「主目录」分组里是否显示“视频”。</summary>
     public bool SidebarHomeVideos { get; set; }
+
+    // ---------- 启动 ----------
+
+    /// <summary>
+    /// 登录时自动启动 exdir（默认关）。
+    /// 打开后会在 <c>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</c> 里登记一个
+    /// <c>"&lt;exe&gt;" --preload</c> 的自启项：登录时启动的那一份**不显示主窗口**，
+    /// 只把进程、上次的目录会话与首屏图标先备好，之后用户双击 exe 几乎是瞬时的。
+    /// 见 <see cref="Exdir.Helpers.AutoStart" /> 与 AGENTS.md 第 4 节“开机自启 / 预热启动”。
+    /// </summary>
+    public bool StartWithWindows { get; set; }
 
     // ---------- 外观 ----------
 

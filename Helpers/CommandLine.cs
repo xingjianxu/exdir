@@ -18,8 +18,25 @@ namespace Exdir.Helpers;
 /// </summary>
 internal static class CommandLine
 {
+    /// <summary>登录自启的开关：带它的进程只预热、不显示主窗口（见 <see cref="AutoStart" />）。</summary>
+    public const string PreloadArgument = "--preload";
+
+    /// <summary>
+    /// “预热启动”的请求载荷。<c>--preload</c> 进程把这句话交给已经在跑的主实例时**不能**把窗口叫出来
+    /// （否则开机时反而会弹出一个窗口），所以它不能是个空请求，得有个可识别的值。
+    /// 路径载荷永远是绝对路径（<c>Path.GetFullPath</c> 出来的），不会撞上这个以 <c>@</c> 开头的约定值。
+    /// </summary>
+    public const string PreloadRequest = "@preload";
+
     /// <summary>本次启动的请求载荷（空串 = 只唤回窗口，不导航）。</summary>
     public static string Request { get; private set; } = string.Empty;
+
+    /// <summary>本次启动是不是“开机自启的预热进程”（命令行带 <c>--preload</c>）。</summary>
+    public static bool IsPreload { get; private set; }
+
+    /// <summary>载荷是不是预热请求（主窗口据此决定不动窗口）。</summary>
+    public static bool IsPreloadRequest(string? request)
+        => string.Equals(request, PreloadRequest, StringComparison.Ordinal);
 
     /// <summary>
     /// 解析命令行参数。
@@ -28,9 +45,32 @@ internal static class CommandLine
     /// </summary>
     public static void Parse(string[] args)
     {
+        // 预热启动不看路径参数：它本来就不显示窗口，带不带路径都没意义
+        // （自启项里写的就是 "<exe>" --preload，没有别的参数）
+        if (HasPreloadArgument(args))
+        {
+            IsPreload = true;
+            Request = PreloadRequest;
+            Log.Write($"命令行：{PreloadArgument}（开机自启的预热进程，不显示主窗口）");
+            return;
+        }
+
         var (request, note) = Resolve(args);
         Request = request;
         Log.Write($"命令行：{note}");
+    }
+
+    private static bool HasPreloadArgument(string[] args)
+    {
+        foreach (var arg in args)
+        {
+            if (string.Equals(arg, PreloadArgument, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>把命令行解析成“要打开的路径”（空串 = 只唤回窗口）与一句写进日志的说明。</summary>

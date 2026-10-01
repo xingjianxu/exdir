@@ -192,17 +192,26 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// 处理其它实例转发过来的请求（双击 exe 或 <c>exdir [path]</c>）：
     /// 先把窗口叫到眼前，再按请求打开路径。
+    ///
+    /// 唯一例外是 <c>--preload</c>（开机自启）：那只代表“系统里已经有一份在预热的 exdir 了”，
+    /// 绝不能把窗口弹出来（否则开机时反而会看到一个主窗口）。
     /// </summary>
     public void HandleActivation(string request)
     {
+        if (CommandLine.IsPreloadRequest(request))
+        {
+            Log.Write("收到预热请求：已有进程在跑，不显示主窗口");
+            return;
+        }
+
         ShowFromTray();
         QueueActivation(request);
     }
 
-    /// <summary>把请求排进队列并串行处理（空请求 = 只唤回窗口，不必排队）。</summary>
+    /// <summary>把请求排进队列并串行处理（空请求 = 只唤回窗口、预热请求 = 什么都不做，都不必排队）。</summary>
     private void QueueActivation(string request)
     {
-        if (string.IsNullOrEmpty(request))
+        if (string.IsNullOrEmpty(request) || CommandLine.IsPreloadRequest(request))
         {
             return;
         }
@@ -239,6 +248,50 @@ public sealed partial class MainWindow : Window
         finally
         {
             _activating = false;
+        }
+    }
+
+    // ------------------------------------------------------------------ 开机自启（预热启动）
+
+    /// <summary>
+    /// 开机自启的预热启动：**不显示主窗口**，只把“用户下一次双击 exe 时要等的东西”先备好。
+    ///
+    /// 预热的内容：进程 / DI 容器（已就绪）、上次打开的目录会话（包括枚举）、侧边栏树、
+    /// 以及首屏那几十行的外壳图标。真正关窗口与“只藏到托盘”的区别只是这里从来不 Activate ——
+    /// 进程、托盘、两个窗格、标签页全都在，所以之后双击 exe / 点托盘图标时
+    /// （第二次进程会把请求转进来，见 <see cref="HandleActivation" />）只要一次 ShowWindow。
+    /// </summary>
+    internal void StartPreload()
+    {
+        // 窗口自始至终没 Activate 过，本来就是隐藏的；但“已隐藏到托盘”这个状态必须记上，
+        // 否则 ShowFromTray 会走进“只是被最小化”那条分支、什么都不做（窗口永远出不来）。
+        _hiddenToTray = true;
+
+        Log.Write("预热启动：不显示主窗口，只恢复会话与首屏图标");
+        _ = PreloadAsync();
+    }
+
+    private async Task PreloadAsync()
+    {
+        try
+        {
+            var started = Environment.TickCount64;
+
+            // 会话恢复（枚举上次打开的目录、建侧边栏树）是弹出窗口前最贵的一步，在这里做掉。
+            // 窗口第一次真的显示时 OnRootGridLoaded 还会再调一次，但 InitializeAsync 是幂等的。
+            await ViewModel.InitializeAsync();
+
+            var icons = await ViewModel.PreloadIconsAsync();
+            var folder = ViewModel.ActivePane.ActiveTab?.CurrentPath ?? "(无)";
+
+            // 命令行请求的等待者不必等窗口显示
+            _initialized.TrySetResult();
+
+            Log.Write($"预热完成：用时 {Environment.TickCount64 - started} ms，目录={folder}，图标={icons} 个");
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("预热", ex);
         }
     }
 

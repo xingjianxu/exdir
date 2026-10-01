@@ -88,6 +88,10 @@ public sealed partial class MainViewModel : ObservableObject
         LoadPinnedFolders();
         LoadQuickCommands();
 
+        // 开机自启是“注册表说了算”的状态，而注册表项里记的是当前 exe 的绝对路径。
+        // 每次启动按设置重写一遍：换了目录 / 升级后自动更正，设置里关着时顺手清掉残留。
+        AutoStart.Apply(_settings.Current.StartWithWindows);
+
         // 侧边栏四个分组的显示开关来自设置，必须在窗口首次渲染前生效（InitializeAsync 在 Loaded 里，
         // 那时窗口已经可见，不在这里先应用的话会先闪一下全部四个分组）
         ApplySidebarGroups();
@@ -604,8 +608,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ------------------------------------------------------------------ 生命周期
 
-    /// <summary>恢复上次会话。由主窗口 Loaded 事件调用。</summary>
-    public async Task InitializeAsync()
+    /// <summary>恢复上次会话。由主窗口 Loaded 事件调用（预热启动时更早，见 <see cref="PreloadIconsAsync" />）。</summary>
+    /// <remarks>
+    /// 幂等：开机自启的预热进程会先把会话恢复掉，窗口第一次真的显示时 Loaded 又会调一次 ——
+    /// 两处等的是同一个 <see cref="Task" />，不会各枚举一遍目录、各开一批标签页。
+    /// </remarks>
+    public Task InitializeAsync() => _initialization ??= InitializeCoreAsync();
+
+    /// <summary>本进程的会话只恢复一次，重复调用返回同一个 Task（见 <see cref="InitializeAsync" />）。</summary>
+    private Task? _initialization;
+
+    private async Task InitializeCoreAsync()
     {
         ApplySettingsToState();
 
@@ -625,6 +638,20 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         RaiseActivePaneDependent();
+    }
+
+    /// <summary>
+    /// 预热：先把当前（活动标签页）首屏那几十行的外壳图标取好，返回取到的个数（只用于日志）。
+    ///
+    /// 行图标平时是等行容器真的被创建时才按需取的（<c>DetailsView.ContainerContentChanging</c>），
+    /// 而开机自启的预热进程没有可见窗口，容器根本不会创建；图标提取又是**串行**的
+    /// （约 16~20 ms 一个，见 AGENTS.md 第 6 节第 30 条），首屏二三十行就是半秒，
+    /// 所以在这一层直接把首屏预取掉。
+    /// </summary>
+    public async Task<int> PreloadIconsAsync(int count = 60)
+    {
+        var tab = ActivePane.ActiveTab;
+        return tab is null ? 0 : await tab.PreloadIconsAsync(count).ConfigureAwait(true);
     }
 
     /// <summary>
@@ -783,6 +810,13 @@ public sealed partial class MainViewModel : ObservableObject
         settings.SidebarHomeMusic = edited.SidebarHomeMusic;
         settings.SidebarHomeVideos = edited.SidebarHomeVideos;
 
+        // 开机自启：设置与注册表（HKCU\...\Run）两处都要变，只在值真的改了时才动注册表
+        if (settings.StartWithWindows != edited.StartWithWindows)
+        {
+            settings.StartWithWindows = edited.StartWithWindows;
+            AutoStart.Apply(settings.StartWithWindows);
+        }
+
         OnPropertyChanged(nameof(ShowHiddenFiles));
         OnPropertyChanged(nameof(ShowExtensions));
 
@@ -841,6 +875,7 @@ public sealed partial class MainViewModel : ObservableObject
             + $"主目录文件夹（桌面/文档/下载/图片/音乐/视频）="
             + $"{edited.SidebarHomeDesktop}/{edited.SidebarHomeDocuments}/{edited.SidebarHomeDownloads}/"
             + $"{edited.SidebarHomePictures}/{edited.SidebarHomeMusic}/{edited.SidebarHomeVideos} "
+            + $"开机自启={edited.StartWithWindows} "
             + $"右键菜单={(edited.UseBuiltInContextMenu ? "内置" : "系统")} "
             + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
     }

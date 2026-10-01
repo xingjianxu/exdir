@@ -4,8 +4,8 @@
 #   pwsh -NoProfile -File tools\test-settings.ps1
 #   pwsh -NoProfile -File tools\test-settings.ps1 -Exe dist\win-x64\exdir.exe
 #
-# 九个用例：
-#   1. 窗口结构：左侧 5 个分类（文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单）、默认停在「文件列表」，
+# 十个用例：
+#   1. 窗口结构：左侧 6 个分类（文件列表 / 外观 / 布局 / 启动 / 侧边栏 / 右键菜单）、默认停在「文件列表」，
 #      右侧只有当前分类的项（切分类真的换页），初始值与 settings.json 一致；
 #   2. 即时生效：拨一下开关，settings.json 立刻变（没有「保存 / 取消」按钮）；
 #   3. 生效到界面：关掉「显示文件扩展名」，文件列表行名里的 ".xxx" 立刻消失；
@@ -22,6 +22,8 @@
 #   9. 「外观」页的「主题」下拉框（跟随系统 / 浅色 / 深色）：初值一致；选「深色」/「浅色」
 #      立即落盘并当场应用（exdir.log：主题已应用：…）；标题栏那个太阳 / 月亮开关改的是同一个设置
 #      （拨一下就固定成显式的浅 / 深，设置窗口里的下拉框跟着同步）。
+#  10. 「启动」页的「开机时自动启动 exdir」：初值一致；拨开就立即落盘 **并且真的在 HKCU 的
+#      Run 项里写下 `"<exe>" --preload`**，拨回来就把该项删掉（用完后还原注册表原状）。
 #
 # 说明：开关类配置项是社区工具包 SettingsCard 里的 ToggleSwitch（Windows 11 设置的那种卡片行），
 #       UIA 里的类型是 Button（不是 CheckBox），所以要靠 TogglePattern 认它；
@@ -61,7 +63,17 @@ if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 $repoDir = [System.IO.Path]::GetFullPath("$PSScriptRoot\..")
 $settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
+$runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
+
+# 开机自启是写注册表的，不属于 settings.json：跑之前记下原状，收尾时还原
+# （用例 10 会把 Debug 的 exe 登记进去，不还原的话这台机器登录时会去启动一个 Debug 构建）
+$runKeyExisted = $false
+$originalRunValue = $null
+try {
+    $existing = Get-ItemProperty -Path $runKeyPath -Name 'exdir' -ErrorAction SilentlyContinue
+    if ($null -ne $existing) { $runKeyExisted = $true; $originalRunValue = $existing.exdir }
+} catch { }
 
 $failures = 0
 function Assert {
@@ -92,6 +104,7 @@ $KeyMap = [ordered]@{
     '显示「图片」'           = 'sidebarHomePictures'
     '显示「音乐」'           = 'sidebarHomeMusic'
     '显示「视频」'           = 'sidebarHomeVideos'
+    '开机时自动启动 exdir'   = 'startWithWindows'
     '使用内置的轻量右键菜单' = 'builtInContextMenu'
 }
 
@@ -103,6 +116,7 @@ $CategoryMap = [ordered]@{
     '文件列表' = @('hidden', 'extension', 'foldersFirst')
     '外观'     = @('squareTabCorners', 'animations')
     '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
+    '启动'     = @('startWithWindows')
     '侧边栏'   = @('sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer',
                     'sidebarHomeDesktop', 'sidebarHomeDocuments', 'sidebarHomeDownloads',
                     'sidebarHomePictures', 'sidebarHomeMusic', 'sidebarHomeVideos')
@@ -506,6 +520,21 @@ function Test-LogContains {
     return @((Get-Content $script:logPath -Tail $Tail) | Where-Object { $_ -like "*$Pattern*" }).Count -gt 0
 }
 
+# 开机自启项（HKCU\...\Run 里的 exdir）当前的值；没有这一项时返回 $null。
+function Get-AutostartCommand {
+    try {
+        $value = (Get-ItemProperty -Path $script:runKeyPath -Name 'exdir' -ErrorAction SilentlyContinue).exdir
+        return $value
+    } catch {
+        return $null
+    }
+}
+
+# 直接删掉自启项（用例 10 开始时先归零，确保“拨开就出现”是真的由拨动写出来的）
+function Remove-Autostart {
+    try { Remove-ItemProperty -Path $script:runKeyPath -Name 'exdir' -ErrorAction SilentlyContinue } catch { }
+}
+
 # ================================================================== 用例 1：结构 + 初始状态
 
 Write-Host '--- 用例 1：设置窗口结构（左导航 / 右卡片）与初始状态 ---'
@@ -535,6 +564,10 @@ Set-Setting 'SidebarHomeVideos' $false
 # 右键菜单默认全部开启，且默认用内置菜单：不先归位的话，用例 5 的断言会被历史值干扰
 Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
 Set-Setting 'UseBuiltInContextMenu' $true
+# 开机自启默认关：用例 10 要断言“初值 Off → 拨开写注册表”，历史值会让它不可控；
+# 顺手把注册表里的自启项也清掉，保证它确实是“拨开关”写出来的
+Set-Setting 'StartWithWindows' $false
+Remove-Autostart
 
 $session = Start-Session
 $settings = Open-Settings -Session $session
@@ -831,11 +864,53 @@ Assert (Test-LogContains -Pattern '主题已应用：跟随系统' -Tail 200) '�
 Close-Settings -Settings $settings
 Stop-Session -Session $session
 
-# ------------------------------------------------------------------ 还原设置文件
+# ================================================================== 用例 10：开机自启
+
+Write-Host '--- 用例 10：「启动」页的「开机时自动启动 exdir」（真的写 / 删 HKCU 的 Run 项） ---'
+Remove-Autostart
+Set-Setting 'StartWithWindows' $false
+
+$session = Start-Session
+$settings = Open-Settings -Session $session
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '启动' -Key 'startWithWindows') -eq 'Off') '默认不自动启动（settings.json 里 StartWithWindows=false）'
+Assert ($null -eq (Get-AutostartCommand)) '默认状态下注册表里没有 exdir 的自启项'
+
+Invoke-ToggleByKey -Settings $settings -Category '启动' -Key 'startWithWindows'
+Start-Sleep -Milliseconds 800
+Assert ((Get-Setting 'StartWithWindows') -eq $true) '拨开「开机时自动启动 exdir」就立即落盘（StartWithWindows=true）'
+
+$command = Get-AutostartCommand
+Write-Host ("  HKCU Run: exdir = {0}" -f $command)
+Assert ($null -ne $command) '注册表 HKCU\...\Run 里出现了 exdir 的自启项'
+if ($null -ne $command) {
+    Assert ($command -like "*$script:exePath*") '自启项指向的就是当前运行的这个 exe'
+    Assert ($command -like '*--preload*') '自启项带 --preload（登录时只预热，不弹主窗口）'
+}
+Assert (Test-LogContains -Pattern '自动启动：已登记' -Tail 200) '日志记下了「自动启动：已登记 …」'
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '启动' -Key 'startWithWindows') -eq 'On') '窗口里的开关状态也变了'
+
+Invoke-ToggleByKey -Settings $settings -Category '启动' -Key 'startWithWindows'
+Start-Sleep -Milliseconds 800
+Assert ((Get-Setting 'StartWithWindows') -eq $false) '再拨回来立即落盘（StartWithWindows=false）'
+Assert ($null -eq (Get-AutostartCommand)) '关掉后注册表里的自启项被删掉了'
+Assert (Test-LogContains -Pattern '自动启动：已取消' -Tail 200) '日志记下了「自动启动：已取消」'
+
+Close-Settings -Settings $settings
+Stop-Session -Session $session
+
+# ------------------------------------------------------------------ 还原设置文件与注册表
 
 if ($null -ne $originalSettings) {
     Set-Content $settingsPath $originalSettings -Encoding utf8
     Write-Host '已还原 settings.json'
+}
+
+# 注册表按跑之前的原状还原（用户如果本来就开着自启，不能因为跑了一趟回归就没掉）
+Remove-Autostart
+if ($runKeyExisted -and $null -ne $originalRunValue) {
+    New-Item -Path $runKeyPath -Force | Out-Null
+    Set-ItemProperty -Path $runKeyPath -Name 'exdir' -Value $originalRunValue
+    Write-Host '已还原 HKCU 的开机自启项'
 }
 
 Write-Host ("SUMMARY failures={0}" -f $failures)

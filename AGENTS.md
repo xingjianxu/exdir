@@ -75,13 +75,14 @@ pwsh -NoProfile -File tools\make-icon.ps1
 #    需要交互桌面；当前 shell 提权时会自动改用 explorer.exe 以普通权限启动 exdir（见第 6 节第 21 条）
 pwsh -NoProfile -File tools\test-pin-drag.ps1
 
-# 7) 设置窗口回归（左导航五个分类 / 每页只显示本分类的项 / 拨一下就立即生效并落盘 /
+# 7) 设置窗口回归（左导航六个分类 / 每页只显示本分类的项 / 拨一下就立即生效并落盘 /
 #    跨分类读回 / 关窗重开仍是新值 / 「右键菜单」页的系统菜单项默认全开且能逐项关掉 /
 #    「行高」滑块拖完列表行真的变高 / 「侧边栏」页的分组开关关掉后树里真的少一个分组 /
 #    「侧边栏」页里「主目录」的标准文件夹开关（桌面 / 文档 / 下载…）关掉后树里真的少一个 /
 #    「标签页使用直角」拨一下就落盘并当场应用（exdir.log 里能看到 标签页=圆角/直角） /
-#    「主题」下拉框选浅色 / 深色 / 跟随系统都会落盘并当场应用，标题栏的太阳 / 月亮开关改的是同一个设置）
-#    全程走 UIA 模式，不需要真鼠标、不需要前台窗口；跑完还原 settings.json
+#    「主题」下拉框选浅色 / 深色 / 跟随系统都会落盘并当场应用，标题栏的太阳 / 月亮开关改的是同一个设置 /
+#    「启动」页的开机自启开关拨一下就真的在 HKCU 的 Run 项里写 / 删 `"<exe>" --preload` 自启项）
+#    全程走 UIA 模式，不需要真鼠标、不需要前台窗口；跑完还原 settings.json 与注册表原状
 pwsh -NoProfile -File tools\test-settings.ps1
 
 # 7b) 设置窗口截图（左侧每个分类各一张，肉眼验证“左导航 + 右侧设置卡片”的布局）
@@ -157,6 +158,14 @@ pwsh -NoProfile -File tools\test-network-locations.ps1
 #      path 是文件 → 打开所在目录并选中它；路径不存在 → 当前标签页显示「无法打开」）
 #      十个用例，全程 UIA，不需要交互桌面；跑完还原 settings.json 并删掉测试目录
 pwsh -NoProfile -File tools\test-command-line.ps1
+
+# 12i) 开机自启 / 预热启动回归（`exdir --preload` 起来后进程驻留、没有可见主窗口、
+#      exdir.log 里记下「预热启动：不显示主窗口」与「预热完成：… 目录=… 图标=…」；
+#      预热进程在跑时再启动一次 exdir → 第二个进程瞬时退出、预热进程的窗口真的显示出来；
+#      带路径的请求照样能转发进来新开标签页）
+#      靠进程句柄 + exdir.log 断言，不需要交互桌面；不改注册表、跑完还原 settings.json
+#      （设置里拨开关到底写没写 HKCU 的 Run 项由 test-settings.ps1 用例 10 断言）
+pwsh -NoProfile -File tools\test-autostart.ps1
 
 # 13) 发布到 GitHub Release 页面：先跑 publish.ps1，再把 dist\win-x64 打成一个 zip
 #     上传（解压即用），说明里带变更清单 + SHA256 + build-info.txt 的内容；
@@ -282,14 +291,14 @@ exdir/
 │                             SettingsView（设置窗口正文：NavigationView 左导航 + Windows 11 设置卡片）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / ThemeHelper(三态主题 ⇄ ElementTheme) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / CommandLine(命令行 `exdir [path]` 的解析) / SingleInstance(托盘驻留的单实例闸门 + 命令行转发的命名管道)
+├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / ThemeHelper(三态主题 ⇄ ElementTheme) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / CommandLine(命令行 `exdir [path]` 的解析 + `--preload` 预热启动) / AutoStart(开机自启的 HKCU Run 项) / SingleInstance(托盘驻留的单实例闸门 + 命令行转发的命名管道)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs         运行日志（写的是一个可供**多个 exdir 进程**同时追加的文件，见第 6 节第 72 条）
 ├─ icon.svg                   程序图标的唯一源文件（改图标就改它，再跑 tools\make-icon.ps1）
 ├─ Assets/                    图标等（exdir.ico 与各尺寸徽标 PNG 都由 tools\make-icon.ps1 从 icon.svg 生成）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
                               test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray / test-drive-hotplug /
-                              test-file-ops / test-network-locations / test-command-line / measure-row-align / publish / release / make-icon 脚本
+                              test-file-ops / test-network-locations / test-command-line / test-autostart / measure-row-align / publish / release / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -723,8 +732,34 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
 * **窗口先叫到眼前、再导航**：`MainWindow.HandleActivation` → `ShowFromTray()` + 把请求排进队列；
   队列串行处理，并且要 `await _initialized`（会话恢复完）才导航，否则新标签页会和恢复出来的标签页
   抢活动标签。启动时带的那一次请求也走同一个队列（在 `RootGrid.Loaded` 里恢复完会话之后入队）。
+* **`--preload` 是“预热启动”**（开机自启项用的就是它，见第 4 节“开机自启 / 预热启动”）：
+  带它启动的进程**不显示主窗口**，只把进程 / 服务 / 上次打开的目录会话 / 首屏图标先备好。
+  它的请求载荷是一个约定值 `@preload`（`CommandLine.PreloadRequest`）：已经有实例在跑时，
+  第二个进程把这句话送过去，主实例**什么都不做**（不能把窗口弹出来）——
+  空串仍然是“只唤回窗口”。路径载荷永远是绝对路径，不会撞上这个以 `@` 开头的约定值。
 * 回归：`pwsh -NoProfile -File tools\test-command-line.ps1`（10 个用例，全程 UIA，不需要交互桌面）；
-  踩过的坑见第 6 节第 70～73 条。
+  踩过的坑见第 6 节第 70～74 条。
+
+### 开机自启 / 预热启动（`--preload`，2026-09）
+
+设置窗口「启动 → 开机时自动启动 exdir」（`AppSettings.StartWithWindows`，默认关）负责开机自启；
+打开后会往 **`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`** 写一个值
+（值名 `exdir`，数据 = `"<exe 绝对路径>" --preload`，见 `Helpers/AutoStart`）——
+非打包应用没有包标识，用不了 `Windows.ApplicationModel.StartupTask`；写 HKCU 不需要管理员权限。
+
+* **登录时起来的这一份不显示主窗口**：`App.OnLaunched` 里看到 `CommandLine.IsPreload` 就调
+  `MainWindow.StartPreload()` 而不是 `window.Activate()`（窗口自始至终没显示过，
+  但“已隐藏到托盘”这个状态要记上，否则之后 `ShowFromTray` 会走错分支——见第 6 节第 75 条）。
+* **预热做什么**：`MainViewModel.InitializeAsync`（上次打开的目录会话 + 侧边栏树，
+  这是弹窗口前最贵的一步）与 `PreloadIconsAsync`（活动标签页首屏几十行的外壳图标，
+  提取是串行的，首屏就是几百毫秒）。窗口位置恢复 / 菜单构建这些留给真正显示时的 `Loaded`，
+  那时做才拿得到真实 DPI。
+* **之后双击 exe 有多快**：单实例闸门把“唤回窗口”送进已经预热的那个进程，
+  它 `ShowWindow` 一下就行（实测第二个进程 ~70 ms 就退出）；会话恢复与首屏图标都已经就绪，
+  所以窗口一出来就是带着目录与图标的。
+* 回归：`tools/test-autostart.ps1`（3 个用例 18 条断言：预热进程驻留且**没有可见主窗口**、
+  日志有「预热完成：… 目录=… 图标=…」、第二次启动瞬时唤出窗口、带路径的请求照样能转发进来）；
+  设置页那一个开关本身（真的写 / 删 Run 项）由 `tools/test-settings.ps1` 用例 10 断言。
 
 ### 复制 / 剪切 / 粘贴 / 删除与“拖动移动”（2026-09）
 
@@ -812,13 +847,14 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
 * **Windows 11 风格**：左侧 `NavigationView` 选分类，右侧一列设置卡片 ——
   每行是社区工具包的 `SettingsCard`（`CommunityToolkit.WinUI.Controls.SettingsControls` 8.2.251219），
   标题 + 灰色说明在左、控件在右、悬停/圆角/高对比主题全跟系统走，**不再自己写行模板**。
-  当前五个分类：
+  当前六个分类：
 
   | 分类 | 配置项 |
   | --- | --- |
   | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高（滑块，默认 28） |
   | 外观 | 主题（下拉框：跟随系统 / 浅色 / 深色，默认跟随系统）/ 标签页使用直角（默认开）/ 过渡动画 |
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
+  | 启动 | 开机时自动启动 exdir（登录后在后台预热，不显示主窗口，见“开机自启 / 预热启动”） |
   | 侧边栏 | 显示「主目录」分组 / 显示「收藏夹」分组 / 显示「云存储」分组 / 显示「此电脑」分组（各分组的显示开关，默认全开）；「主目录」里显示「桌面」/「文档」/「下载」/「图片」/「音乐」/「视频」六个标准文件夹（**默认只开桌面与下载**） |
   | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 系统右键菜单项逐项开关（动态清单，见第 4 节“右键菜单”） |
 
@@ -827,8 +863,8 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     切换分类**用 `SelectionChanged` 而不是 `ItemInvoked`**：后者只在“用户点了 / 按了”时触发，
     键盘方向键与程序化选中（自动化脚本的 `SelectionItemPattern`、直接赋 `SelectedItem`）都不触发，
     那样右侧页面不会跟着换（已踩过）。
-  * 右侧五页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible` /
-    `IsSidebarPageVisible` / `IsShellMenuPageVisible`（`SelectedCategory` 的 setter 里一次性通知这五个，省得每页各写一个枚举转换器）。
+  * 右侧六页的可见性绑 `IsFileListPageVisible` / `IsAppearancePageVisible` / `IsLayoutPageVisible` /
+    `IsStartupPageVisible` / `IsSidebarPageVisible` / `IsShellMenuPageVisible`（`SelectedCategory` 的 setter 里一次性通知这六个，省得每页各写一个枚举转换器）。
     非当前页是 `Visibility=Collapsed`，**UIA 树里根本没有它们**：所以回归脚本
     “切到某分类后只看得到该分类的开关”本身就是“切页真的生效”的验证。
   * 每一行用 `{x:Bind}` 把 VM 属性绑到卡片里的控件上（`ToggleSwitch.IsOn` / `Slider.Value` / `ComboBox.SelectedIndex` 都是 TwoWay）；
@@ -846,7 +882,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     按当前布局（左导航 180 + 两侧留白 48）860 宽给卡片 ~625 DIP，留有余量。
   * **正文是 `Views/SettingsView`（UserControl），不是直接写在 Window 里**：
     `Window` 不是 `FrameworkElement`，WinUI 为它生成的 `x:Bind` 代码做不了 `{StaticResource}` 转换器查找
-    （编译期报 `CS1503: 无法从 SettingsWindow 转换为 FrameworkElement`），而四页的 `Visibility` 都要用
+    （编译期报 `CS1503: 无法从 SettingsWindow 转换为 FrameworkElement`），而各页的 `Visibility` 都要用
     `BoolToVisibility`。`SettingsView.ViewModel` 是依赖属性，由窗口赋值（普通 CLR 属性在
     `InitializeComponent` 之后赋值时 x:Bind 不会重新求值）。
   * **「右键菜单」页是动态清单**：一行行不是写死在 XAML 里的，而是绑
@@ -880,10 +916,11 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   `tools/test-settings.ps1` 的 `$KeyMap`（开关：UIA 名字 → 字段名）与 `$CategoryMap`（开关：分类 → 该页的项）
   ——**滑块类的项不进这两个映射**（它不是 `ToggleSwitch`，会打乱“这一页有几个开关”的计数），另写用例断言 →
   需要新分类时再往 `SettingsCategory` / `Categories` 里加一项。
-* 回归：`tools/test-settings.ps1`（6 个用例 48 条断言：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
+* 回归：`tools/test-settings.ps1`（10 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
   拨一下立即落盘 / 立刻作用到文件列表 / 跨分类与关窗重开读回 / 同一时刻只开一个窗口 /
   「右键菜单」页的系统菜单项默认全开、关掉「属性」后落盘 `verb:properties`、重开仍为关、再拨回来就清空 /
-  「行高」滑块的初值、切分类读不到、拖完列表行真的变高）。全程走 UIA 模式，不需要前台窗口。
+  「行高」滑块的初值、切分类读不到、拖完列表行真的变高 /
+  「启动」页的开机自启开关拨一下就真的写 / 删 HKCU 的 Run 项）。全程走 UIA 模式，不需要前台窗口。
   肉眼看布局用 `tools/shot-settings.ps1`（每个分类截图到 `.artifacts\settings-<分类名>.png`，需要交互桌面）。
 
 ## 5. 必须遵守的编码约定
@@ -1526,6 +1563,25 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     * **不要**用“每行 / 每个标签页存一份选中状态再各自恢复”的做法去猜：
       `FolderTabViewModel.PendingSelection` 本来就是“这一次导航/排序想选中的路径”，重复应用是幂等的。
 
+75. **预热启动（`--preload`）的窗口“自始至终没 Activate 过”，几个状态得自己料理**：
+    开机自启的那一份进程不显示主窗口（见第 4 节“开机自启 / 预热启动”），它和“正常启动后藏到托盘”
+    在代码路径上只差一个 `Activate()`，但有几个地方会因此走错分支：
+    * **必须自己把 `_hiddenToTray` 置上**（`MainWindow.StartPreload`）：
+      `ShowFromTray()` 靠这个标志决定是 `Show()` 还是“只是被最小化，`Restore()` 一下”。
+      没置的话标志是 false，第二次启动 exdir 时它什么都不做 —— 窗口永远出不来，
+      看起来就像“预热进程把单实例位置占了”。
+    * **不要指望 `RootGrid.Loaded` 来触发预热**：窗口从未显示，第一帧布局不一定会跑。
+      预热不能等 Loaded，而是 `App.OnLaunched` 里直接调 `StartPreload()` → `ViewModel.InitializeAsync()`。
+      会话恢复因此要从 `Loaded` 里挖出来、做成**幂等**的（`??=` 一个共享 Task）：
+      用户后来真的把窗口叫出来时 `Loaded` 还会再调一次，用 bool 挡会在“第一次还没跑完”时
+      把第二次误当成已完成（两边都是 UI 线程，只需 Task 共享，不用锁）。
+    * **预热进程不能自己跑 `RestoreWindowPlacement()`**：那时窗口没显示过，`XamlRoot` 可能还是 null，
+      `GetDpiForWindow` 拿到的是默认 DPI，窗口位置会在高分屏上算偏。这个留在真正显示时的 `Loaded` 里做，
+      反正 `MoveAndResize` 对未显示的窗口一样有效。
+    * 验证只能看**句柄 + 日志**：`Process.MainWindowHandle`（它只认可见的顶层窗口）
+      可以断言“预热时没有窗口”，`exdir.log` 里的「预热启动：…」「预热完成：… 目录=… 图标=…」
+      可以断言“真的做了预热、确实先没有窗口”——见 `tools/test-autostart.ps1`。
+
 ## 7. 非打包模式下的 API 限制
 
 没有 Package Identity，因此**不要**使用：`Windows.Storage.KnownFolders`、
@@ -1607,6 +1663,18 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   （= 当前目录）或拖到另一个窗格即**移动**，按住 `Ctrl` 是复制；
   回归：`tools/test-file-ops.ps1`（9 个用例：菜单项 / 剪贴板互读 / Ctrl+C+V 复制 / Ctrl+X+V 移动 /
   拖到目录行移动 / 外部来源复制进来 / 外部来源剪切进来 / Delete 进回收站 / Shift+Delete 永久删除）。
+* **开机自启 + 预热启动**（2026-09，见第 4 节“开机自启 / 预热启动”与第 6 节第 75 条）：
+  设置窗口「启动」页多一个「开机时自动启动 exdir」开关（`AppSettings.StartWithWindows`，默认关）：
+  打开后往 `HKCU\...\CurrentVersion\Run` 写一个 `"<exe>" --preload` 自启项（`Helpers/AutoStart`，
+  不需要管理员权限），关掉就删掉；启动时还会按设置重写一遍（换目录 / 升级后自愈，见
+  `MainViewModel` 构造）。登录时起来的这一份 **不显示主窗口**（`MainWindow.StartPreload`：
+  不调 `window.Activate()`），只把上次打开的目录会话（`MainViewModel.InitializeAsync`，幂等）
+  与首屏几十行的外壳图标（`PreloadIconsAsync`）备好；用户之后双击 exe / 点托盘图标时，
+  单实例管道把请求转给这份已经预热的进程，`ShowWindow` 一下就能出来（实测第二个进程 ~70 ms 退出、
+  实测预热用时 ~600 ms 取好 37 个图标），窗口一出就是带着目录与图标的；
+  `--preload` 的请求载荷是约定值 `@preload`，已有实例收到它**不会**弹窗口（空串才是“只唤窗口”）。
+  回归：`tools/test-autostart.ps1`（3 个用例 18 条断言，靠进程句柄 + 日志，不需要交互桌面）
+  与 `tools/test-settings.ps1` 用例 10（拨开关真的写 / 删 Run 项，用完还原注册表原状）。
 * 非打包工程改造、单实例主窗口、Mica 背景、自定义标题栏、图标与窗口位置持久化；
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
 * 1/2 窗格 + 自研分隔条、TabView 多标签；
@@ -1633,10 +1701,11 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
 * 前进/后退/上一级历史、路径框回车跳转、显示隐藏文件、显示扩展名、会话恢复；
 * **所有配置项集中在设置窗口**（2026-09 从 ContentDialog 改成独立窗口，S17d）：菜单栏「配置 → 设置…」
   打开 `Views/SettingsWindow`（`Window`，默认 860×800、工作区居中，同一时刻只开一个）。
-  左侧 `NavigationView` 五个分类（文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单），右侧一列 Windows 11 风格设置卡片
+  左侧 `NavigationView` 六个分类（文件列表 / 外观 / 布局 / 启动 / 侧边栏 / 右键菜单），右侧一列 Windows 11 风格设置卡片
   （社区工具包 `SettingsCard`，不再自己写行模板），只显示当前分类那一页；
-  前四个分类共 21 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / **行高**）、
+  前五个分类共 22 项：文件列表（显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / **行高**）、
   外观（**主题**：跟随系统 / 浅色 / 深色，默认跟随系统；过渡动画 / **标签页使用直角**，默认开）、布局（列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式）、
+  启动（**开机时自动启动 exdir**，默认关：登录后在后台预热、不显示主窗口）、
   侧边栏（显示「主目录」/「收藏夹」/「云存储」/「此电脑」四个分组，均默认开；
   以及「主目录」里显示哪几个标准文件夹——桌面 / 文档 / 下载 / 图片 / 音乐 / 视频，**默认只开桌面与下载**）；
   「右键菜单」页除了「使用内置的轻量右键菜单」这一个开关（默认开）之外，
@@ -1645,13 +1714,15 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   `MainViewModel.ApplySettings`（写 `AppSettings` + 刷界面 + `Save()`）。
   新增固定配置项要同时改 `AppSettings`、`SettingsViewModel`、`SettingsView.xaml`、`ApplySettings`
   与 `tools/test-settings.ps1` 的 `$KeyMap` / `$CategoryMap`（见第 4 节）。
-  回归：`tools/test-settings.ps1`（9 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
+  回归：`tools/test-settings.ps1`（10 个用例：分类齐全 / 每页只显示本分类的项 / 初始值一致 /
   拨一下立即落盘并作用到文件列表 / 跨分类与关窗重开读回 / 同一时刻只开一个窗口 /
   菜单风格开关默认开（内置）且拨一下就落盘、系统菜单项默认全开且能逐项关闭 /
   行高滑块改完列表行真的变高 / 侧边栏分组开关改完树里真的少一个分组 /
   「主目录」标准文件夹开关改完（打开「文档」真的出现、关掉「桌面」真的消失）/
   标签页直角默认开、拨一下就当场应用 /
-  主题下拉框三态 + 标题栏的太阳 / 月亮开关改的是同一个设置），全程走 UIA 模式（不需要前台窗口）；
+  主题下拉框三态 + 标题栏的太阳 / 月亮开关改的是同一个设置 /
+  开机自启开关拨一下就真的在 HKCU 的 Run 项里写 / 删 `"<exe>" --preload` 自启项），
+  全程走 UIA 模式（不需要前台窗口）；
   布局截图：`tools/shot-settings.ps1`（.artifacts\settings-<分类名>.png，需要交互桌面）。
   原先的「配置 → 文件列表」子菜单（三个 `ToggleMenuFlyoutItem`）已移除，
   「查看」菜单里的工具条 / 侧边栏 / 双窗格三项保留（与设置窗口共享同一份设置）；
