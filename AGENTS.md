@@ -33,6 +33,13 @@
 "/mnt/c/Users/xingjian/AppData/Local/Microsoft/WindowsApps/pwsh.exe" -NoProfile -File "D:\prj\exdir\tools\xxx.ps1"
 ```
 
+**不要把中文写在 `-Command "…"` 里面**：WSL 传来的参数是 UTF-8 字节，Windows 按系统 ANSI 码页
+（本机 936）解码，中文会变成一串同码位的乱码且不可逆（`锛?` 这类）。症状举例：
+`git commit -m '新增 …'` 把提交信息写成乱码（必须 `--amend -F` 一个 UTF-8 文件重写）。
+要传中文就**写进文件**：`-File <脚本.ps1>`（脚本文件本身是 UTF-8）、`git commit -F msg.txt`、
+`gh --notes-file` 等；`Write-Host`/脚本里的中文输出不受影响（那是输出方向，只与
+`[Console]::OutputEncoding=UTF8` 有关）。
+
 已安装并验证过的工具链：dotnet SDK 10.0.401（可编译 net8.0 项目）、Windows App SDK 2.5.1 运行时、NuGet `communitytoolkit.mvvm 8.4.2`。
 
 ### 常用命令
