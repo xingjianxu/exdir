@@ -627,6 +627,90 @@ public sealed partial class MainViewModel : ObservableObject
         RaiseActivePaneDependent();
     }
 
+    /// <summary>
+    /// 处理命令行请求（<c>exdir [path]</c>）：启动时带的路径、以及已在运行的实例转发过来的路径都走这里。
+    ///
+    /// 规则（与用户确认过）：
+    ///   * 空请求 = 不导航（调用方只把窗口唤到前台）；
+    ///   * 目录 → 在活动窗格打开；文件 → 打开它所在的目录并选中它；
+    ///   * 活动标签页已经在那个目录里就不再新开标签页（文件仍会重新定位并选中）；
+    ///   * 路径不存在 → 在当前标签页显示「无法打开」（不新开标签页，也不动当前目录）。
+    /// </summary>
+    public async Task HandleActivationAsync(string? request)
+    {
+        if (string.IsNullOrWhiteSpace(request))
+        {
+            return;
+        }
+
+        var raw = request.Trim().Trim('"');
+
+        // 先分清是目录还是文件：NormalizeDirectoryPath 对文件会返回它所在的目录
+        var isDirectory = _fileSystem.DirectoryExists(raw);
+        var isFile = !isDirectory && _fileSystem.FileExists(raw);
+        var directory = isDirectory || isFile ? _fileSystem.NormalizeDirectoryPath(raw) : null;
+
+        var selectPath = isFile ? FullNameOf(raw) : null;
+
+        var tab = ActivePane.ActiveTab;
+        if (tab is null)
+        {
+            // 会话还在恢复（理论上不会碰到：调用方会等恢复完），兜一下别把请求丢了
+            if (directory is not null)
+            {
+                await ActivePane.InitializeAsync(directory).ConfigureAwait(true);
+            }
+
+            return;
+        }
+
+        if (directory is null)
+        {
+            // 路径不存在 / 拼错了：让当前标签页把错误显示出来（NavigateAsync 此时不会改动当前目录）
+            await tab.NavigateAsync(raw).ConfigureAwait(true);
+            Log.Write($"命令行：无法打开 {raw}（当前标签页显示错误）");
+            return;
+        }
+
+        if (IsSameDirectory(tab.CurrentPath, directory))
+        {
+            // 已经在同一个目录：不新开标签页；带了文件就重新定位并选中它
+            if (selectPath is not null)
+            {
+                await tab.NavigateAsync(directory, pushHistory: false, selectPath: selectPath).ConfigureAwait(true);
+                Log.Write($"命令行：已在 {directory}，选中 {selectPath}");
+            }
+            else
+            {
+                Log.Write($"命令行：已经在 {directory}，不新开标签页");
+            }
+
+            return;
+        }
+
+        await ActivePane.OpenInNewTabAsync(directory, selectPath).ConfigureAwait(true);
+        Log.Write(selectPath is null
+            ? $"命令行：在新标签页打开 {directory}"
+            : $"命令行：在新标签页打开 {directory} 并选中 {selectPath}");
+    }
+
+    /// <summary>文件的完整路径（命令行里传进来的可能带引号或环境变量，选中时要和行上的 FullPath 对得上）。</summary>
+    private static string? FullNameOf(string path)
+    {
+        try
+        {
+            return new FileInfo(path).FullName;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>两个路径是不是同一个目录（忽略末尾分隔符与大小写，`C:\` 也要相等）。</summary>
+    private static bool IsSameDirectory(string a, string b)
+        => string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
+
     /// <summary>把当前布局与会话写入设置并落盘。由主窗口 Closed 事件调用。</summary>
     public void SaveSession()
     {

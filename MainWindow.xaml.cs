@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using CommunityToolkit.Mvvm.Input;
 using Exdir.Diagnostics;
@@ -52,6 +54,21 @@ public sealed partial class MainWindow : Window
 
     /// <summary>隐藏到托盘那一刻窗口是不是最大化的（ShowWindow(SW_SHOWNORMAL) 会把最大化还原掉）。</summary>
     private bool _restoreMaximized;
+
+    /// <summary>窗口是不是正藏在托盘里：隐藏时才需要走 ShowWindow，否则它会把最大化窗口还原掉。</summary>
+    private bool _hiddenToTray;
+
+    /// <summary>
+    /// 会话恢复完成。命令行请求要等它结束再导航，否则新标签页会和恢复出来的标签页抢活动标签。
+    /// </summary>
+    private readonly TaskCompletionSource _initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// 待处理命令行请求（启动参数与其它实例转发过来的可能几乎同时到），串行处理。
+    /// 空串 = 不导航（只把窗口唤到前台），不入队。
+    /// </summary>
+    private readonly Queue<string> _pendingActivations = new();
+    private bool _activating;
 
     public MainWindow(MainViewModel viewModel, IDeviceChangeService deviceChange)
     {
@@ -147,6 +164,10 @@ public sealed partial class MainWindow : Window
 
         ApplyLayout();
         SyncSidebarSelection();
+
+        // 会话已恢复：从现在起可以处理命令行请求了（启动时就带了路径的那一次也在队列里等这一步）
+        _initialized.TrySetResult();
+        QueueActivation(CommandLine.Request);
     }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -164,6 +185,61 @@ public sealed partial class MainWindow : Window
         // 托盘图标、DI 容器、两个窗格、图标缓存就全部跟着没了，再打开又得从头建。
         args.Cancel = true;
         HideToTray();
+    }
+
+    // ------------------------------------------------------------------ 命令行 / 其它实例的请求
+
+    /// <summary>
+    /// 处理其它实例转发过来的请求（双击 exe 或 <c>exdir [path]</c>）：
+    /// 先把窗口叫到眼前，再按请求打开路径。
+    /// </summary>
+    public void HandleActivation(string request)
+    {
+        ShowFromTray();
+        QueueActivation(request);
+    }
+
+    /// <summary>把请求排进队列并串行处理（空请求 = 只唤回窗口，不必排队）。</summary>
+    private void QueueActivation(string request)
+    {
+        if (string.IsNullOrEmpty(request))
+        {
+            return;
+        }
+
+        _pendingActivations.Enqueue(request);
+
+        if (_activating)
+        {
+            return;
+        }
+
+        _ = DrainActivationsAsync();
+    }
+
+    private async Task DrainActivationsAsync()
+    {
+        _activating = true;
+
+        try
+        {
+            while (_pendingActivations.Count > 0)
+            {
+                var request = _pendingActivations.Dequeue();
+
+                // 会话没恢复完就先等着：否则新标签页会和恢复出来的标签页抢活动标签
+                await _initialized.Task;
+                await ViewModel.HandleActivationAsync(request);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("命令行请求", ex);
+        }
+        finally
+        {
+            _activating = false;
+        }
     }
 
     // ------------------------------------------------------------------ 托盘驻留
@@ -186,6 +262,7 @@ public sealed partial class MainWindow : Window
             // 扩展方法：ShowWindow(SW_HIDE) + 打开效率模式（Idle 时把 CPU 让出来，
             // 隐藏起来的文件管理器没必要占着高优先级）
             this.Hide();
+            _hiddenToTray = true;
         }
         catch (Exception ex)
         {
@@ -197,7 +274,9 @@ public sealed partial class MainWindow : Window
         Log.Write($"窗口已隐藏到托盘（进程继续驻留，托盘图标={TrayIcon.IsCreated}）");
     }
 
-    /// <summary>把窗口从托盘里叫回来。第二次双击 exe 也走这里（由单实例闸门转过来）。</summary>
+    /// <summary>
+    /// 把窗口叫到眼前。第二次双击 exe / 命令行 <c>exdir</c> / 点托盘图标都走这里。
+    /// </summary>
     public void ShowFromTray()
     {
         if (_exitRequested)
@@ -207,16 +286,28 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            // 扩展方法：ShowWindow(SW_SHOWNORMAL) + 关掉效率模式
-            this.Show();
-
-            if (_restoreMaximized && AppWindow.Presenter is OverlappedPresenter presenter)
+            if (_hiddenToTray)
             {
-                presenter.Maximize();
-                _restoreMaximized = false;
+                // 扩展方法：ShowWindow(SW_SHOWNORMAL) + 关掉效率模式
+                this.Show();
+                _hiddenToTray = false;
+
+                if (_restoreMaximized && AppWindow.Presenter is OverlappedPresenter presenter)
+                {
+                    presenter.Maximize();
+                    _restoreMaximized = false;
+                }
+            }
+            else if (AppWindow.Presenter is OverlappedPresenter minimized
+                     && minimized.State == OverlappedPresenterState.Minimized)
+            {
+                // 窗口只是被最小化了（不是藏进托盘）：Activate 不会把它还原，得自己来。
+                // 这一支不能走 ShowWindow(SW_SHOWNORMAL) —— 那会顺手取消最大化。
+                minimized.Restore();
             }
 
-            // ShowWindow 不抢前台；从托盘唤回本来就是要“跳到眼前”，必须自己激活
+            // ShowWindow 不抢前台；从托盘唤回本来就是要“跳到眼前”，必须自己激活。
+            // 日志固定一句（上面几个分支都算“唤回”），回归脚本据此断言请求被兑现了。
             Activate();
             Log.Write("窗口已从托盘唤回");
         }

@@ -125,6 +125,12 @@ public sealed partial class DetailsView : UserControl
         view.AttachLayout((e.NewValue as FolderTabViewModel)?.Columns);
         view.AttachItems((e.NewValue as FolderTabViewModel)?.Items);
         view.ApplyListAnimations();
+
+        // 新建出来的标签页可能是在“导航完成之后”才挂上 ViewModel 的（TabView 的容器要等布局那一拍才生成），
+        // 那样它就错过了 Items 整体替换的通知，按路径恢复选中项的那一拍也跟着丢了
+        //（命令行 `exdir <文件>` 给一个刚建出来的标签页选文件正好撞在这上面）。
+        // 这里补一次，排在队列里等 x:Bind 把 ItemsSource 接上之后再执行。
+        view.DispatcherQueue.TryEnqueue(view.RestoreSelection);
     }
 
     /// <summary>

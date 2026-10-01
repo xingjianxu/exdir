@@ -151,11 +151,15 @@ public sealed partial class PanelViewModel : ObservableObject
         }
     }
 
-    /// <summary>在指定路径新建标签页（用于“在新标签页中打开”）。</summary>
-    public async Task OpenInNewTabAsync(string path)
+    /// <summary>
+    /// 在指定路径新建标签页（用于“在新标签页中打开”）。
+    /// <paramref name="selectPath" /> 非空时导航完成后选中它（命令行 "exdir <文件路径>" 用）。
+    /// </summary>
+    public async Task<FolderTabViewModel> OpenInNewTabAsync(string path, string? selectPath = null)
     {
         var tab = CreateTab();
-        await tab.NavigateAsync(path).ConfigureAwait(true);
+        await tab.NavigateAsync(path, selectPath: selectPath).ConfigureAwait(true);
+        return tab;
     }
 
     [RelayCommand(CanExecute = nameof(CanCloseTab))]

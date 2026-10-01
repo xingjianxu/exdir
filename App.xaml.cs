@@ -52,9 +52,10 @@ public partial class App : Application
 
             window.Activate();
 
-            // 托盘驻留：用户第二次双击 exe（或被系统唤起）时，把已在运行的这只窗口叫出来
+            // 托盘驻留 + 命令行：第二个实例（双击 exe 或 exdir <path>）的请求都从这里进来——
+            // 把已在运行的这只窗口叫出来，并打开它带来的目录
             // （单实例闸门在 Program.Main 里就已经就位，这里只是把回调补上）
-            SingleInstance.Listen(window.ShowFromTray);
+            SingleInstance.Listen(window.HandleActivation);
 
             Log.Write("应用已启动");
         }

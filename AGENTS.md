@@ -152,6 +152,12 @@ pwsh -NoProfile -File tools\test-file-ops.ps1
 #      全程 UIA + SendMessage，不需要交互桌面；跑完删掉假网络位置并还原 settings.json
 pwsh -NoProfile -File tools\test-network-locations.ps1
 
+# 12h) 命令行调用回归（exdir [path]：启动时带路径 → 新标签页打开；已在运行时把请求转发给已有实例；
+#      工作目录是程序/系统目录（双击 exe / 点任务栏图标）→ 只唤回窗口；
+#      path 是文件 → 打开所在目录并选中它；路径不存在 → 当前标签页显示「无法打开」）
+#      十个用例，全程 UIA，不需要交互桌面；跑完还原 settings.json 并删掉测试目录
+pwsh -NoProfile -File tools\test-command-line.ps1
+
 # 13) 发布到 GitHub Release 页面：先跑 publish.ps1，再把 dist\win-x64 打成一个 zip
 #     上传（解压即用），说明里带变更清单 + SHA256 + build-info.txt 的内容；
 #     tag 由 gh 在远端创建、指向当前 HEAD；缺省版本号是 v0.0.<yyyyMMdd>
@@ -190,7 +196,7 @@ pwsh -NoProfile -File tools\publish.ps1
   不要再改回“build + 镜像”（见“踩过的坑”第 3 条）。
 * **要发到 GitHub Release 页面就再跑 `tools\release.ps1`**（`pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0`）：
   它先 `publish.ps1`（可 `-SkipPublish` 跳过），把 `dist\win-x64` 打成一个
-  `dist\exdir-<tag>-win-x64.zip`（zip 根目录就是 `exdir.exe`，解压即用；目前 165 个文件压缩后约 33 MB），
+  `dist\exdir-<tag>-win-x64.zip`（zip 根目录就是 `exdir.exe`，解压即用；目前 171 个文件压缩后约 33 MB），
   生成 release 说明（变更清单 + SHA256 + `build-info.txt` 内容，存 `.artifacts\release-notes-<tag>.md`），
   最后 `gh release create` —— tag 由 gh 在远端创建、指向当前 HEAD，所以**工作区必须干净**
   （否则 build-info 里的提交号对不上源码，脚本默认直接报错，确实要发就加 `-AllowDirty`）。
@@ -276,14 +282,14 @@ exdir/
 │                             SettingsView（设置窗口正文：NavigationView 左导航 + Windows 11 设置卡片）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / ThemeHelper(三态主题 ⇄ ElementTheme) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / SingleInstance(托盘驻留的单实例闸门)
+├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / ThemeHelper(三态主题 ⇄ ElementTheme) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / CommandLine(命令行 `exdir [path]` 的解析) / SingleInstance(托盘驻留的单实例闸门 + 命令行转发的命名管道)
 ├─ Converters/CommonConverters.cs
-├─ Diagnostics/Log.cs
+├─ Diagnostics/Log.cs         运行日志（写的是一个可供**多个 exdir 进程**同时追加的文件，见第 6 节第 72 条）
 ├─ icon.svg                   程序图标的唯一源文件（改图标就改它，再跑 tools\make-icon.ps1）
 ├─ Assets/                    图标等（exdir.ico 与各尺寸徽标 PNG 都由 tools\make-icon.ps1 从 icon.svg 生成）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
                               test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray / test-drive-hotplug /
-                              test-file-ops / test-network-locations / measure-row-align / publish / release / make-icon 脚本
+                              test-file-ops / test-network-locations / test-command-line / measure-row-align / publish / release / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -687,6 +693,39 @@ exdir/
 * UIA 里能看到托盘图标的方法与不要踩的坑见 `tools/test-tray.ps1` 的注释；回归：
   `pwsh -NoProfile -File tools\test-tray.ps1`（4 个用例 17 条断言，真鼠标点关闭按钮与托盘图标）。
 
+### 命令行调用（`exdir [path]`，2026-09）
+
+```
+exdir                  → 在已有窗口（隐藏着就先唤回）里打开**当前工作目录**
+exdir D:\projects      → 同上，打开指定的目录
+exdir D:\a\b.txt       → 打开文件所在目录并选中它
+```
+
+* **解析在 `Program.Main` 的第一件事**（`Helpers/CommandLine.Parse`）：不带路径参数时用的就是
+  **本进程**的工作目录（用户在终端里 `cd` 到哪就是哪），带相对路径时也按本进程的工作目录解析成绝对路径。
+  ⚠ 注意 `Main(string[] args)` 收到的数组**不包含 exe 路径**（与 `Environment.GetCommandLineArgs()`
+  差一位），别写成从 `args[1]` 开始（见第 6 节第 70 条）。
+* **不带路径参数时有“智能一下”**：工作目录是 exe 所在目录、`C:\Windows`、`System32` / `SysWOW64`
+  这类位置时（双击 exe、点任务栏图标、快捷方式的默认工作目录就是这些），**不导航**，只把窗口唤到前台——
+  否则每次双击 exe 就会把当前浏览位置换到安装目录。从终端里执行才是“打开当前工作目录”的本意。
+  判据在 `CommandLine.LooksLikeLauncherDirectory`。
+* **已在运行的实例怎么收到请求**：`Helpers/SingleInstance` 里两个内核对象分工——
+  命名事件 `Local\exdir.activate` 的 `createdNew` 回答“我是不是第一个实例”（这件事是原子的，不需要额外互斥体），
+  命名管道 `exdir.activate` 把“请打开这个目录”那句话送过去。
+  第一个实例在 `TryClaim` 里就把服务端建出来（保证第二个实例连上来时管道名字已存在），
+  后台线程用**同一个服务实例**反复 `WaitForConnection` → 读一条 → `Disconnect`（复用的意义：名字始终在）。
+  第二个实例写完就退出（实测 dist 下 ~160 ms，Debug 下 ~65 ms），不会多出第二个托盘图标 / 第二份会话。
+* **请求落到哪里**（`MainViewModel.HandleActivationAsync`，与用户确认过的规则）：
+  * 目录 → 在**活动窗格新开一个标签页**并切过去；
+  * 文件 → 打开它所在目录（同样是新标签页）并选中它（走 `FolderTabViewModel.NavigateAsync(selectPath:)`）；
+  * 活动标签页**已经在同一个目录**时不再新开标签页（带了文件就重新定位并选中）；
+  * 路径不存在 → **不新开标签页**，让当前标签页显示「无法打开：…」错误（导航失败不会改动当前目录）。
+* **窗口先叫到眼前、再导航**：`MainWindow.HandleActivation` → `ShowFromTray()` + 把请求排进队列；
+  队列串行处理，并且要 `await _initialized`（会话恢复完）才导航，否则新标签页会和恢复出来的标签页
+  抢活动标签。启动时带的那一次请求也走同一个队列（在 `RootGrid.Loaded` 里恢复完会话之后入队）。
+* 回归：`pwsh -NoProfile -File tools\test-command-line.ps1`（10 个用例，全程 UIA，不需要交互桌面）；
+  踩过的坑见第 6 节第 70～73 条。
+
 ### 复制 / 剪切 / 粘贴 / 删除与“拖动移动”（2026-09）
 
 文件列表支持资源管理器那一套剪贴板操作与删除（进回收站），也支持把文件拖到目录里移动。
@@ -851,9 +890,10 @@ exdir/
 
 * **分层**：`Views` 不直接做 I/O，一律经由 ViewModel → `Services` 接口。
 * **入口点不要改回 XAML 生成的那份**：exdir.csproj 定义了 `DISABLE_XAML_GENERATED_MAIN`，入口点在
-  `Program.cs`（为了把单实例闸门放在 WinUI 初始化之前）。升级 Windows App SDK 时要拿
-  `obj\...\App.g.i.cs` 里生成的那份 `Program.Main` 对一下（初始化 COM Wrappers / 切 SynchronizationContext
-  那几行不能少），见第 4 节“托盘驻留”。
+  `Program.cs`（为了把单实例闸门与命令行解析放在 WinUI 初始化之前，见第 4 节“托盘驻留”与“命令行调用”）。
+  升级 Windows App SDK 时要拿 `obj\...\App.g.i.cs` 里生成的那份 `Program.Main` 对一下
+  （初始化 COM Wrappers / 切 SynchronizationContext 那几行不能少）。
+  另：`Main(string[] args)` 的 `args` **不含 exe 路径**，别再踩一次第 6 节第 70 条。
 * **服务成对**：新增能力先加 `IXxxService`，再写实现，最后在 `App.ConfigureServices()` 注册。
 * **异步**：耗时 I/O 走 `Task.Run`（见 `FileSystemService`），
   从 UI 线程 `await` 时**不要** `ConfigureAwait(false)`，让续体回到 UI 线程后再更新 `ObservableCollection`。
@@ -1435,6 +1475,57 @@ exdir/
     这类错误是**解析期**失败，脚本一行都不会执行 —— 改完先拿
     `[System.Management.Automation.Language.Parser]::ParseFile(...)` 扫一遍（几秒就能扫完 `tools\*.ps1`）。
 
+70. **`Main(string[] args)` 收到的数组**不**包含 exe 路径**：它比 `Environment.GetCommandLineArgs()` 少一项
+    （后者 `[0]` 是 exe 路径）。写命令行解析时很容易习惯性地从 `args[1]` 开始，
+    症状是“单参数被当成没有参数、两个参数时只认第二个”（实测踩过：`exdir D:\a` 毫不导航，
+    `exdir D:\a D:\b` 却打开 D:\b）。**`Main` 的 `args[0]` 就是第一个用户参数**。
+
+71. **裁剪会把“只做类型转发”的框架程序集从 `deps.json` 里整条删掉，哪怕磁盘上还留着那个 dll**：
+    加上命令行转发（命名管道）后，裁剪版 `dist\win-x64\exdir.exe` **一启动就无日志陳死**，
+    退出码 `0xE0434352`，事件日志的 `.NET Runtime` 条目才写真正原因：
+    `System.IO.FileNotFoundException: Could not load file or assembly 'System.IO.Pipes'`（同样踩过
+    `System.Text.Encoding.Extensions`）。
+    * 根因：`System.IO.Pipes` 在 .NET 8 下是一个**纯转发的壳**（`NamedPipeServerStream` 的实现在
+      `System.Private.CoreLib`），ILLink 分析下来“这个程序集里没有被用到的类型”就把它从
+      `exdir.deps.json` 里删了；而**自包含应用是按 deps.json 建 TPA 列表加载程序集的**，
+      磁盘上还留着那份 dll 也没用（`Get-ChildItem dist -Filter System.IO*.dll` 里它就在那里）。
+      编译器给 `exdir.dll` 记的 `AssemblyRef` 指向的仍是这个壳，所以一 JIT 到那行就抛。
+    * **代码里的 `try/catch` 拦不住**：异常发生在方法编译（类型解析）那一拍，还没进 try，
+      所以连 `Diagnostics/Log` 都来不及写一行。排查手段：`Get-WinEvent -LogName Application |
+      Where-Object ProviderName -eq '.NET Runtime'`（WER 的 `APPCRASH` 条目只说模块是 KERNELBASE）。
+    * 修法：在 `exdir.csproj` 里 `TrimmerRootAssembly` 把用到的壳 root 住（本项目是
+      `System.IO.Pipes` 与 `System.Text.Encoding.Extensions`），它们就会重新进 deps.json 与发布目录。
+    * 一般规律：**“Debug / 未裁剪的 Release 都正常，只有 dist 崩”时先怀疑裁剪**；
+      新增对某个 BCL 类型的引用后，**必须在 `dist\win-x64\exdir.exe` 上跑一遍相关回归**
+      （`tools\test-*.ps1 -Exe dist\win-x64\exdir.exe`）—— 编译期不会报任何警告。
+
+72. **一份日志会被两个 exdir 进程同时写**：命令行（`exdir <path>` / 双击 exe）会让第二个进程
+    在第一个进程还在写日志的时候也跟着写一行（“命令行：…”）。原来的 `File.AppendAllText`
+    用的是 `FileShare.Read`，后到的那个会吃共享冲突、被 `catch` 静静吐掉（症状是“日志里少了一行”）；
+    换成 `FileShare.ReadWrite` 后不再丢，但**两个进程的字节会交错到同一行里**
+    （实测看到 `…已把请求（打开 C:\…\be` + 别人的一行 + `li\beta），转交给它…`）。
+    现在 `Diagnostics/Log.Write` 里加了一个**命名互斥体**（`Local\exdir.log`，拿不到就放弃这一条，
+    等 2 s）把跨进程写入串起来，同时改成写 `Encoding.UTF8.GetBytes` 的字节
+    （不用 `StreamWriter` + `new UTF8Encoding(...)`：那会拖出 `System.Text.Encoding.Extensions`，见上一条）。
+
+73. **UIA 里数标签页 / 断言当前标签用的两个坑**（`tools\test-command-line.ps1`）：
+    * `TabItem` 的 `Name` 就是标签标题（目录名），要判断“选中的是哪一个”得读
+      `SelectionItemPattern.Current.IsSelected`；
+    * **不要按 `BoundingRectangle.X` 给标签排序**：标签多到装不下时标签条会横向滚动，
+      滚出可视区的那些标签报出来的 X 是 `NaN` / 负数这类无效值，排出来是乱的
+      （实测把 `exdir-cli,alpha,beta` 排成了 `alpha,[beta],exdir-cli`）；
+      `FindAll` 返回的顺序就是标签条的**逻辑顺序**，直接用即可。
+
+74. **新建出来的标签页可能在“导航完成之后”才挂上 ViewModel，从而错过按路径恢复选中项的那一拍**：
+    在 `Views/DetailsView` 里按路径恢复选中（`RestoreSelection`）只挂在
+    `FolderTabViewModel.Items` 整体替换的通知上，而 `TabView` 要等布局那一拍才为新建的标签页
+    生成容器、才把 `ViewModel` 设进去 —— 于是 `exdir <文件>` 在**新标签页**里打开并把文件高亮选中
+    这件事会失败（同一个标签页第二次导航却正常，因为那时视图已挂上）。
+    修法：`DetailsView.OnViewModelChanged`（DP 变化）里也
+    `DispatcherQueue.TryEnqueue(view.RestoreSelection)` 一次（排在队列里等 x:Bind 把 `ItemsSource` 接上）。
+    * **不要**用“每行 / 每个标签页存一份选中状态再各自恢复”的做法去猜：
+      `FolderTabViewModel.PendingSelection` 本来就是“这一次导航/排序想选中的路径”，重复应用是幂等的。
+
 ## 7. 非打包模式下的 API 限制
 
 没有 Package Identity，因此**不要**使用：`Windows.Storage.KnownFolders`、
@@ -1452,21 +1543,21 @@ exdir/
 
 * **交付产物精简到 83 MB**（2026-09，见第 2 节“任务收尾”与第 6 节第 64～67 条）：
   `tools\publish.ps1` 改成「`dotnet publish`（开裁剪）+ 从构建输出补回 `.pri`/`.xbf` + 镜像」，
-  dist 从 **225 MB / 548 个文件** 降到 **83 MB / 165 个文件**：
+  dist 从 **225 MB / 548 个文件** 降到 **84 MB / 171 个文件**：
   ① 去掉完全用不到的 WinAppSDK AI / ML / Search / Widgets 四个组件（约 55 MB：
   `onnxruntime.dll`、`DirectML.dll`、`Microsoft.Windows.Search.dll`、Widgets…）；
   ② 语言资源只留中/英（85 个 `*.mui` 目录 → 4 个，3.3 MB）；
   ③ `PublishTrimmed`（`TrimMode=partial`）裁掉用不到的 BCL（约 97 MB）。
   功能未退化：`test-settings` / `test-file-ops` / `test-tray` / `test-shell-icons` /
   `test-list-selection` / `test-row-dblclick` / `test-column-resize` / `test-pin-drag` /
-  `test-status-bar` / `test-drive-hotplug` / `test-network-locations` / `measure-row-align`
+  `test-status-bar` / `test-drive-hotplug` / `test-network-locations` / `test-command-line` / `measure-row-align`
   全部在 `dist\win-x64\exdir.exe` 上重跑通过（`test-context-menu` 的 4 条失败在未裁剪版上一样挂，属仓库现有待办）。
   **NativeAOT 不可用**（共试了自包含/框架依赖、net8/net10、各类 CsWinRT/COM 开关），
   原因不在本仓库，见第 6 节第 64 条。
 * **一键发布到 GitHub Release**（2026-09，见第 2 节“任务收尾”与第 6 节第 69 条）：
   `tools\release.ps1`（版本号 `-Tag`，缺省 `v0.0.<yyyyMMdd>`）= 校验（git 干净 / gh 已登录 /
   远端没有指向别的提交的同名 tag）→ `tools\publish.ps1`（可 `-SkipPublish`）→ 把 `dist\win-x64` 打成
-  `dist\exdir-<tag>-win-x64.zip`（zip 根目录就是 `exdir.exe`，解压即用；165 个文件 83.5 MB → 约 33 MB）
+  `dist\exdir-<tag>-win-x64.zip`（zip 根目录就是 `exdir.exe`，解压即用；171 个文件 84 MB → 约 33 MB）
   → 生成 release 说明（变更清单 + SHA256 + `build-info.txt` 内容，存 `.artifacts\release-notes-<tag>.md`）
   → `gh release create`（tag 由 gh 在远端创建、指向本次 HEAD）。
   只传这一个 zip；`-DryRun` 不碰 GitHub、`-Draft` / `-Prerelease` 可选、`-Clobber` 才肯覆盖已有 Release。
@@ -1475,6 +1566,17 @@ exdir/
   就是一次 `ShowWindow`；托盘右键菜单是「显示主窗口 / 退出 exdir」，菜单里的「退出」才是真退出；
   单实例闸门跑在 XAML 初始化之前（`Program.cs` + `Helpers/SingleInstance`），第二次双击 exe 只跑几十毫秒。
   依赖 `H.NotifyIcon.WinUI 2.3.2`（见 exdir.csproj）；回归：`tools/test-tray.ps1`（4 个用例 17 条断言）。
+* **命令行调用 `exdir [path]`**（2026-09，见第 4 节“命令行调用”与第 6 节第 70～74 条）：
+  `exdir D:\projects` 在已有窗口（隐藏着就先唤回）的**活动窗格里新开标签页**打开那个目录；
+  无参数时打开**当前工作目录**（工作目录是 exe 目录 / `C:\Windows` / `System32` 这类“启动器给的位置”时
+  只唤回窗口、不动浏览位置）；`exdir D:\a\b.txt` 打开文件所在目录并选中它；
+  活动标签页已经在同一目录时不再新开；路径不存在就把「无法打开」显示在当前标签页上；
+  exdir 尚未运行时就是普通启动（会话照旧恢复，请求的目录用新标签页打开）。
+  已在运行的实例靠**命名管道**（`exdir.activate`）收请求，第二个进程写完就退出
+  （dist 下 ~160 ms、Debug 下 ~65 ms）；启动时就带路径的那一次走同一条处理链路。
+  回归：`tools/test-command-line.ps1`（10 个用例，全程 UIA，不需要交互桌面）；
+  顺带：`Diagnostics/Log` 改成可跨进程写入（命名互斥体，见第 6 节第 72 条），
+  `exdir.csproj` 多了两个 `TrimmerRootAssembly`（裁剪会让纯转发的 `System.IO.Pipes` 整条消失，见第 6 节第 71 条）。
 * **磁盘热插拔实时刷新**（2026-09，见第 4 节与第 6 节第 56 条）：插上 U 盘 / 光驱换盘 / 映射网络盘后，
   工具条磁盘区与侧边栏「此电脑」分组**立刻**出现新盘，拔掉立刻消失（窗口藏在托盘里也照样更新）；
   实现是 `IDeviceChangeService` + `Services/Native/VolumeChangeWatcher`（`WM_DEVICECHANGE` 子类化，
