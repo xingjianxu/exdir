@@ -144,6 +144,17 @@ pwsh -NoProfile -File tools\test-file-ops.ps1
 #      收到 WM_DEVICECHANGE 刷新后它还在（差量刷新不误删）；删掉目录再刷新它就消失）
 #      全程 UIA + SendMessage，不需要交互桌面；跑完删掉假网络位置并还原 settings.json
 pwsh -NoProfile -File tools\test-network-locations.ps1
+
+# 13) 发布到 GitHub Release 页面：先跑 publish.ps1，再把 dist\win-x64 打成一个 zip
+#     上传（解压即用），说明里带变更清单 + SHA256 + build-info.txt 的内容；
+#     tag 由 gh 在远端创建、指向当前 HEAD；缺省版本号是 v0.0.<yyyyMMdd>
+#     -DryRun 只构建 + 打包 + 打印将要执行的 gh 命令，不碰 GitHub
+#     -SkipPublish 用现有 dist（不重新构建）、-Clobber 覆盖已有 Release 的资产与说明
+#     前置：gh 已安装并 gh auth login 过；工作区必须干净（否则加 -AllowDirty）
+#     —— 工作区不干净时发布出去的「源码提交」对不上源码，所以默认直接报错
+pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0
+pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 -DryRun
+pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 -SkipPublish
 ```
 
 ### 任务收尾（每个任务都必须做）
@@ -170,6 +181,15 @@ pwsh -NoProfile -File tools\publish.ps1
   对应 `.xbf`、`Assets\exdir.ico` 在、语言目录只剩 `zh-*` / `en-*`。任一条不满足直接报错。
 * **日常 `dotnet build` 不受影响**（裁剪只在 publish 生效），但 **`dotnet publish` 现在就是发布流程本身**，
   不要再改回“build + 镜像”（见“踩过的坑”第 3 条）。
+* **要发到 GitHub Release 页面就再跑 `tools\release.ps1`**（`pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0`）：
+  它先 `publish.ps1`（可 `-SkipPublish` 跳过），把 `dist\win-x64` 打成一个
+  `dist\exdir-<tag>-win-x64.zip`（zip 根目录就是 `exdir.exe`，解压即用；目前 165 个文件压缩后约 33 MB），
+  生成 release 说明（变更清单 + SHA256 + `build-info.txt` 内容，存 `.artifacts\release-notes-<tag>.md`），
+  最后 `gh release create` —— tag 由 gh 在远端创建、指向当前 HEAD，所以**工作区必须干净**
+  （否则 build-info 里的提交号对不上源码，脚本默认直接报错，确实要发就加 `-AllowDirty`）。
+  加 `-DryRun` 只构建 + 打包 + 打印将要执行的 gh 命令，不碰 GitHub；`-Draft` / `-Prerelease` 建草稿 / 预发布；
+  tag 上已有 Release 时要用 `-Clobber` 才肯覆盖它的资产与说明。
+  前置条件：`gh auth login` 过（需要 repo 权限），只传一个 zip、不再逐文件上传。
 
 **测试范围（2026-09）**：改完只跑与本次改动直接相关的交互式回归脚本（改托盘就只跑 `tools\test-tray.ps1`，改列宽就只跑 `tools\test-column-resize.ps1`），
 **不要每次把 `tools\test-*.ps1` 全跑一遍**；只有用户明确要求“全部测试”时才全跑。
@@ -256,7 +276,7 @@ exdir/
 ├─ Assets/                    图标等（exdir.ico 与各尺寸徽标 PNG 都由 tools\make-icon.ps1 从 icon.svg 生成）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
                               test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray / test-drive-hotplug /
-                              test-file-ops / test-network-locations / measure-row-align / publish / make-icon 脚本
+                              test-file-ops / test-network-locations / measure-row-align / publish / release / make-icon 脚本
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -1396,6 +1416,18 @@ exdir/
     另：本机系统就是深色（`AppsUseLightTheme=0`），所以“浅色 exdir + 深色系统”这种组合必须特地
     把 `settings.json` 的 `Theme` 改成 1（或点标题栏开关）才能复现 —— 验证换肤时两套主题都要看。
 
+69. **PowerShell 7.4+ 把弯引号当字符串定界符：普通双引号字符串里不能出现弯引号**：
+    写 `tools\release.ps1` 时把提示文案写成 `发布出去的“源码提交”会对不上`，脚本直接语法错误，
+    报的是「字符串缺少终止符」「表达式或语句中存在意外的标记“源码提交”」，看起来像中文标点无关的
+    解析 bug，其实是 **PS 7.4 起 tokenizer 认弯引号**：在**普通双引号字符串**里，`“`（U+201C）
+    会把字符串就地截断，后面的中文就变成游离 token。实测（`Parser.ParseInput`）：
+    `"aaa“bbb”ccc"` 报 1~3 个语法错误，`'aaa“bbb”ccc'`（单引号字符串）0 个错，
+    `# aaa“bbb”ccc`（注释）0 个错，here-string（`@'…'@` / `@"…"@`）0 个错。
+    所以：**注释 / 单引号字符串 / here-string 里随便用弯引号，只有普通双引号字符串里要换成「」**
+    （仓库里其它 `tools\*.ps1` 都没事，正是因为它们的弯引号全在注释与单引号字符串里）。
+    这类错误是**解析期**失败，脚本一行都不会执行 —— 改完先拿
+    `[System.Management.Automation.Language.Parser]::ParseFile(...)` 扫一遍（几秒就能扫完 `tools\*.ps1`）。
+
 ## 7. 非打包模式下的 API 限制
 
 没有 Package Identity，因此**不要**使用：`Windows.Storage.KnownFolders`、
@@ -1424,6 +1456,13 @@ exdir/
   全部在 `dist\win-x64\exdir.exe` 上重跑通过（`test-context-menu` 的 4 条失败在未裁剪版上一样挂，属仓库现有待办）。
   **NativeAOT 不可用**（共试了自包含/框架依赖、net8/net10、各类 CsWinRT/COM 开关），
   原因不在本仓库，见第 6 节第 64 条。
+* **一键发布到 GitHub Release**（2026-09，见第 2 节“任务收尾”与第 6 节第 69 条）：
+  `tools\release.ps1`（版本号 `-Tag`，缺省 `v0.0.<yyyyMMdd>`）= 校验（git 干净 / gh 已登录 /
+  远端没有指向别的提交的同名 tag）→ `tools\publish.ps1`（可 `-SkipPublish`）→ 把 `dist\win-x64` 打成
+  `dist\exdir-<tag>-win-x64.zip`（zip 根目录就是 `exdir.exe`，解压即用；165 个文件 83.5 MB → 约 33 MB）
+  → 生成 release 说明（变更清单 + SHA256 + `build-info.txt` 内容，存 `.artifacts\release-notes-<tag>.md`）
+  → `gh release create`（tag 由 gh 在远端创建、指向本次 HEAD）。
+  只传这一个 zip；`-DryRun` 不碰 GitHub、`-Draft` / `-Prerelease` 可选、`-Clobber` 才肯覆盖已有 Release。
 * **单窗口 + 常驻托盘**（2026-09，见第 4 节“托盘驻留”）：点关闭按钮 / `Alt+F4` 只把窗口隐藏到
   通知区域，进程、两个窗格、标签页与会话全部留着，再打开（左键点托盘图标 / 第二次双击 exe）
   就是一次 `ShowWindow`；托盘右键菜单是「显示主窗口 / 退出 exdir」，菜单里的「退出」才是真退出；
