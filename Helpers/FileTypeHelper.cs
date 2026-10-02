@@ -97,13 +97,27 @@ public static class FileTypeHelper
         [".wmv"] = new("WMV 视频", "\uE714"),
         [".webm"] = new("WebM 视频", "\uE714"),
 
-        // 压缩
+        // 压缩（可双击进入压缩包的那几种，见 Helpers/ArchiveFormats）
         [".zip"] = new("压缩文件夹", "\uF012"),
+        [".zipx"] = new("ZIP 压缩文件", "\uF012"),
         [".7z"] = new("7Z 压缩文件", "\uF012"),
         [".rar"] = new("RAR 压缩文件", "\uF012"),
         [".tar"] = new("TAR 存档", "\uF012"),
         [".gz"] = new("GZIP 压缩文件", "\uF012"),
+        [".tgz"] = new("TAR.GZ 压缩文件", "\uF012"),
+        [".bz2"] = new("BZIP2 压缩文件", "\uF012"),
+        [".tbz"] = new("TAR.BZ2 压缩文件", "\uF012"),
+        [".tbz2"] = new("TAR.BZ2 压缩文件", "\uF012"),
         [".xz"] = new("XZ 压缩文件", "\uF012"),
+        [".txz"] = new("TAR.XZ 压缩文件", "\uF012"),
+        [".zst"] = new("ZSTD 压缩文件", "\uF012"),
+        [".tzst"] = new("TAR.ZSTD 压缩文件", "\uF012"),
+        [".lzma"] = new("LZMA 压缩文件", "\uF012"),
+        [".tlz"] = new("TAR.LZMA 压缩文件", "\uF012"),
+        [".lz"] = new("LZ 压缩文件", "\uF012"),
+        [".cpio"] = new("CPIO 存档", "\uF012"),
+        [".ar"] = new("AR 存档", "\uF012"),
+        [".deb"] = new("Debian 安装包", "\uF012"),
 
         // 程序与系统
         [".exe"] = new("应用程序", "\uE7FC"),

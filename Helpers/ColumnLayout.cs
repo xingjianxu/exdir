@@ -10,7 +10,7 @@ namespace Exdir.Helpers;
 ///
 /// 这里要区分两个概念：
 /// <list type="bullet">
-/// <item><b>requested</b>：用户拖出来的宽度，持久化到 settings.json；</item>
+/// <item><b>requested</b>：用户拖出来的宽度，持久化到 config.json；</item>
 /// <item><b>rendered</b>：真正画到界面上的宽度，由 <see cref="FitTo"/> 按窗格可用宽度算出来。</item>
 /// </list>
 /// 列头与每一行都绑定 rendered（同一个对象），所以三者永远对齐。
@@ -157,7 +157,7 @@ public sealed class ColumnLayout : ObservableObject
     }
 
     /// <summary>
-    /// 把任意来源的行高夹进可用范围并取整（settings.json 可能被手改过，
+    /// 把任意来源的行高夹进可用范围并取整（config.json 可能被手改过，
     /// 或旧版本写下的值超出了现在的区间）。
     /// </summary>
     public static double NormalizeRowHeight(double value)

@@ -12,14 +12,14 @@
 #   5. 双击名称列边界 → 该列恢复默认宽度并回到自适应；
 #   6. 复位后再拖一次（向左）→ 自适应关掉后名称列不再吃富余宽度；
 #   7. 列头排序按钮仍可用（点列头 → 行顺序倒序 / 再点回升序）；
-#   8. 关窗口（隐藏到托盘前会落盘）后 settings.json 里落盘的正是这几列拖出来的宽度，且 ColumnAutoFit=false。
+#   8. 关窗口（隐藏到托盘前会落盘）后 config.json 里落盘的正是这几列拖出来的宽度，且 ColumnAutoFit=false。
 #
 # 为什么要有这个脚本：把手一旦落在**零宽度的 Grid 单元格**里（例如隐藏时的“状态”列），
 # WinUI 就收不到它的指针事件 —— 列头看上去一切正常、鼠标却拖不动任何列宽，
 # 见 AGENTS.md“踩过的坑”。用例 2/4/5 在修复前全部没有反应（列宽纹丝不动）。
 #
 # 本机没有交互桌面时鼠标事件送不到窗口，脚本会先探测前台窗口。
-# 注意：本脚本会把 exdir 窗口设成 TOPMOST（终端常常铺满屏幕），跑完还原 settings.json。
+# 注意：本脚本会把 exdir 窗口设成 TOPMOST（终端常常铺满屏幕），跑完还原 config.json。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe",
@@ -64,9 +64,11 @@ public static class ColResizeNative {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
-if (-not $originalSettings) { throw 'settings.json 不存在，请先正常运行一次 exdir' }
+if (-not $originalSettings) { throw 'config.json 不存在，请先正常运行一次 exdir' }
 
 $failures = 0
 function Assert {
@@ -141,7 +143,7 @@ function Stop-Session {
     Start-Sleep -Milliseconds 800
 }
 
-# 用例 8 要读 settings.json 里落盘的列宽：关窗口（= 隐藏到托盘）会先
+# 用例 8 要读 config.json 里落盘的列宽：关窗口（= 隐藏到托盘）会先
 # SaveWindowPlacement + SaveSession + _settings.Save()，也就是真的走一遍“落盘”，
 # 所以这一处不能直接 Kill（那会把内存里的新列宽一起丢掉）。
 function Close-Session {
@@ -449,7 +451,7 @@ finally {
 Write-Host '--- 用例 8：关窗口（隐藏到托盘）后设置落盘 ---'
 $settings = Get-Settings
 if ($null -eq $settings) {
-    Assert $false 'settings.json 读不回来'
+    Assert $false 'config.json 读不回来'
 }
 else {
     Write-Host ("  ColumnAutoFit={0} ColumnWidths=[{1}]" -f $settings.ColumnAutoFit, ($settings.ColumnWidths -join ', '))
@@ -461,7 +463,7 @@ else {
 
 if ($null -ne $originalSettings) {
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json'
+    Write-Host '已还原 config.json'
 }
 
 if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }

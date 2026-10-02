@@ -32,7 +32,9 @@
 文件夹优先、底部状态栏（项数 / 选中摘要 / 卷容量）、文件列表区的**系统右键菜单**
 （资源管理器同款，含 7-Zip / Git / VS Code 等第三方扩展；空白处为目录背景菜单）、
 **设置窗口**（「配置 → 设置…」，独立窗口、左导航 + 右侧 Windows 11 风格设置卡片、改动即时生效，
-含「右键菜单」页可逐项关闭系统菜单项）、
+含「右键菜单」页可逐项关闭系统菜单项）、**压缩包只读浏览**（双击压缩包以目录形式进入：
+包内可导航 / 就地展开 / 排序，只读；`.tar.gz` 透明解开中间那层 tar；加密包弹密码框；
+引擎是随包分发的原生 `7z.dll`，见 [`native/README.md`](native/README.md)）、
 会话与窗口位置持久化、完整快捷键、**命令行调用**（`exdir [path]`，已在运行时转给已有实例并在新标签页打开）。
 
 **尚未实现**：文件操作（复制/移动/删除/重命名/新建/压缩/哈希）、搜索与过滤、
@@ -62,7 +64,7 @@ exdir D:\projects\a.txt    # 打开文件所在目录并选中它
 * 不带路径参数时用的是**本进程**的工作目录，所以从终端里 `cd` 到某个目录再敲 `exdir` 就是打开它；
   双击 exe / 点任务栏图标时的工作目录是程序目录或系统目录，这种情形（不是用户想去的地方）
   只把窗口叫到前台、不动当前浏览位置。
-* 单实例：第二次启动不会多出一个托盘图标，也不会多出一份会话去覆盖 `settings.json`。
+* 单实例：第二次启动不会多出一个托盘图标，也不会多出一份会话去覆盖 `config.json`。
 * 回归：`pwsh -NoProfile -File tools\test-command-line.ps1`。
 
 ## 构建与运行
@@ -85,9 +87,12 @@ pwsh -NoProfile -File tools\publish.ps1
 ## 配置文件
 
 ```
-%LOCALAPPDATA%\exdir\settings.json    设置与会话（窗口位置、双窗格、标签页、固定目录…）
-%LOCALAPPDATA%\exdir\exdir.log        运行日志与异常
+%USERPROFILE%\.config\exdir\config.json   设置与会话（窗口位置、双窗格、标签页、固定目录…）
+%LOCALAPPDATA%\exdir\exdir.log           运行日志与异常
 ```
+
+配置放在用户主目录（设了 `XDG_CONFIG_HOME` 时以它为准）；从旧版本升级时，
+`%LOCALAPPDATA%\exdir\settings.json` 会在首次启动被自动搬到新位置。日志仍在 `%LOCALAPPDATA%`。
 
 ## 开发文档
 

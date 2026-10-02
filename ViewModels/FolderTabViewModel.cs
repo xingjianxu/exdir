@@ -29,6 +29,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private readonly IShellContextMenuService _contextMenu;
     private readonly IClipboardService _clipboard;
     private readonly IFileOperationService _fileOperations;
+    private readonly IArchiveService _archive;
+    private readonly IDialogService _dialogs;
 
     private readonly List<string> _backStack = new();
     private readonly List<string> _forwardStack = new();
@@ -68,7 +70,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         IShellIconService icons,
         IShellContextMenuService contextMenu,
         IClipboardService clipboard,
-        IFileOperationService fileOperations)
+        IFileOperationService fileOperations,
+        IArchiveService archive,
+        IDialogService dialogs)
     {
         _fileSystem = fileSystem;
         _shell = shell;
@@ -77,6 +81,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
         _contextMenu = contextMenu;
         _clipboard = clipboard;
         _fileOperations = fileOperations;
+        _archive = archive;
+        _dialogs = dialogs;
 
         _foldersFirst = settings.Current.FoldersFirst;
         _showExtensions = settings.Current.ShowExtensions;
@@ -124,9 +130,22 @@ public sealed partial class FolderTabViewModel : ObservableObject
                 OnPropertyChanged(nameof(CurrentDirectoryName));
                 OnPropertyChanged(nameof(TabHeader));
                 OnPropertyChanged(nameof(TooltipText));
+                OnPropertyChanged(nameof(IsInsideArchive));
+                OnPropertyChanged(nameof(ArchiveFile));
             }
         }
     }
+
+    /// <summary>
+    /// 当前目录是不是压缩包（压缩包根或包内目录）：是的话文件列表进入**只读**模式 ——
+    /// 粘贴 / 删除 / 新建 / 剪切 / 复制 / 拖放 / 终端 / 属性 / “在资源管理器中显示”全部禁用，
+    /// 包内文件双击改成“解到临时目录再用默认程序打开”（见 AGENTS.md 第 4 节）。
+    /// </summary>
+    public bool IsInsideArchive => _fileSystem.IsInsideArchive(_currentPath);
+
+    /// <summary>当前所在压缩包的文件路径（不在压缩包里时为 null）。</summary>
+    public string? ArchiveFile
+        => _fileSystem.TryParseArchivePath(_currentPath, out var location) ? location.ArchiveFile : null;
 
     /// <summary>地址栏面包屑分段（随 <see cref="CurrentPath"/> 变化整体替换）。</summary>
     public IReadOnlyList<PathSegmentViewModel> PathSegments
@@ -343,18 +362,6 @@ public sealed partial class FolderTabViewModel : ObservableObject
         string? selectPath = null,
         bool preserveSelection = false)
     {
-        var normalized = _fileSystem.NormalizeDirectoryPath(path);
-        if (normalized is null)
-        {
-            ErrorMessage = $"无法打开：{path}";
-            return;
-        }
-
-        // 路径合法才退出地址栏编辑态：输错了要留在框里让用户改
-        IsPathEditing = false;
-
-        var previous = _currentPath;
-
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         var cts = new CancellationTokenSource();
@@ -363,13 +370,42 @@ public sealed partial class FolderTabViewModel : ObservableObject
         IsLoading = true;
         ErrorMessage = null;
 
-        IReadOnlyList<FileSystemEntry> entries;
+        string? normalized = null;
+        IReadOnlyList<FileSystemEntry> entries = Array.Empty<FileSystemEntry>();
+
         try
         {
-            entries = await _fileSystem.EnumerateDirectoryAsync(
-                normalized,
-                _settings.Current.ShowHiddenFiles,
-                cts.Token).ConfigureAwait(true);
+            // 密码是“边解析边可能才发现要”：包内目录的存在性判定本身就要打开压缩包，
+            // 所以解析与枚举包在同一个重试循环里。
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    normalized = await _fileSystem.ResolveDirectoryAsync(path, cts.Token).ConfigureAwait(true);
+                    if (normalized is null)
+                    {
+                        ErrorMessage = $"无法打开：{path}";
+                        return;
+                    }
+
+                    // 路径合法才退出地址栏编辑态：输错了要留在框里让用户改
+                    IsPathEditing = false;
+
+                    entries = await _fileSystem.EnumerateDirectoryAsync(
+                        normalized,
+                        _settings.Current.ShowHiddenFiles,
+                        cts.Token).ConfigureAwait(true);
+
+                    break;
+                }
+                catch (ArchivePasswordRequiredException ex)
+                {
+                    if (!await TryAskPasswordAsync(ex, attempt).ConfigureAwait(true))
+                    {
+                        return;
+                    }
+                }
+            }
         }
         catch (OperationCanceledException)
         {
@@ -377,8 +413,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            // 压缩包打不开（格式不支持 / 文件损坏）之类：留在当前目录，把错误显示出来
             ErrorMessage = ex.Message;
-            entries = Array.Empty<FileSystemEntry>();
+            return;
         }
         finally
         {
@@ -388,10 +425,12 @@ public sealed partial class FolderTabViewModel : ObservableObject
             }
         }
 
-        if (cts.IsCancellationRequested)
+        if (normalized is null || cts.IsCancellationRequested)
         {
             return;
         }
+
+        var previous = _currentPath;
 
         if (pushHistory && !string.IsNullOrEmpty(previous) &&
             !string.Equals(previous, normalized, StringComparison.OrdinalIgnoreCase))
@@ -442,7 +481,60 @@ public sealed partial class FolderTabViewModel : ObservableObject
             return;
         }
 
+        // 压缩包：先丢掉索引缓存 —— F5 的语义就是“外部改动也刷新到”
+        if (ArchiveFile is { } archiveFile)
+        {
+            _archive.Invalidate(archiveFile);
+        }
+
         await NavigateAsync(_currentPath, pushHistory: false, preserveSelection: true).ConfigureAwait(true);
+    }
+
+    // ------------------------------------------------------------------ 压缩包（只读）
+
+    /// <summary>最多让用户输几次压缩包密码（输完还是不对就显示「需要密码」）。</summary>
+    private const int MaxPasswordAttempts = 3;
+
+    /// <summary>压缩包里只读：写操作的统一拒绝文案。</summary>
+    public const string ArchiveReadOnlyMessage = "压缩包内不支持该操作（只读浏览）";
+
+    /// <summary>
+    /// 弹密码框并记下来；返回 false 表示不该重试（已经给出错误文案）。
+    /// </summary>
+    private async Task<bool> TryAskPasswordAsync(ArchivePasswordRequiredException ex, int attempt)
+    {
+        var name = Path.GetFileName(ex.ArchiveFile);
+
+        if (attempt >= MaxPasswordAttempts)
+        {
+            ErrorMessage = $"需要密码：{name}";
+            return false;
+        }
+
+        // 之前存的密码不对（或被用户在对话框里取消了）就先清掉，免得一直拿着错的
+        _archive.SetPassword(ex.ArchiveFile, null);
+
+        var password = await _dialogs.RequestPasswordAsync(name).ConfigureAwait(true);
+        if (string.IsNullOrEmpty(password))
+        {
+            ErrorMessage = $"需要密码：{name}";
+            return false;
+        }
+
+        _archive.SetPassword(ex.ArchiveFile, password);
+        return true;
+    }
+
+    /// <summary>当前操作是不是发生在压缩包里；是的话显示只读提示并返回 true。</summary>
+    private bool RefuseInArchive()
+    {
+        if (!IsInsideArchive)
+        {
+            return false;
+        }
+
+        ErrorMessage = ArchiveReadOnlyMessage;
+        return true;
     }
 
     [RelayCommand(CanExecute = nameof(CanGoBack))]
@@ -573,7 +665,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
         try
         {
-            var bitmap = await _icons.GetIconAsync(item.FullPath, item.IsDirectory).ConfigureAwait(true);
+            var bitmap = await _icons
+                .GetIconAsync(item.FullPath, item.IsDirectory, isVirtualDirectory: IsInsideArchive)
+                .ConfigureAwait(true);
             if (bitmap is not null)
             {
                 item.SetIcon(IconImageHelper.ToImageSource(bitmap));
@@ -614,15 +708,71 @@ public sealed partial class FolderTabViewModel : ObservableObject
         if (item.IsDirectory)
         {
             _ = NavigateAsync(item.FullPath);
+            return;
         }
-        else
+
+        // 压缩包：双击就**进去**（以目录形式浏览），不再交给外部程序
+        if (_archive.IsArchiveFile(item.FullPath))
         {
-            _shell.OpenWithDefaultApp(item.FullPath);
+            _ = NavigateAsync(item.FullPath);
+            return;
+        }
+
+        // 包内的文件：先解到临时目录，再用默认程序打开（资源管理器的做法）
+        if (IsInsideArchive)
+        {
+            _ = OpenArchiveEntryAsync(item);
+            return;
+        }
+
+        _shell.OpenWithDefaultApp(item.FullPath);
+    }
+
+    /// <summary>包内文件：解到临时目录再交给默认程序打开（加密包会先问密码）。</summary>
+    private async Task OpenArchiveEntryAsync(FileItemViewModel item)
+    {
+        if (!_fileSystem.TryParseArchivePath(item.FullPath, out var location))
+        {
+            ErrorMessage = ArchiveReadOnlyMessage;
+            return;
+        }
+
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var temp = await _archive.ExtractToTempAsync(location).ConfigureAwait(true);
+                _shell.OpenWithDefaultApp(temp);
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (ArchivePasswordRequiredException ex)
+            {
+                if (!await TryAskPasswordAsync(ex, attempt).ConfigureAwait(true))
+                {
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorMessage = ex.Message;
+                Log.Exception($"打开压缩包内文件（{item.FullPath}）", ex);
+                return;
+            }
         }
     }
 
     public void OpenSelectionWithDefaultApp()
     {
+        // 包内条目没有真实路径，交给外壳也打不开；这条路径目前没有调用方，防御一下
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         foreach (var item in _selection)
         {
             _shell.OpenWithDefaultApp(item.FullPath);
@@ -647,6 +797,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CopySelection()
     {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         var paths = _selection.Select(i => i.FullPath).ToList();
 
         if (_clipboard.SetFiles(paths, move: false))
@@ -659,6 +814,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CutSelection()
     {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         var paths = _selection.Select(i => i.FullPath).ToList();
 
         if (_clipboard.SetFiles(paths, move: true))
@@ -671,6 +831,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private async Task PasteAsync()
     {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         var snapshot = _clipboard.GetFiles();
 
         if (snapshot is null || snapshot.Paths.Count == 0)
@@ -720,6 +885,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     private async Task RunDeleteAsync(bool permanent)
     {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         // 选中项可能是别处已经删掉的陈旧行（刷新前），过滤一遍免得外壳报“找不到文件”
         var paths = _selection
             .Select(i => i.FullPath)
@@ -752,6 +922,12 @@ public sealed partial class FolderTabViewModel : ObservableObject
         bool move,
         bool skipItemsAlreadyInTarget)
     {
+        // 包内不能粘 / 拖入（写入路径）；包内条目也拖不出来（没有真实路径），统一拒绝
+        if (RefuseInArchive())
+        {
+            return false;
+        }
+
         var target = _fileSystem.NormalizeDirectoryPath(targetDirectory);
         if (target is null)
         {
@@ -822,6 +998,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void RevealInExplorer()
     {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         var item = _selection.FirstOrDefault();
         if (item is not null)
         {
@@ -833,6 +1014,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void ShowProperties()
     {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         var item = _selection.FirstOrDefault();
         if (item is not null)
         {
@@ -847,6 +1033,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private async Task CreateNewFolderAsync()
     {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
         if (string.IsNullOrEmpty(_currentPath))
         {
             return;
@@ -880,10 +1071,26 @@ public sealed partial class FolderTabViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void OpenTerminal() => _shell.OpenTerminal(_currentPath);
+    private void OpenTerminal()
+    {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
+        _shell.OpenTerminal(_currentPath);
+    }
 
     [RelayCommand]
-    private void OpenTerminalAsAdmin() => _shell.OpenTerminal(_currentPath, asAdministrator: true);
+    private void OpenTerminalAsAdmin()
+    {
+        if (RefuseInArchive())
+        {
+            return;
+        }
+
+        _shell.OpenTerminal(_currentPath, asAdministrator: true);
+    }
 
     /// <summary>
     /// 在指定屏幕位置弹出系统右键菜单（由视图层在 <c>ContextRequested</c> 里调用）。

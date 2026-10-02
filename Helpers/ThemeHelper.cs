@@ -12,7 +12,7 @@ namespace Exdir.Helpers;
 /// </summary>
 public static class ThemeHelper
 {
-    /// <summary>settings.json 被手改坏时的兜底：认不出来的值一律当「跟随系统」。</summary>
+    /// <summary>config.json 被手改坏时的兜底：认不出来的值一律当「跟随系统」。</summary>
     public static AppTheme Normalize(AppTheme theme) => theme switch
     {
         AppTheme.Light or AppTheme.Dark => theme,

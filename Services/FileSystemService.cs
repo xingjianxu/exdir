@@ -14,14 +14,27 @@ namespace Exdir.Services;
 public sealed class FileSystemService : IFileSystemService
 {
     private readonly ICloudSyncService _cloudSync;
+    private readonly IArchiveService _archive;
 
-    public FileSystemService(ICloudSyncService cloudSync) => _cloudSync = cloudSync;
+    public FileSystemService(ICloudSyncService cloudSync, IArchiveService archive)
+    {
+        _cloudSync = cloudSync;
+        _archive = archive;
+    }
 
     public Task<IReadOnlyList<FileSystemEntry>> EnumerateDirectoryAsync(
         string path,
         bool includeHidden,
         CancellationToken cancellationToken = default)
-        => Task.Run<IReadOnlyList<FileSystemEntry>>(() => Enumerate(path, includeHidden, cancellationToken), cancellationToken);
+    {
+        // 压缩包里的目录：条目来自 7z.dll，不碰真实文件系统
+        if (_archive.TryParse(path, out var location))
+        {
+            return _archive.ListAsync(location, cancellationToken);
+        }
+
+        return Task.Run<IReadOnlyList<FileSystemEntry>>(() => Enumerate(path, includeHidden, cancellationToken), cancellationToken);
+    }
 
     public Task<IReadOnlyList<FileSystemEntry>> EnumerateSubDirectoriesAsync(
         string path,
@@ -115,6 +128,56 @@ public sealed class FileSystemService : IFileSystemService
         return null;
     }
 
+    public bool IsInsideArchive(string path) => _archive.IsInsideArchive(path);
+
+    public bool TryParseArchivePath(string path, out ArchivePath location) => _archive.TryParse(path, out location);
+
+    public async Task<string?> ResolveDirectoryAsync(string input, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return null;
+        }
+
+        var candidate = input.Trim().Trim('"');
+
+        try
+        {
+            candidate = Environment.ExpandEnvironmentVariables(candidate);
+
+            if (Directory.Exists(candidate))
+            {
+                return new DirectoryInfo(candidate).FullName;
+            }
+
+            // 压缩包：根直接进去（打不开时由枚举去报错），包内目录要先确认它真的存在
+            if (_archive.TryParse(candidate, out var location))
+            {
+                if (location.IsRoot)
+                {
+                    return location.FullPath;
+                }
+
+                return await _archive.DirectoryExistsAsync(location, cancellationToken).ConfigureAwait(true)
+                    ? location.FullPath
+                    : null;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 真实目录的枚举（压缩包不在这里）。
+    /// </summary>
     private IReadOnlyList<FileSystemEntry> Enumerate(
         string path,
         bool includeHidden,

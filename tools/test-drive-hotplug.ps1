@@ -17,9 +17,9 @@
 #      并且 exdir.log 里多了一行「安排刷新磁盘」（证明消息真的被 exdir 处理了，不是碰巧刷到的）；
 #   2. 拔出：subst /d 后再发一条消息，两处都消失；
 #   3. 无副作用：侧边栏节点清单与插入前完全一致（差量刷新没有重建整棵树），
-#      收藏夹子项仍与 settings.json 的 PinnedFolders 一致。
+#      收藏夹子项仍与 config.json 的 PinnedFolders 一致。
 #
-# 全程 UIA + SendMessage，不需要交互桌面。跑完会删掉 subst 映射、临时目录，并还原 settings.json。
+# 全程 UIA + SendMessage，不需要交互桌面。跑完会删掉 subst 映射、临时目录，并还原 config.json。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe"
@@ -47,7 +47,9 @@ public static class Native {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 
 $failures = 0
@@ -84,7 +86,7 @@ if (-not $letter) { throw '没有可用的盘符（E: ~ Z: 全被占了）' }
 $drivePrefix = "${letter}:"
 Write-Host "临时盘符 $drivePrefix → $volumeDir"
 
-# ------------------------------------------------------------------ settings.json
+# ------------------------------------------------------------------ config.json
 
 if (-not (Test-Path $settingsPath)) {
     # 从没跑过 exdir：先启动一次让它把默认设置写出来
@@ -92,7 +94,7 @@ if (-not (Test-Path $settingsPath)) {
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $deadline -and -not (Test-Path $settingsPath)) { Start-Sleep -Milliseconds 500 }
     try { if (-not $boot.HasExited) { $boot.Kill() } } catch { }
-    if (-not (Test-Path $settingsPath)) { throw "启动一次后仍然没有 settings.json: $settingsPath" }
+    if (-not (Test-Path $settingsPath)) { throw "启动一次后仍然没有 config.json: $settingsPath" }
 }
 
 $originalSettings = Get-Content $settingsPath -Raw
@@ -222,7 +224,7 @@ try {
     $actualFavorites = Get-FavoriteItems -Session $session
     Write-Host ("  收藏夹: {0}" -f ($actualFavorites -join ' / '))
     Assert (($actualFavorites -join '|') -eq ($expectedFavorites -join '|')) `
-        "侧边栏「收藏夹」与 settings.json 的 $($expectedFavorites.Count) 项固定目录一致"
+        "侧边栏「收藏夹」与 config.json 的 $($expectedFavorites.Count) 项固定目录一致"
 
     Write-Host '--- 用例 1：插入（subst 一个盘 + 发设备变化消息） ---'
     Assert ((Test-HasDrive -Names $beforeSidebar) -eq 0) "插入前侧边栏里没有 $drivePrefix"
@@ -272,7 +274,7 @@ finally {
     if ($null -ne $session) { Stop-Session -Session $session }
 
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json'
+    Write-Host '已还原 config.json'
 
     if (Test-Path $volumeDir) { Remove-Item $volumeDir -Recurse -Force }
 }

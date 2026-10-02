@@ -54,20 +54,20 @@ public sealed class ShellIconService : IShellIconService
     private int _logged;
     private int _failureLogged;
 
-    public async Task<IconBitmap?> GetIconAsync(string path, bool isDirectory)
+    public async Task<IconBitmap?> GetIconAsync(string path, bool isDirectory, bool isVirtualDirectory = false)
     {
         if (string.IsNullOrEmpty(path))
         {
             return null;
         }
 
-        var key = BuildKey(path, isDirectory);
+        var key = BuildKey(path, isDirectory, isVirtualDirectory);
 
         // Lazy + ExecutionAndPublication：并发命中同一个新键时也只有一个真正去提取
         var lazy = _byKey.GetOrAdd(
             key,
             _ => new Lazy<Task<IconBitmap?>>(
-                () => Task.Run(() => Extract(path, isDirectory)),
+                () => Task.Run(() => Extract(path, isDirectory, isVirtualDirectory)),
                 LazyThreadSafetyMode.ExecutionAndPublication));
 
         // 键里可能有一整条路径（.exe/.lnk 与每个目录一个），浏览很多目录后会攒下来；
@@ -89,10 +89,16 @@ public sealed class ShellIconService : IShellIconService
     }
 
     /// <summary>图标键：图标随文件走的类型按路径，其余按扩展名（扩展名为空时是一类“无扩展名文件”）。</summary>
-    private static string BuildKey(string path, bool isDirectory)
+    private static string BuildKey(string path, bool isDirectory, bool isVirtualDirectory)
     {
         if (isDirectory)
         {
+            // 压缩包里的目录在磁盘上不存在，全是同一张通用文件夹图标 —— 一个键就够，别按路径攒键
+            if (isVirtualDirectory)
+            {
+                return "vdir";
+            }
+
             // 目录按路径：文件夹可以有自己的图标（desktop.ini 的 IconResource、云盘品牌的同步根）
             return "dir:" + path;
         }
@@ -103,16 +109,18 @@ public sealed class ShellIconService : IShellIconService
             : "ext:" + extension.ToLowerInvariant();
     }
 
-    private IconBitmap? Extract(string path, bool isDirectory)
+    private IconBitmap? Extract(string path, bool isDirectory, bool isVirtualDirectory)
     {
         var extension = isDirectory ? string.Empty : Path.GetExtension(path);
         var overlay = OverlayExtensions.Contains(extension);
 
         // 只有“按扩展名取图标”的那一类才用 SHGFI_USEFILEATTRIBUTES：
-        // 它不看文件本身，所以更快，而且列表里刚被删掉/还没创建的文件也照样有图标
-        var byAttributes = !isDirectory && !PerFileExtensions.Contains(extension);
+        // 它不看文件本身，所以更快，而且列表里刚被删掉/还没创建的文件也照样有图标。
+        // 压缩包里的目录也走这条路（路径在磁盘上不存在，SHGetFileInfo 也查不到），
+        // 但要告诉它“这是目录”，否则会拿回一个通用文件图标。
+        var byAttributes = isVirtualDirectory || (!isDirectory && !PerFileExtensions.Contains(extension));
 
-        var result = ShellIconExtractor.Extract(path, byAttributes, overlay, out var failure);
+        var result = ShellIconExtractor.Extract(path, byAttributes, overlay, out var failure, directoryAttributes: isDirectory);
         if (result is null)
         {
             if (Interlocked.Increment(ref _failureLogged) <= FailureLogBudget)

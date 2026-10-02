@@ -3,7 +3,7 @@ using Exdir.Helpers;
 
 namespace Exdir.Models;
 
-/// <summary>持久化到 <c>%LOCALAPPDATA%\exdir\settings.json</c> 的应用设置。</summary>
+/// <summary>持久化到 <c>%USERPROFILE%\.config\exdir\config.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
     public const int CurrentSchemaVersion = 8;

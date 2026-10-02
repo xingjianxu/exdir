@@ -32,6 +32,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IShellIconService _icons;
     private readonly IShellContextMenuService _contextMenu;
     private readonly IFileOperationService _fileOperations;
+    private readonly IArchiveService _archive;
+    private readonly IDialogService _dialogs;
 
     private PanelViewModel _activePane = null!;
     private bool _isDualPane;
@@ -48,7 +50,9 @@ public sealed partial class MainViewModel : ObservableObject
         IShellIconService icons,
         IShellContextMenuService contextMenu,
         IClipboardService clipboard,
-        IFileOperationService fileOperations)
+        IFileOperationService fileOperations,
+        IArchiveService archive,
+        IDialogService dialogs)
     {
         _settings = settings;
         _driveService = driveService;
@@ -58,6 +62,8 @@ public sealed partial class MainViewModel : ObservableObject
         _icons = icons;
         _contextMenu = contextMenu;
         _fileOperations = fileOperations;
+        _archive = archive;
+        _dialogs = dialogs;
 
         // 复制 / 移动完成后要让受影响的目录重新枚举（可能是另一个窗格、另一个标签页）
         _fileOperations.Completed += OnFileOperationCompleted;
@@ -70,8 +76,8 @@ public sealed partial class MainViewModel : ObservableObject
         // 侧边栏的「收藏夹」分组是工具条固定目录的镜像：增删、拖拽排序都立刻同步过去
         PinnedFolders.CollectionChanged += (_, _) => Sidebar.SyncFavorites(PinnedFolders);
 
-        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations);
-        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations);
+        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, dialogs);
+        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, dialogs);
 
         PrimaryPane.Navigated += OnPaneNavigated;
         SecondaryPane.Navigated += OnPaneNavigated;
@@ -672,12 +678,34 @@ public sealed partial class MainViewModel : ObservableObject
 
         var raw = request.Trim().Trim('"');
 
-        // 先分清是目录还是文件：NormalizeDirectoryPath 对文件会返回它所在的目录
+        // 先分清是目录、文件还是一个压缩包：
+        //   * 目录 → 直接进去；
+        //   * 压缩包文件 → 也“进去”（以目录形式浏览，见 AGENTS.md 第 4 节）；
+        //   * 其它文件 → 打开它所在目录并选中它。
         var isDirectory = _fileSystem.DirectoryExists(raw);
         var isFile = !isDirectory && _fileSystem.FileExists(raw);
-        var directory = isDirectory || isFile ? _fileSystem.NormalizeDirectoryPath(raw) : null;
 
-        var selectPath = isFile ? FullNameOf(raw) : null;
+        string? directory;
+        if (isDirectory)
+        {
+            directory = _fileSystem.NormalizeDirectoryPath(raw);
+        }
+        else if (isFile)
+        {
+            directory = await _fileSystem.ResolveDirectoryAsync(raw).ConfigureAwait(true)
+                        ?? _fileSystem.NormalizeDirectoryPath(raw);
+        }
+        else
+        {
+            // 真实文件系统看不见的路径也可能成立：压缩包里的目录（`exdir foo.zip\sub`）、
+            // 或者压缩包本身（已在上面 isFile 那一支处理）
+            directory = await _fileSystem.ResolveDirectoryAsync(raw).ConfigureAwait(true);
+        }
+
+        // 进压缩包时不选中什么（它本身就是“目录”），普通文件才选中
+        var selectPath = isFile && directory is not null && !_fileSystem.IsInsideArchive(directory)
+            ? FullNameOf(raw)
+            : null;
 
         var tab = ActivePane.ActiveTab;
         if (tab is null)
@@ -720,6 +748,12 @@ public sealed partial class MainViewModel : ObservableObject
             ? $"命令行：在新标签页打开 {directory}"
             : $"命令行：在新标签页打开 {directory} 并选中 {selectPath}");
     }
+
+    /// <summary>
+    /// 清掉压缩包浏览的临时文件（链式解开的中间 tar、包内文件双击时解出来的副本）。
+    /// 启动与退出各调一次，见 <see cref="ArchiveService.CleanupTemp" />。
+    /// </summary>
+    public void CleanupArchiveTemp() => _archive.CleanupTemp();
 
     /// <summary>文件的完整路径（命令行里传进来的可能带引号或环境变量，选中时要和行上的 FullPath 对得上）。</summary>
     private static string? FullNameOf(string path)
@@ -1017,9 +1051,16 @@ public sealed partial class MainViewModel : ObservableObject
         int activeIndex,
         string fallback)
     {
-        var restored = paths
-            .Where(p => _fileSystem.DirectoryExists(p))
-            .ToList();
+        var restored = new List<string>();
+
+        // 压缩包里的标签页也要能恢复（ResolveDirectoryAsync 同时认真实目录与压缩包虚拟路径）
+        foreach (var path in paths)
+        {
+            if (await _fileSystem.ResolveDirectoryAsync(path).ConfigureAwait(true) is { } resolved)
+            {
+                restored.Add(resolved);
+            }
+        }
 
         if (restored.Count == 0)
         {
@@ -1083,7 +1124,7 @@ public sealed partial class MainViewModel : ObservableObject
     public AppSettings Settings => _settings.Current;
 
     /// <summary>配置文件完整路径（“关于”对话框展示用）。</summary>
-    public string SettingsFilePath => Path.Combine(_settings.DataDirectory, "settings.json");
+    public string ConfigFilePath => _settings.ConfigFilePath;
 
     /// <summary>侧边栏宽度（DIP）；由窗口拖动分隔条时写入。</summary>
     public double SidebarWidth

@@ -31,6 +31,7 @@ internal static class ShellIconExtractor
     private const uint ShgfiLinkOverlay = 0x00008000;
     private const uint ShgfiUseFileAttributes = 0x00000010;
     private const uint FileAttributeNormal = 0x00000080;
+    private const uint FileAttributeDirectory = 0x00000010;
 
     private const uint DibRgbColors = 0;
 
@@ -52,8 +53,12 @@ internal static class ShellIconExtractor
     /// true = 不去看文件本身，只按扩展名 + <c>FILE_ATTRIBUTE_NORMAL</c> 推断图标（快，且文件不存在也能用）。
     /// </param>
     /// <param name="linkOverlay">是否叠加“快捷方式小箭头”（.lnk / .url 用）。</param>
+    /// <param name="directoryAttributes">
+    /// <paramref name="useFileAttributes" /> 为 true 时用“目录属性”而不是“普通文件属性”询问壳。
+    /// 压缩包里的目录在磁盘上并不存在，只能这样拿到通用文件夹图标。
+    /// </param>
     /// <param name="failure">失败原因（成功时为空串）。</param>
-    public static Result? Extract(string path, bool useFileAttributes, bool linkOverlay, out string failure)
+    public static Result? Extract(string path, bool useFileAttributes, bool linkOverlay, out string failure, bool directoryAttributes = false)
     {
         failure = string.Empty;
 
@@ -74,7 +79,7 @@ internal static class ShellIconExtractor
         if (useFileAttributes)
         {
             flags |= ShgfiUseFileAttributes;
-            attributes = FileAttributeNormal;
+            attributes = directoryAttributes ? FileAttributeDirectory : FileAttributeNormal;
         }
 
         IntPtr shellIcon;

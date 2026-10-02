@@ -19,6 +19,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
         <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="1" VerticalAlignment="Center">
@@ -66,5 +67,18 @@
 
         <!-- 地址栏：面包屑分段（可点击）+ 点空白处切到可编辑输入框，见 Views/PathBreadcrumb -->
         <views:PathBreadcrumb Grid.Column="1" ViewModel="{x:Bind ViewModel}" />
+
+        <!-- 压缩包里是只读浏览（见 AGENTS.md 第 4 节）：贴在地址栏右边的提醒。
+             放在导航条而不是状态栏，是因为状态栏三段文本的断言是“内容即文本”。 -->
+        <StackPanel
+            Grid.Column="2"
+            Margin="6,0,2,0"
+            VerticalAlignment="Center"
+            AutomationProperties.Name="只读压缩包"
+            Spacing="4"
+            Visibility="{x:Bind ViewModel.IsInsideArchive, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+            <FontIcon FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Glyph="&#xF012;" />
+            <TextBlock FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="只读" />
+        </StackPanel>
     </Grid>
 </UserControl>

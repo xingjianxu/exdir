@@ -11,7 +11,7 @@
 #      取消全部选中后选中摘要消失；
 #   4. 双窗格 + F6 切换活动窗格后，状态栏跟着换成另一个窗格的目录。
 #
-# 需要交互桌面（真鼠标点击 + 截图）。跑完会还原 settings.json 的原始内容。
+# 需要交互桌面（真鼠标点击 + 截图）。跑完会还原 config.json 的原始内容。
 #
 # 注意：本脚本会把 exdir 窗口设成 TOPMOST —— 终端窗口常常铺满屏幕，
 # 不置顶的话 CopyFromScreen 拍到的是终端而不是 exdir。
@@ -52,7 +52,9 @@ public static class Native {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
 # 状态栏高度 = 一行（Themes/ExdirTheme.xaml 的 ExRowHeight），单位 DIP
@@ -317,7 +319,7 @@ Stop-Session -Session $session
 
 if ($null -ne $originalSettings) {
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json'
+    Write-Host '已还原 config.json'
 }
 
 if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }

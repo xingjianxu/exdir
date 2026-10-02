@@ -8,7 +8,7 @@
 #   pwsh -NoProfile -File tools\test-pin-drag.ps1                 # Debug 版，跑全部用例
 #   pwsh -NoProfile -File tools\test-pin-drag.ps1 -Exe dist\win-x64\exdir.exe
 #
-# 脚本会临时往固定的目录里塞两个条目，结束时从备份还原 settings.json（并杀掉 exdir）。
+# 脚本会临时往固定的目录里塞两个条目，结束时从备份还原 config.json（并杀掉 exdir）。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe",
@@ -53,7 +53,9 @@ $ErrorActionPreference = 'Stop'
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $backupPath = "$settingsPath.pintest-backup"
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $hadSettings = Test-Path $settingsPath
@@ -473,5 +475,5 @@ finally {
     Start-Sleep -Milliseconds 800
 
     if ($hadSettings) { Copy-Item $backupPath $settingsPath -Force; Remove-Item $backupPath -Force }
-    Write-Host 'settings.json 已还原'
+    Write-Host 'config.json 已还原'
 }

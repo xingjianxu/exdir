@@ -8,10 +8,10 @@
 #   1. 在文件行上右键 → 弹出系统菜单（Win32 的 #32768 弹出菜单窗口属于 exdir 进程），
 #      截图存到 .artifacts\context-menu-file.png；
 #   2. 在列表空白处右键 → 弹出目录背景菜单，截图 context-menu-background.png；
-#   3. 把某个菜单项在设置里关掉（settings.json 的 ShellMenuDisabledItems 写进「属性」的键 verb:properties）
+#   3. 把某个菜单项在设置里关掉（config.json 的 ShellMenuDisabledItems 写进「属性」的键 verb:properties）
 #      → 重启后弹出的菜单里不再有「属性」（exdir.log 里会写“已关闭 属性”），截图 context-menu-filtered.png。
 #
-# 另外两个用例验证默认的“内置轻量菜单”（settings.json 的 UseBuiltInContextMenu=true）：
+# 另外两个用例验证默认的“内置轻量菜单”（config.json 的 UseBuiltInContextMenu=true）：
 #   4. 内置菜单是 WinUI MenuFlyout（会进 UIA 树，能直接读菜单项），进程里**没有** #32768；
 #      文件行菜单里有「打开 / 在资源管理器中显示 / 复制路径 / 属性」；
 #   5. 空白处菜单里有「新建文件夹 / 全选 / 在此处打开终端」，用 UIA 的 InvokePattern 点「新建文件夹」
@@ -21,7 +21,7 @@
 # Win32 #32768 窗口里没有可供 UIA 读取的 MenuItem（整张菜单在 UIA 里就是一个 Pane），
 # 所以“菜单弹出来了”靠 EnumWindows 找 #32768，“有哪些项 / 关掉了哪些项”靠 exdir 自己的日志。
 #
-# 脚本要求有交互桌面（真实鼠标右键 + 截图）；跑完会还原 settings.json 的原始内容。
+# 脚本要求有交互桌面（真实鼠标右键 + 截图）；跑完会还原 config.json 的原始内容。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe"
@@ -77,7 +77,9 @@ $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
 $shotDir = [System.IO.Path]::GetFullPath("$PSScriptRoot\..\.artifacts")
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
@@ -94,7 +96,7 @@ function Assert {
     else { Write-Host "FAIL $Message"; $script:failures++ }
 }
 
-# ------------------------------------------------------------------ settings.json / 日志
+# ------------------------------------------------------------------ config.json / 日志
 
 function Get-Setting {
     param([string]$Name)
@@ -105,7 +107,7 @@ function Set-Setting {
     param([string]$Name, $Value)
     $json = Get-Content $script:settingsPath -Raw | ConvertFrom-Json
 
-    # 老版本的 settings.json 里可能还没有这个字段（例如刚加的 ShellMenuDisabledItems），
+    # 老版本的 config.json 里可能还没有这个字段（例如刚加的 ShellMenuDisabledItems），
     # 直接 $json.$Name = $Value 会报“找不到属性”，所以用 Add-Member -Force
     $json | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
     $json | ConvertTo-Json -Depth 10 | Set-Content $script:settingsPath -Encoding utf8
@@ -306,7 +308,7 @@ try {
     $known = @(Get-Setting 'ShellMenuKnownItems')
     $knownTexts = @($known | ForEach-Object { $_.Text })
     Write-Host ("  清单里记下了 {0} 项：{1}" -f $known.Count, (($knownTexts | Select-Object -First 12) -join ' / '))
-    Assert ($known.Count -gt 10) '退出后 settings.json 的 ShellMenuKnownItems 记下了枚举出来的菜单项'
+    Assert ($known.Count -gt 10) '退出后 config.json 的 ShellMenuKnownItems 记下了枚举出来的菜单项'
     Assert (@($known | Where-Object { $_.Key -eq 'verb:properties' }).Count -eq 1) '清单里有「属性」（key = verb:properties）'
     Assert (@($knownTexts | Where-Object { $_ -eq '打开' }).Count -eq 1) '清单里有「打开」（加速键与省略号已去掉）'
     Assert (@($known | Where-Object { $_.Scopes -contains '背景' }).Count -gt 0) '清单里记下了「背景」上下文的项'
@@ -392,7 +394,7 @@ finally {
 
     if ($null -ne $originalSettings) {
         Set-Content $settingsPath $originalSettings -Encoding utf8
-        Write-Host '已还原 settings.json'
+        Write-Host '已还原 config.json'
     }
 }
 

@@ -16,7 +16,7 @@
 #       带降部的名字（g/p/q/y）墨迹也会被尾巴拉低，所以只看中位数与平均值是否在同侧偏大。
 #       去掉 DetailsView 里那 1 DIP 下推时，中位数会从 ~2.5 恶化到 ~4.5、平均值从 ~2.0 到 ~4.0，两条断言都会失败。
 #
-# 需要交互桌面（截图）。跑完会还原 settings.json 的原始内容。
+# 需要交互桌面（截图）。跑完会还原 config.json 的原始内容。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe",
@@ -52,7 +52,9 @@ public static class AlignNative {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
 $failures = 0
@@ -76,7 +78,7 @@ foreach ($name in 'alpha.txt', 'beta.log', 'delta.ini', 'program.exe', 'gamma.cf
     Set-Content (Join-Path $workDir $name) 'x'
 }
 
-# 残留实例退出时会把 settings.json 写成它自己的会话，会把下面刚写好的会话盖掉
+# 残留实例退出时会把 config.json 写成它自己的会话，会把下面刚写好的会话盖掉
 Get-Process -Name 'exdir' -ErrorAction SilentlyContinue | ForEach-Object {
     try { $_.Kill(); $_.WaitForExit(5000) } catch { }
 }
@@ -222,7 +224,7 @@ try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
 
 if ($null -ne $originalSettings) {
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json'
+    Write-Host '已还原 config.json'
 }
 if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
 

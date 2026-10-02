@@ -11,7 +11,7 @@
 #   4. 再单击某一行 → 只选中该行（行上的点击不算“空白处”，不会被清空成 0）；
 #   5. 焦点在地址栏时 Ctrl+A 仍然是文本框全选，不会跑去全选文件列表。
 #
-# 需要交互桌面（真鼠标点击）。跑完会还原 settings.json 的原始内容。
+# 需要交互桌面（真鼠标点击）。跑完会还原 config.json 的原始内容。
 #
 # 注意：本脚本会把 exdir 窗口设成 TOPMOST —— 终端窗口常常铺满屏幕，
 # 不置顶的话点击与截图都会落到终端上。
@@ -58,7 +58,9 @@ public static class Native {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
 $failures = 0
@@ -325,7 +327,7 @@ Stop-Session -Session $session
 
 if ($null -ne $originalSettings) {
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json'
+    Write-Host '已还原 config.json'
 }
 
 if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }

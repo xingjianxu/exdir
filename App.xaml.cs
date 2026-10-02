@@ -43,6 +43,9 @@ public partial class App : Application
             // 否则“同步状态”列可能只能拿到固定的“同步挂起”，放在枚举任何目录之前调用
             ShellPropertyStore.EnsurePlaceholdersExposed();
 
+            // 压缩包只读浏览：启动时清一次临时文件（链式解开的中间 tar / 双击包内文件解出来的副本）
+            Services.GetRequiredService<IArchiveService>().CleanupTemp();
+
             var window = Services.GetRequiredService<MainWindow>();
             MainWindow = window;
 
@@ -100,6 +103,10 @@ public partial class App : Application
         services.AddSingleton<IDeviceChangeService, DeviceChangeService>();
         services.AddSingleton<IClipboardService, ClipboardService>();
         services.AddSingleton<IFileOperationService, FileOperationService>();
+
+        // 压缩包只读浏览（原生 7z.dll，见 Services/Native/SevenZipInterop.cs）
+        services.AddSingleton<IArchiveService, ArchiveService>();
+        services.AddSingleton<IDialogService, DialogService>();
 
         // ViewModel
         services.AddSingleton<MainViewModel>();

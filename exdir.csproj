@@ -65,7 +65,7 @@
     XamlParseException。
 
     裁掉的那几个 CS/IL 警告（IL2026/IL3050）来自 SettingsService 用反射版 JsonSerializer，
-    实测 settings.json 读写仍正常（AppSettings 的属性被 XamlTypeInfo 与序列化互相吊住），
+    实测 config.json 读写仍正常（AppSettings 的属性被 XamlTypeInfo 与序列化互相吊住），
     但改设置模型后要跑 tools\test-settings.ps1 复验。
   -->
   <PropertyGroup>
@@ -136,6 +136,19 @@
     <Content Include="Assets\Wide310x150Logo.scale-200.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!--
+      原生 7-Zip 引擎（来源 / 许可 / 升级步骤见 native/README.md）：
+      “双击压缩包 = 以目录形式进入”靠它。以**独立文件**放在 exe 旁边，不静态链接、不参与 .NET 裁剪，
+      用户可以直接替换这个 DLL（LGPL 的 relinking 要求）。只带 x64（exdir 只发布 win-x64）。
+    -->
+    <Content Include="native\x64\7z.dll" Condition="'$(Platform)' == 'x64'">
+      <Link>7z.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="native\LICENSE-7z.txt">
+      <Link>LICENSE-7z.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -154,6 +167,10 @@
     <None Remove=".artifacts\**" />
     <PRIResource Remove="dist\**" />
     <EmbeddedResource Remove="dist\**" />
+    <!-- 临时工程 / 冒烟测试也放在 .artifacts 下，不能把里面的 .cs 编进 exdir -->
+    <Compile Remove=".artifacts\**" />
+    <!-- tools 下的辅助工程（tools\archive-smoke）也一样，别把它们的 Program.cs 编进 exdir -->
+    <Compile Remove="tools\**" />
   </ItemGroup>
 
   <!--

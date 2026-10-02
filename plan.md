@@ -66,7 +66,7 @@
     差量刷新（设备变化）会一并带上它们（不把网络位置算进期望清单就会被刷新误删）；
     回归脚本 `tools/test-network-locations.ps1`，见 AGENTS.md 第 4 节与第 6 节第 63 条。
   - 工具条“固定目录”支持**拖放固定**（2026-09，S7a）：文件列表 / 侧边栏树里的目录拖到工具条右侧即固定，
-    松手立即写 `settings.json`；右键固定目录按钮可“取消固定”；
+    松手立即写 `config.json`；右键固定目录按钮可“取消固定”；
     `AppSettings` 结构版本 2→3（新增 `PinnedFoldersInitialized`，修掉“取消完所有固定目录后重启默认值又回来”）。
   - 复制 / 剪切 / 粘贴 + 拖动移动（2026-09，S25）：内置右键菜单里多了剪切 / 复制 / 粘贴
     （快捷键 `Ctrl+X/C/V`），剪贴板用系统标准格式 `CF_HDROP` + `Preferred DropEffect`，
@@ -79,7 +79,7 @@
     删除后受影响的标签页刷新，被删目录里开着的标签页退到上一级；
     回归脚本 `tools/test-file-ops.ps1` 用例 H / I，见 AGENTS.md 第 6 节第 61 条。
   - 工具条“固定目录”支持**拖拽排序**（2026-09，S7b）：按住固定目录按钮横向拖到兄弟按钮上就换位，
-    拖动时有插入位置提示条，松手立即写 `settings.json`（也是“工具条上的拖拽是由应用自己识别手势的”首个实现）。
+    拖动时有插入位置提示条，松手立即写 `config.json`（也是“工具条上的拖拽是由应用自己识别手势的”首个实现）。
   - 侧边栏“收藏夹”分组（2026-09，S7c）：`主目录` 下面多一个 `收藏夹` 分组，子项与工具条固定目录
     同序同名；把目录从文件列表 / 侧边栏拖到该分组或其子行上即收藏；右键收藏项可取消收藏。
   - 云文件夹的同步状态列（2026-09，S23）：云同步目录（OneDrive / WPS 云盘 / 其它 CFAPI 同步根）
@@ -98,7 +98,10 @@
     只恢复上次的目录会话并预取首屏图标，之后双击 exe 几乎是瞬时的；
     回归 `tools/test-autostart.ps1` 与 `tools/test-settings.ps1` 用例 10，
     见 AGENTS.md 第 4 节“开机自启 / 预热启动”与第 6 节第 75 条。
-  - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%LOCALAPPDATA%\exdir\settings.json`。
+  - 配置文件搬到用户主目录（2026-09）：`settings.json` → `%USERPROFILE%\.config\exdir\config.json`
+    （设了 `XDG_CONFIG_HOME` 且为绝对路径时以它为准），首次启动自动把旧 `%LOCALAPPDATA%\exdir\settings.json`
+    搬过来；日志仍留在 `%LOCALAPPDATA%\exdir\exdir.log`；见 AGENTS.md 第 6 节第 76 条。
+  - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%USERPROFILE%\.config\exdir\config.json`。
   - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
   - 工具脚本：`capture.ps1`（截图）、`inspect-ui.ps1`（UIA 控件树 / 点击）、`publish.ps1`（Release 产物）、`make-icon.ps1`。
   - Release 产物：`dist\win-x64\exdir.exe`（自包含，224 MB / 531 文件，已验证可运行）。
@@ -228,9 +231,9 @@
     `Views/SidebarView.xaml(.cs)`、`Views/DriveBarView.xaml(.cs)`、`ViewModels/MainViewModel.cs`、
     `Models/AppSettings.cs`（结构版本 2→3）、`Services/SettingsService.cs`。
     验收：`tools/test-pin-drag.ps1` 三个用例全通过（列表 `.cargo` → 固定、侧边栏“图片” → 固定、
-    右键 Desktop → 取消固定），并检查 `%LOCALAPPDATA%\exdir\settings.json` 的 `PinnedFolders` 真的变了。
+    右键 Desktop → 取消固定），并检查 `%USERPROFILE%\.config\exdir\config.json` 的 `PinnedFolders` 真的变了。
   - [x] **S7b 固定目录拖拽排序**（2026-09）：按住工具条上的固定目录按钮横向拖到兄弟按钮上即换位，
-    拖动时按钮之间画 2px 强调色插入位置提示条 + “调整固定目录顺序”提示，松手即写 `settings.json`。
+    拖动时按钮之间画 2px 强调色插入位置提示条 + “调整固定目录顺序”提示，松手即写 `config.json`。
     新增格式 `DragDropHelper.PinnedReorderFormat`（`exdir/pinned-reorder`，与代表“新增固定”的
     `exdir/paths` 分开）、`MainViewModel.MovePinnedFolder`（去重定位 + `RemoveAt`/`Insert` + 立即落盘），
     改 `Views/DriveBarView.xaml(.cs)`。
@@ -238,7 +241,7 @@
     `PointerPressed`/`PointerMoved` 标成 Handled，`CanDrag` 完全无效，只能在容器上
     `AddHandler(..., handledEventsToo: true)` 自己识别手势，移动超过阈值后调 `StartDragAsync`。
     验收：`tools/test-pin-drag.ps1` 第 4 个用例（把最左边两个固定目录中排在前面的那个拖到另一个的
-    右半边 → `settings.json` 的 `PinnedFolders` 前两项互换），拖拽中的截图里能看到插入位置提示条。
+    右半边 → `config.json` 的 `PinnedFolders` 前两项互换），拖拽中的截图里能看到插入位置提示条。
   - [x] **S7c 侧边栏「收藏夹」分组**（2026-09）：侧边栏 `主目录` 下面多一个 `收藏夹` 分组，子项与
     工具条固定目录同序同名（增删 / 排序即时同步）；把目录从文件列表 / 侧边栏拖到该分组或其子行上
     即收藏（悬停整行强调色高亮）；右键收藏项可「取消收藏」（工具条隐藏时的移除入口）。
@@ -250,8 +253,8 @@
     的那个元素（挂在 TreeView 上只能拿到 TreeView），落点必须写在行模板根上、用
     `TreeView.ItemFromContainer` 反查；`TreeViewList` 还会把 `AcceptedOperation` 改回 `None`，
     要在 `TreeView` 上用 `handledEventsToo` 再确认一次，否则松手没有 Drop。
-    验收：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `settings.json` 一致）、
-    用例 5（拖 `音乐` 到收藏夹 → `settings.json` 新增 `…\Music`，侧边栏同步出现）。
+    验收：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `config.json` 一致）、
+    用例 5（拖 `音乐` 到收藏夹 → `config.json` 新增 `…\Music`，侧边栏同步出现）。
   - [ ] 其余（文件本身可拖出到资源管理器、拖到目录行上悬停进入目录）仍未做。
 
 - [x] **S25 复制 / 剪切 / 粘贴 + 拖动移动**（2026-09，新增 6 个文件 / 改 10 个，~900 行）
@@ -453,9 +456,9 @@
       `MainWindow.Settings_Click` 接对话框（`XamlRoot = RootGrid.XamlRoot`）。
       两个新坑已记入 `AGENTS.md` 第 6 节第 26/27 条（弹层动画期坐标会变 → 自动化改用 UIA 模式；
       `ContentDialog` 是独立弹出窗口，屏幕外控件要按“对话框后代”而非可见性筛选）。
-    - 验收：`tools/test-settings.ps1` 16 项断言全绿（内容齐全、初始值与 settings.json 一致、
+    - 验收：`tools/test-settings.ps1` 16 项断言全绿（内容齐全、初始值与 config.json 一致、
       取消不落盘、保存立即落盘、关掉“显示文件扩展名”后列表行名里的 `.xxx` 从 13 行降到 5 行，
-      再打开后恢复原样）；跑完自动还原 `settings.json`。
+      再打开后恢复原样）；跑完自动还原 `config.json`。
     - 未做（留给 S17 其余部分）：外观（紧凑度/主题）、固定目录管理、快捷命令编辑器。
   - [x] **S17b 设置对话框改成「左导航 + 右正文」**（2026-09，改 4 个文件 / 新增 5 个，~400 行）
     - 内容：改成常见配置对话框的两栏结构——左侧是配置大类列表，右侧只显示当前那一页；
@@ -473,7 +476,7 @@
       （字形只画出一条）→ 导航项改成纯文字；负 `Margin` 想“通到对话框边缘”会把左侧内容裁掉；
       这种场景下 UIA 的 `BoundingRectangle` 会给出 `x≈-1118` 这种假坐标，量渲染几何只能扫像素。
     - 验收：`tools/test-settings.ps1` 重写为 4 个用例 26 条断言全绿（三个分类齐全且顺序一致 /
-      默认停在「文件列表」/ 每页只看得到本分类的开关 / 初始值与 settings.json 一致 / 取消不落盘 /
+      默认停在「文件列表」/ 每页只看得到本分类的开关 / 初始值与 config.json 一致 / 取消不落盘 /
       保存立即落盘并作用到文件列表 / 跨分类改「布局」后重新打开能读回）；
       新增 `tools/shot-settings.ps1` 给每个分类截一张图（`.artifacts\settings-<分类名>.png`）。
   - [x] **S17c 设置对话框加「行高」滑块**（2026-09，改 8 个文件 / 新增 2 个，~150 行）
@@ -611,7 +614,7 @@
     没有 lParam 的 `DBT_DEVNODES_CHANGED`，产品代码也把这个事件当“卷可能变了”（顺带兜住就绪延迟）。
   - 验收：`tools/test-drive-hotplug.ps1` 3 个用例 12 条断言全绿（插入前两处都没有该盘符 →
     `subst` + 发消息后两处都出现（并从 exdir.log 确认消息真的被处理）→ `subst /d` + 发消息后两处都消失 →
-    侧边栏节点清单与插入前完全一致、收藏夹仍与 settings.json 一致）。
+    侧边栏节点清单与插入前完全一致、收藏夹仍与 config.json 一致）。
 
 - [x] **S28 侧边栏「主目录」里显示哪些标准文件夹可配**（2026-09，改 8 个文件 + 更新回归脚本，~200 行）
   - 目标：设置窗口能把「主目录」分组里的桌面 / 文档 / 下载 / 图片 / 音乐 / 视频逐项关掉，
@@ -655,6 +658,43 @@
     第二次启动 ~70 ms 退出并把窗口真的唤出来、带路径的请求照样能转发进来新开标签页）；
     `tools/test-settings.ps1` 10 个用例全绿（含用例 10：拨开关真的写 / 删 HKCU 的 Run 项，用完还原注册表）；
     `tools/test-command-line.ps1` 10 个用例全绿（命令行路径没被 `--preload` 改坏）。
+
+---
+
+## Phase 9 — 压缩包浏览
+
+- [x] **S31a 压缩包引擎与虚拟路径**（2026-09，新增 7 个文件 / 改 8 个，~1100 行）
+  - 目标：“双击压缩包 = 以目录形式进入”的底座：能解析“压缩包 + 包内路径”这种虚拟路径，
+    能枚举包内目录，能把单个条目解到临时目录。
+  - 涉及：新增 `native/`（`x64\7z.dll` + `LICENSE-7z.txt` + `README.md`）、
+    `Services/Native/SevenZipInterop.cs`（只读 `IInArchive` + 打开/解压回调）、`Services/IArchiveService.cs`、
+    `Services/ArchiveService.cs`、`Models/ArchivePath.cs`、`Helpers/ArchiveFormats.cs`；
+    改 `Services/IFileSystemService.cs` + `Services/FileSystemService.cs`（`ResolveDirectoryAsync` /
+    `IsInsideArchive` / `EnumerateDirectoryAsync` 认虚拟路径）、`ViewModels/PanelViewModel.cs`、
+    `ViewModels/MainViewModel.cs`（会话恢复与命令行）、`App.xaml.cs`（DI）、`exdir.csproj`、`tools/publish.ps1`。
+  - 做法：用原生 7z.dll（用户确认的路线）；格式清单收窄到“核心压缩格式”∩ 7z.dll 真认识的；
+    索引按“路径 + 大小 + 修改时间”缓存；`.tar.gz`/`.tgz` 透明解开中间那层 tar；
+    包内文件双击解到 `%LOCALAPPDATA%\exdir\archive-cache` 再用默认程序打开；
+    加密包弹密码框（`IDialogService`）；临时目录启动/退出各清一次（副本只删一天前的）。
+  - 坑（已记入 `AGENTS.md` 第 6 节第 77～82 条）：7-Zip 的接口 IID 新布局 + `kClassID` 是“BSTR 装 16 字节 GUID”；
+    `Seek` 的 out 指针可以是 NULL；托管 CCW 必须 public + ComVisible；单文件压缩器的条目名是空的；
+    tar 的 `./` 前缀；加密 zip 问的是 v1 密码接口。
+  - 验收：`tools/archive-smoke`（服务级冒烟，不需要交互桌面）在 Debug 与**裁剪过的自包含产物**上都是 0 失败；
+    `tools/test-archive.ps1` 在 Debug 与 `dist\win-x64\exdir.exe` 上的 UIA 部分全绿。
+
+- [x] **S31b 压缩包只读浏览的界面与交互**（2026-09，改 6 个文件 / 新增 1 个脚本，~600 行）
+  - 内容：双击进包（`OpenItem`）、`FolderTabViewModel.IsInsideArchive` + 写操作的统一守卫、
+    包内右键菜单换成“只读版”且在包内强制用内置菜单、包内拖拽与拖入禁用、
+    导航条右侧的「只读」徽标、包内目录的通用文件夹图标、F5 丢掉索引缓存、
+    会话与命令行进入包内目录。
+  - 验收：`tools/test-archive.ps1`（12 个用例：双击进包 / 上一级 / 面包屑回包根 / 行内展开 / 排序与图标 /
+    只读守卫 / 包内文件解到临时目录 / `.tar.gz` 透明解开 / 会话恢复 / 命令行进包 / `.7z`；
+    真鼠标双击与右键，需要交互桌面）；另重跑 `tools/test-row-dblclick.ps1` 与 `tools/test-context-menu.ps1`
+    确认真实目录没被改坏。
+
+- [ ] **S32 压缩包的更多能力**（后续）
+  - 用户已选“仅只读浏览”，以下都还没做，按需再排：包内右键「解压到当前文件夹 / 解压到 <同名> 文件夹」（带进度对话框）、
+    包内条目 Ctrl+C 后在真实目录 Ctrl+V 解出来、把包内条目拖到资源管理器、包内新建/删除/重命名条目（只 zip/7z）。
 
 ---
 

@@ -14,8 +14,13 @@ public interface ISettingsService
     /// <summary>当前设置对象。修改后调用 <see cref="Save"/> 落盘。</summary>
     AppSettings Current { get; }
 
-    /// <summary>设置文件所在目录（<c>%LOCALAPPDATA%\exdir</c>）。</summary>
+    /// <summary>
+    /// 设置文件所在目录（<c>%USERPROFILE%\.config\exdir</c>；设了 <c>XDG_CONFIG_HOME</c> 时以它为准）。
+    /// </summary>
     string DataDirectory { get; }
+
+    /// <summary>设置文件完整路径（<c>config.json</c>）。</summary>
+    string ConfigFilePath { get; }
 
     void Load();
 
@@ -42,13 +47,18 @@ public sealed class SettingsService : ISettingsService
     private static readonly JsonTypeInfo<AppSettings> SettingsTypeInfo =
         (JsonTypeInfo<AppSettings>)SerializerOptions.GetTypeInfo(typeof(AppSettings));
 
+    /// <summary>设置文件名。2026-09 从 <c>settings.json</c> 改名并换了目录，见 <see cref="MigrateLegacyConfig"/>。</summary>
+    public const string ConfigFileName = "config.json";
+
+    /// <summary>旧配置的位置（相对 <c>%LOCALAPPDATA%</c>，老版本用的是 <c>settings.json</c>），只在首次启动时用来把老配置搬过来。</summary>
+    private const string LegacyConfigRelativePath = @"exdir\settings.json";
+
     private readonly object _gate = new();
 
     public SettingsService()
     {
-        DataDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "exdir");
+        DataDirectory = ResolveDataDirectory();
+        ConfigFilePath = Path.Combine(DataDirectory, ConfigFileName);
 
         Current = new AppSettings();
     }
@@ -57,7 +67,57 @@ public sealed class SettingsService : ISettingsService
 
     public string DataDirectory { get; }
 
-    public string SettingsFilePath => Path.Combine(DataDirectory, "settings.json");
+    public string ConfigFilePath { get; }
+
+    /// <summary>
+    /// 配置目录：默认放用户主目录下的 <c>.config\exdir</c>（配置文件跟着用户走，重装 / 清缓存不丢）；
+    /// 设了 <c>XDG_CONFIG_HOME</c>（且是绝对路径）时用它 —— 那个环境变量的语义就是“用户配置根目录”。
+    /// </summary>
+    private static string ResolveDataDirectory()
+    {
+        var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+        var root = !string.IsNullOrWhiteSpace(xdg) && Path.IsPathRooted(xdg)
+            ? xdg
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".config");
+
+        return Path.Combine(root, "exdir");
+    }
+
+    /// <summary>
+    /// 把旧位置的配置搬到新位置（老版本在 <c>%LOCALAPPDATA%\exdir\settings.json</c>）。
+    /// 只在“新位置还没有配置文件”时搬一次，搬完删掉旧文件；新位置已有配置时不动旧文件
+    /// （用户可能已经在新位置改过设置，不能被老配置覆盖）。
+    /// </summary>
+    private void MigrateLegacyConfig()
+    {
+        try
+        {
+            if (File.Exists(ConfigFilePath))
+            {
+                return;
+            }
+
+            var legacy = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                LegacyConfigRelativePath);
+
+            if (!File.Exists(legacy))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(DataDirectory);
+            File.Move(legacy, ConfigFilePath); // 跨卷也能搬（.NET 的 File.Move 带 MOVEFILE_COPY_ALLOWED）
+            Diagnostics.Log.Write($"配置迁移：{legacy} → {ConfigFilePath}");
+        }
+        catch (Exception ex)
+        {
+            // 迁移失败不阻塞启动：下面读不到新位置的配置就退回默认值，旧文件还在原处（用户手动搬也行）
+            Diagnostics.Log.Exception("迁移旧配置", ex);
+        }
+    }
 
     public void Load()
     {
@@ -65,13 +125,16 @@ public sealed class SettingsService : ISettingsService
         {
             try
             {
-                if (!File.Exists(SettingsFilePath))
+                // 先看要不要把老位置的配置搬过来（只在“新位置还没有配置”时才搬）
+                MigrateLegacyConfig();
+
+                if (!File.Exists(ConfigFilePath))
                 {
                     Current = new AppSettings();
                     return;
                 }
 
-                var json = File.ReadAllText(SettingsFilePath);
+                var json = File.ReadAllText(ConfigFilePath);
                 var loaded = JsonSerializer.Deserialize(json, SettingsTypeInfo) ?? new AppSettings();
                 Migrate(loaded);
                 Current = loaded;
@@ -80,7 +143,7 @@ public sealed class SettingsService : ISettingsService
             {
                 // 设置损坏时回退到默认值，不阻塞启动；但要在日志里留一笔，
                 // 否则“设置读不出来”会被当成“用户没改过”（裁剪/序列化出问题时就是这种表现）
-                Diagnostics.Log.Exception("读取 settings.json", ex);
+                Diagnostics.Log.Exception("读取 config.json", ex);
                 Current = new AppSettings();
             }
         }
@@ -136,14 +199,14 @@ public sealed class SettingsService : ISettingsService
                 var json = JsonSerializer.Serialize(Current, SettingsTypeInfo);
 
                 // 先写临时文件再替换，避免写入过程中崩溃导致设置丢失
-                var temp = SettingsFilePath + ".tmp";
+                var temp = ConfigFilePath + ".tmp";
                 File.WriteAllText(temp, json);
-                File.Move(temp, SettingsFilePath, overwrite: true);
+                File.Move(temp, ConfigFilePath, overwrite: true);
             }
             catch (Exception ex)
             {
                 // 保存失败不影响使用，但不能静默：设置没落盘/落盘不全是真会丢数据的
-                Diagnostics.Log.Exception("写入 settings.json", ex);
+                Diagnostics.Log.Exception("写入 config.json", ex);
             }
         }
     }

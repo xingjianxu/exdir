@@ -82,7 +82,7 @@ pwsh -NoProfile -File tools\test-pin-drag.ps1
 #    「标签页使用直角」拨一下就落盘并当场应用（exdir.log 里能看到 标签页=圆角/直角） /
 #    「主题」下拉框选浅色 / 深色 / 跟随系统都会落盘并当场应用，标题栏的太阳 / 月亮开关改的是同一个设置 /
 #    「启动」页的开机自启开关拨一下就真的在 HKCU 的 Run 项里写 / 删 `"<exe>" --preload` 自启项）
-#    全程走 UIA 模式，不需要真鼠标、不需要前台窗口；跑完还原 settings.json 与注册表原状
+#    全程走 UIA 模式，不需要真鼠标、不需要前台窗口；跑完还原 config.json 与注册表原状
 pwsh -NoProfile -File tools\test-settings.ps1
 
 # 7b) 设置窗口截图（左侧每个分类各一张，肉眼验证“左导航 + 右侧设置卡片”的布局）
@@ -94,7 +94,7 @@ pwsh -NoProfile -File tools\shot-settings.ps1
 pwsh -NoProfile -File tools\test-status-bar.ps1
 
 # 9) 真实外壳图标回归（每行都有图标 / 不同程序图标不同 / .lnk 带小箭头 / 同扩展名只提取一次 / 滚动后仍有图标）
-#    需要交互桌面；同样会把 exdir 置顶，跑完还原 settings.json
+#    需要交互桌面；同样会把 exdir 置顶，跑完还原 config.json
 pwsh -NoProfile -File tools\test-shell-icons.ps1
 
 # 10) 行内图标与文字是否垂直居中对齐（截图 + UIA 量“墨迹中心”，断言偏差在容差内）
@@ -103,33 +103,33 @@ pwsh -NoProfile -File tools\measure-row-align.ps1
 
 # 11) 系统右键菜单回归（文件行 / 列表空白处各自弹出 #32768 系统菜单；
 #     菜单项记进清单；关掉 verb:properties 后菜单里不再有「属性」）
-#     需要交互桌面（真鼠标右键 + 截图）；跑完还原 settings.json
+#     需要交互桌面（真鼠标右键 + 截图）；跑完还原 config.json
 pwsh -NoProfile -File tools\test-context-menu.ps1
 
 # 12) 文件列表选择回归（单击行 / Ctrl+A 全选 / 单击空白处取消选择 / 地址栏的 Ctrl+A 不抢）
-#     需要交互桌面（真鼠标点击 + SendKeys），跑之前桌面上不能有窗口盖住 exdir；跑完还原 settings.json
+#     需要交互桌面（真鼠标点击 + SendKeys），跑之前桌面上不能有窗口盖住 exdir；跑完还原 config.json
 pwsh -NoProfile -File tools\test-list-selection.ps1
 
 # 12b) 双击命中范围回归（整条行高亮区内任意位置双击都算：行内边距 / 名称文字右侧空白 /
 #      类型列与大小列的空白处 / 行首展开箭头只展开不进目录 / 列表下方空白处不导航）
-#      需要交互桌面（真鼠标双击），跑完还原 settings.json
+#      需要交互桌面（真鼠标双击），跑完还原 config.json
 pwsh -NoProfile -File tools\test-row-dblclick.ps1
 
 # 12c) 列宽拖动回归（拖每个列边界都真的改宽度 / 列头与数据行仍对齐 / 双击复位 /
 #      最右一列也拖得动 / 拖完落盘 / 列头排序按钮仍可用）
-#      需要交互桌面（真鼠标拖拽）；跑之前桌面上不能有窗口盖住 exdir；跑完还原 settings.json
+#      需要交互桌面（真鼠标拖拽）；跑之前桌面上不能有窗口盖住 exdir；跑完还原 config.json
 pwsh -NoProfile -File tools\test-column-resize.ps1
 
 # 12d) 托盘驻留回归（点系统关闭按钮 → 窗口隐藏、进程驻留、托盘图标进通知区域 /
 #      隐藏时再启动 exe → 第二个进程退出、已有窗口被唤回 / 菜单「隐藏到托盘」+ 点托盘图标唤回 /
 #      菜单「退出」→ 进程真的结束；需要交互桌面（真鼠标点关闭按钮与托盘图标）
-#      跑完还原 settings.json
+#      跑完还原 config.json
 pwsh -NoProfile -File tools\test-tray.ps1
 
 # 12e) 磁盘热插拔回归（用 subst 造一个“U 盘”盘符 + 给主窗口发一条 WM_DEVICECHANGE：
 #      侧边栏「此电脑」与工具条磁盘区都实时出现新盘、拔出后立刻消失，
 #      而且不重建整棵树（节点清单前后一致）、不动收藏夹）
-#      全程 UIA + SendMessage，不需要交互桌面；跑完删掉 subst 映射并还原 settings.json
+#      全程 UIA + SendMessage，不需要交互桌面；跑完删掉 subst 映射并还原 config.json
 pwsh -NoProfile -File tools\test-drive-hotplug.ps1
 
 # 12f) 复制 / 剪切 / 粘贴 / 删除 与“拖到目录里移动”回归（真鼠标 + 真键盘 + 真实剪贴板）
@@ -144,28 +144,43 @@ pwsh -NoProfile -File tools\test-drive-hotplug.ps1
 #         Shift+Delete 的同名文件则不在回收站里（永久删除）
 #      需要交互桌面；当前 shell 是管理员时脚本会自动改用 explorer.exe 以普通权限启动 exdir
 #      —— Windows 直接禁止提权进程参与拖放（见第 6 节第 21 条），否则用例 E 永远过不了
-#      跑完还原 settings.json 并删掉测试目录
+#      跑完还原 config.json 并删掉测试目录
 pwsh -NoProfile -File tools\test-file-ops.ps1
 
 # 12g) 侧边栏「此电脑」里的 Windows「网络位置」回归（自己造一个指向临时目录的假网络位置：
 #      启动时它出现在「此电脑」里、排在磁盘之后；点它导航到 target.lnk 的目标目录；
 #      收到 WM_DEVICECHANGE 刷新后它还在（差量刷新不误删）；删掉目录再刷新它就消失）
-#      全程 UIA + SendMessage，不需要交互桌面；跑完删掉假网络位置并还原 settings.json
+#      全程 UIA + SendMessage，不需要交互桌面；跑完删掉假网络位置并还原 config.json
 pwsh -NoProfile -File tools\test-network-locations.ps1
 
 # 12h) 命令行调用回归（exdir [path]：启动时带路径 → 新标签页打开；已在运行时把请求转发给已有实例；
 #      工作目录是程序/系统目录（双击 exe / 点任务栏图标）→ 只唤回窗口；
 #      path 是文件 → 打开所在目录并选中它；路径不存在 → 当前标签页显示「无法打开」）
-#      十个用例，全程 UIA，不需要交互桌面；跑完还原 settings.json 并删掉测试目录
+#      十个用例，全程 UIA，不需要交互桌面；跑完还原 config.json 并删掉测试目录
 pwsh -NoProfile -File tools\test-command-line.ps1
 
 # 12i) 开机自启 / 预热启动回归（`exdir --preload` 起来后进程驻留、没有可见主窗口、
 #      exdir.log 里记下「预热启动：不显示主窗口」与「预热完成：… 目录=… 图标=…」；
 #      预热进程在跑时再启动一次 exdir → 第二个进程瞬时退出、预热进程的窗口真的显示出来；
 #      带路径的请求照样能转发进来新开标签页）
-#      靠进程句柄 + exdir.log 断言，不需要交互桌面；不改注册表、跑完还原 settings.json
+#      靠进程句柄 + exdir.log 断言，不需要交互桌面；不改注册表、跑完还原 config.json
 #      （设置里拨开关到底写没写 HKCU 的 Run 项由 test-settings.ps1 用例 10 断言）
 pwsh -NoProfile -File tools\test-autostart.ps1
+
+# 12j) 压缩包只读浏览回归（双击压缩包 = 以目录形式进入）
+#      A) 交互部分：双击 .zip/.7z 进包 / 包根与包内子目录的「上一级」/ 点面包屑里压缩包那一段回包根 /
+#         包内目录行内展开 / 包内排序与图标 / 只读守卫（菜单里没有写操作、Ctrl+V 只弹提示、拖拽不启动）/
+#         双击包内文件解到临时目录 / .tar.gz 透明解开 / 会话恢复到包内 / 命令行进包
+#         —— 需要交互桌面（真鼠标双击与右键）。跑完还原 config.json 与测试目录
+pwsh -NoProfile -File tools\test-archive.ps1
+pwsh -NoProfile -File tools\test-archive.ps1 -Exe dist\win-x64\exdir.exe
+
+# 12k) 压缩包浏览的**服务级**冒烟（不需要交互桌面，没有交互桌面时靠它验证这一块）：
+#      7z.dll 加载与格式表 / 虚拟路径解析（拒绝 .. 与盘符冒号、嵌套压缩包）/ 枚举与隐式目录 /
+#      解到临时目录（含深层目录与链式 tar）/ 加密包（列表不要密码、取文件要密码）/ 损坏包 /
+#      索引缓存与 Invalidate / 取消 / CleanupTemp；直接把 app 的源文件编进来跑真实实现
+#      （放在 tools\archive-smoke 下，见它的 csproj）
+dotnet run -c Debug --project tools\archive-smoke
 
 # 13) 发布到 GitHub Release 页面：先跑 publish.ps1，再把 dist\win-x64 打成一个 zip
 #     上传（解压即用），说明里带变更清单 + SHA256 + build-info.txt 的内容；
@@ -222,11 +237,14 @@ pwsh -NoProfile -File tools\publish.ps1
 非打包 WinUI 应用崩溃时没有控制台输出，`Diagnostics/Log.cs` 会把异常写到：
 
 ```
-%LOCALAPPDATA%\exdir\exdir.log        # 崩溃 / 启动 / 窗口位置恢复记录
-%LOCALAPPDATA%\exdir\settings.json    # 全部设置与会话
+%LOCALAPPDATA%\exdir\exdir.log            # 崩溃 / 启动 / 窗口位置恢复记录（日志留在 LocalAppData）
+%USERPROFILE%\.config\exdir\config.json    # 全部设置与会话（设了 XDG_CONFIG_HOME 时以它为准）
 ```
 
 排查启动崩溃的**第一步永远是看 exdir.log**。
+
+配置在 2026-09 从 `%LOCALAPPDATA%\exdir\settings.json` 搬到了用户主目录（首次启动自动迁移一次，
+见第 6 节第 76 条）；日志仍在 `%LOCALAPPDATA%\exdir\exdir.log`。
 
 ### 验证循环（推荐）
 
@@ -248,7 +266,7 @@ exdir/
 ├─ App.xaml(.cs)              DI 容器、全局异常日志、创建主窗口
 ├─ MainWindow.xaml(.cs)       外壳：顶部菜单栏(TitleBar) / 工具条 / 侧边栏 / 1~2 个窗格 + 托盘图标（关闭即隐藏）
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
-├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / AppTheme / QuickCommand / CloudSyncState / ShellMenuItem / IconBitmap / 枚举（含 SettingsCategory）
+├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / AppTheme / QuickCommand / CloudSyncState / ShellMenuItem / IconBitmap / ArchivePath（压缩包虚拟路径） / 枚举（含 SettingsCategory）
 ├─ Services/                  I/O 与系统交互（接口 + 实现成对出现）
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
 │   ├─ IDriveService          DriveInfo 枚举
@@ -256,7 +274,9 @@ exdir/
 │   ├─ INetworkLocationService  Windows「网络位置」快捷方式（%APPDATA%\Microsoft\Windows\Network Shortcuts）枚举
 │   ├─ ICloudSyncService      云同步根判定 + 单个条目的同步状态（状态列）
 │   ├─ IShellIconService      系统外壳图标（SHGetFileInfo 提取 + 两级缓存，见第 4 节“名称列图标”）
-│   ├─ ISettingsService       settings.json 读写（含结构版本迁移）+ 源生成序列化上下文
+│   ├─ IArchiveService        压缩包只读浏览：虚拟路径解析 + 枚举 + 解出单个文件（实现走原生 7z.dll）
+│   ├─ IDialogService         需要当场问用户的东西（目前只有压缩包密码）
+│   ├─ ISettingsService       config.json 读写（含结构版本迁移）+ 源生成序列化上下文
 │   │                          （SettingsJsonContext：裁剪过的发布版不能靠反射式 JsonSerializer）
 │   ├─ IShellService          默认程序打开 / 终端 / 剪贴板文本 / 命令行
 │   ├─ IClipboardService      文件剪贴板（写/读 CF_HDROP + Preferred DropEffect，与资源管理器互通）
@@ -268,7 +288,8 @@ exdir/
 │                             ShellContextMenuInterop：IShellFolder / IContextMenu(2/3) + HMENU 操作；
 │                             VolumeChangeWatcher：WM_DEVICECHANGE 的卷插拔监听；
 │                             ClipboardInterop：CF_HDROP / Preferred DropEffect；
-│                             FileOperationInterop：SHFileOperation 的 FO_COPY / FO_MOVE）
+│                             FileOperationInterop：SHFileOperation 的 FO_COPY / FO_MOVE／FO_DELETE；
+│                             SevenZipInterop：7z.dll 的 IInArchive / 打开与解压回调）
 │                             ShellLinkInterop：.lnk 快捷方式目标解析（IShellLinkW + IPersistFile）
 ├─ ViewModels/
 │   ├─ MainViewModel          磁盘、固定目录、快捷命令、侧边栏、两个窗格、全局命令
@@ -291,14 +312,16 @@ exdir/
 │                             SettingsView（设置窗口正文：NavigationView 左导航 + Windows 11 设置卡片）
 ├─ Controls/PaneSplitter.cs   自研分隔条（WinUI 没有 GridSplitter）
 │           ColumnResizeHandle.cs 列头右边界拖动把手（调列宽 / 双击复位）
-├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / ThemeHelper(三态主题 ⇄ ElementTheme) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / CommandLine(命令行 `exdir [path]` 的解析 + `--preload` 预热启动) / AutoStart(开机自启的 HKCU Run 项) / SingleInstance(托盘驻留的单实例闸门 + 命令行转发的命名管道)
+├─ Helpers/                   ColumnLayout(列宽 requested/rendered + 自适应 + 行高) / ThemeHelper(三态主题 ⇄ ElementTheme) / CloudSyncStateHelper(状态字形+文案) / DpiHelper / FileTypeHelper(类型名 + 图标字形兜底) / IconImageHelper(图标像素 → ImageSource + 共享缓存) / SizeFormatter / DragDropHelper(内部拖放格式) / CommandLine(命令行 `exdir [path]` 的解析 + `--preload` 预热启动) / AutoStart(开机自启的 HKCU Run 项) / SingleInstance(托盘驻留的单实例闸门 + 命令行转发的命名管道) / ArchiveFormats(压缩包扩展名清单 + 别名 + tar.gz 的命名规则)
 ├─ Converters/CommonConverters.cs
 ├─ Diagnostics/Log.cs         运行日志（写的是一个可供**多个 exdir 进程**同时追加的文件，见第 6 节第 72 条）
 ├─ icon.svg                   程序图标的唯一源文件（改图标就改它，再跑 tools\make-icon.ps1）
 ├─ Assets/                    图标等（exdir.ico 与各尺寸徽标 PNG 都由 tools\make-icon.ps1 从 icon.svg 生成）
+├─ native/                    随程序分发的原生组件（x64\7z.dll + LICENSE-7z.txt + 来源/升级说明 README.md）
 └─ tools/                     capture / inspect-ui / shot-settings / test-pin-drag / test-settings / test-status-bar / test-shell-icons /
                               test-context-menu / test-list-selection / test-row-dblclick / test-column-resize / test-tray / test-drive-hotplug /
-                              test-file-ops / test-network-locations / test-command-line / test-autostart / measure-row-align / publish / release / make-icon 脚本
+                              test-file-ops / test-network-locations / test-command-line / test-autostart / test-archive / measure-row-align /
+                              publish / release / make-icon 脚本，以及 archive-smoke（不需要交互桌面的服务级冒烟工程）
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -487,7 +510,7 @@ exdir/
   最左/最右列各再往外铺 6 DIP，高亮范围与数据行的行高亮一致（窗格边缘到边缘）；
 * **行高可配**（2026-09，默认 28 DIP）：设置窗口「文件列表 → 行高」一个滑块（20~48 DIP、步进 2）。
   * 值存在 `AppSettings.RowHeight`（默认 `ColumnLayout.DefaultRowHeight = 28`，比原来的固定 24 更舒展），
-    真实上下限/夹取在 `ColumnLayout.NormalizeRowHeight`（settings.json 被手改过也不会出界面外）；
+    真实上下限/夹取在 `ColumnLayout.NormalizeRowHeight`（config.json 被手改过也不会出界面外）；
   * 运行时值是**每个标签页一份**的 `ColumnLayout.RowHeight`（行模板本来就绑着这个共享对象，
     见上面“列宽”那条），行模板写 `Height="{x:Bind Columns.RowHeight, Mode=OneWay}"`；
     所以只需要在 `MainViewModel.ApplySettings` 里给每个标签页赋一次值，几千行会一起变；
@@ -569,7 +592,7 @@ exdir/
   * 落到其它树节点上、或拖工具条固定目录按钮（排序格式）经过侧边栏时一律 `None`，不会误收藏。
   * 右键收藏项 → 「取消收藏」（`SidebarViewModel.UnpinRequested` → `MainViewModel.UnpinFolderByPath`）；
     工具条被隐藏时这是唯一的移除入口。
-  * 回归：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `settings.json` 一致）与用例 5（拖到收藏夹）。
+  * 回归：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `config.json` 一致）与用例 5（拖到收藏夹）。
 * **磁盘（U 盘 / 光驱 / 网络盘）插拔是实时反映的**（2026-09）：`Services/DeviceChangeService`
   （实现 `IDeviceChangeService`，内部是 `Services/Native/VolumeChangeWatcher`）把主窗口子类化，
   接系统**广播给所有顶层窗口**的 `WM_DEVICECHANGE`（卷到达 / 移除，外加设备树变化
@@ -698,7 +721,7 @@ exdir/
   `Helpers/SingleInstance` 用一个命名内核事件（`Local\exdir.activate`）同时做两件事——
   `EventWaitHandle` 的 `createdNew` 就是“我是不是第一个实例”，而第二个实例 `Set()` 它就等于
   “把已有窗口叫出来”。这一步在 `Application.Start` **之前**，所以第二次双击 exe 只跑几十毫秒
-  （不会白初始化一遍 WinUI，也不会多出第二个托盘图标/第二份会话互相覆盖 settings.json）。
+  （不会白初始化一遍 WinUI，也不会多出第二个托盘图标/第二份会话互相覆盖 config.json）。
 * UIA 里能看到托盘图标的方法与不要踩的坑见 `tools/test-tray.ps1` 的注释；回归：
   `pwsh -NoProfile -File tools\test-tray.ps1`（4 个用例 17 条断言，真鼠标点关闭按钮与托盘图标）。
 
@@ -818,6 +841,48 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     否则按松开时的光标位置自己把这次移动做完（日志里的 `拖放兜底：…`）。
   * 回归：`tools/test-file-ops.ps1`（9 个用例；需要交互桌面，且当前 shell 是管理员时会改用
     `explorer.exe` 以普通权限启动 exdir —— 提权进程根本不能参与拖放，见第 6 节第 21 条）。
+
+### 压缩包只读浏览（双击压缩包 = 以目录形式进入，2026-09）
+
+双击一个受支持的压缩包不再交给外部程序，而是在**当前标签页把它当目录导航进去**：
+压缩包根是一层目录，包内目录可以继续下钻 / 行内展开，面包屑 / 前进后退 / 排序 / 状态栏都照常，
+导航条右侧多一个「只读」徽标（`AutomationProperties.Name="只读压缩包"`）。
+
+* **虚拟路径**：一个位置 = 「压缩包文件全路径 + `\` + 包内路径」（`D:\dl\foo.tar.gz\sub\a.txt`）。
+  它就用现有的路径字符串，所以 `DirectoryInfo.Parent`、面包屑切分、会话落盘全都不用改；
+  解析在 `ArchiveService.TryParse`（从左往右找第一个“存在且扩展名在清单里”的前缀，所以嵌套压缩包的
+  路径仍然挂在最外层那个文件上）。包内路径一律用 `\`、无首尾分隔符，`.` 段跳过、`..` / 冒号 / 控制字符直接拒绝。
+* **认哪些扩展名**：`Helpers/ArchiveFormats` 里的核心清单（zip/zipx/7z/rar/tar/gz/tgz/bz2/tbz/tbz2/xz/txz/
+  zst/tzst/lzma/tlz/lz/cpio/ar/deb）∩ 当前 7z.dll 真的认识的格式（`IsArchiveFile` 同时看这两边，
+  所以升级 7z.dll 后新增的格式自动就能用，而 `IsArchiveFile` 为假时双击就退回默认程序）。
+  加一种格式只改那个清单；`.docx/.jar/.iso/.cab` 这类**故意不在清单里**。
+* **引擎**：随包分发的 **原生 7z.dll**（`native/x64/7z.dll`，来源/许可/升级见 `native/README.md`），
+  互操作层是 `Services/Native/SevenZipInterop.cs`（只读的 `IInArchive` + 打开/解压回调）；
+  详见第 6 节第 77～83 条的坑。dll 缺失 / 非 x64 时压缩包浏览整体关闭（双击退回默认程序，日志留一行）。
+* **索引缓存**：`ArchiveService` 按「路径 + 大小 + 修改时间」缓存每个压缩包的条目表（上限 32 个），
+  包内目录直接从它切出来，所以来回导航不会反复解压；**F5** 会先 `Invalidate` 再重新读（外部改过包就能刷新到）；
+  关闭时会删掉链式解开的临时 tar。索引构建、解压都在后台线程（`Task.Run`）。
+* **`.tar.gz` / `.tgz` 透明解开一层**：单文件压缩器里只有一个条目、且派生出来的内层名以 `.tar` 结尾时，
+  把中间那个 tar 解到 `%LOCALAPPDATA%\exdir\archive-cache\tar\<hash>.tar` 再用 tar 处理器打开，
+  于是双击一次就能看到 tar 里的东西（内层 tar > 2 GB 时降级为显示 `xxx.tar` 一行）。
+  单文件压缩器（gzip/xz…）的 `kpidPath` 是空的，内层名由压缩包名派生（`foo.tar.gz` → `foo.tar`）。
+* **只读**：包内以下入口全部禁用并提示「压缩包内不支持该操作（只读浏览）」：
+  粘贴 / 删除（Del、Shift+Del）/ 新建文件夹 / 剪切 / 复制 / 拖拽（拖入与拖出都不启动）/ 在此处打开终端 /
+  在资源管理器中显示 / 属性；内置右键菜单在包内换成“只读版”（行：打开 / 复制路径；背景：刷新 / 全选 / 复制当前路径），
+  而且包内**强制用内置菜单**（系统外壳菜单处理不了虚拟路径，即使用户在设置里选了“系统菜单”）。
+  守卫写在 `FolderTabViewModel`（`RefuseInArchive()`）+ `DetailsView`（`DragStarting` / `TryResolveDrop`），
+  键盘入口（Ctrl+C/X/V、Delete）与右键菜单入口共用同一套。
+* **包内文件双击**：解到 `archive-cache\open\<hash>-<压缩包名>\<包内相对路径>`（同名且大小一致就复用），
+  再用默认程序打开；日志留一行 `打开压缩包内文件：… → …`。
+* **加密包**：打开或取文件时 7z.dll 要密码就抛 `ArchivePasswordRequiredException`，
+  `FolderTabViewModel` 去问 `IDialogService.RequestPasswordAsync`（最多 3 次，密码只存本次运行的内存），
+  取消或连续失败则显示「需要密码：<名字>」。
+* **会话与命令行**：包内目录会随会话落盘并在重启后恢复（`MainViewModel.RestorePaneAsync` 改用
+  `ResolveDirectoryAsync`，所以虚拟路径也算“存在”）；`exdir <压缩包>` 在新标签页进包，
+  `exdir <压缩包>\<包内目录>` 直接进包内目录。
+* **临时文件清理**：启动与退出各调一次 `ArchiveService.CleanupTemp()` —— 中间 tar 直接删，
+  给默认程序打开的那些副本只删**一天前**的（用户可能正拿记事本/播放器开着它）。
+* 回归：`tools/test-archive.ps1`（真鼠标，需交互桌面）+ `tools/archive-smoke`（服务级，不需交互桌面）。
 
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
@@ -945,12 +1010,21 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   （用 `SetAndNotify`，改动会发 `Changed`）→ `SettingsView.xaml` 对应分类页里的 `SettingsCard` →
   `MainViewModel.ApplySettings` 应用 → `tools/test-settings.ps1` 的 `$KeyMap` 与 `$CategoryMap` →
   需要时再往 `SettingsCategory` 加分类。
-  落盘与应用只在 `MainViewModel.ApplySettings` 一处发生（设置窗口自己不写 `settings.json`）。
+  落盘与应用只在 `MainViewModel.ApplySettings` 一处发生（设置窗口自己不写 `config.json`）。
 * **凡是会被持久化（或跨 WinRT ABI）的对象，都不能只靠反射**：交付版是裁剪过的。
-  写进 `settings.json` 的类型要在 `Services/SettingsJsonContext.cs` 里加一行 `[JsonSerializable]`，
+  写进 `config.json` 的类型要在 `Services/SettingsJsonContext.cs` 里加一行 `[JsonSerializable]`，
   否则序列化会在运行时静默失败（见“踩过的坑”第 66 条）；
   实现 WinRT 接口的自定义控件要 `partial`（CsWinRT 源生成器才能把 vtable 生成出来）。
   这类问题只在**裁剪过的 dist 产物**里出现，改完记得用 `dist\win-x64\exdir.exe` 跑一遍回归。
+* **托管类要实现 COM 接口（CCW）时必须 `public` + `[ComVisible(true)]`**，接口本身也要
+  `[ComVisible(true)]` + `[Guid]` + `[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]`
+  （见 `Services/Native/SevenZipInterop.cs`）：`ComWrappers` 建 CCW 时会检查“类型对 COM 是否可见”，
+  `internal` 类型会被拒（表现为回调永远收不到，或直接 `ArgumentException: The specified type must be visible from COM`）。
+  托管回调里的 `out` 参数一律写成 `IntPtr` 自己判空再写值：native 传 NULL 时，用 `out uint` 声明会直接 NRE。
+* **随包分发的原生组件放 `native/`**（目前只有 `x64/7z.dll`，见 `native/README.md`），
+  用 `Content` + `Link` 放到 exe 旁边、不静态链接也不用 NuGet 包装包；
+  `tools/publish.ps1` 会校验它真的在发布目录里。`tools/` 下有自己的工程（`archive-smoke`），
+  所以 exdir.csproj 里有 `Compile Remove="tools\**"` —— 往 tools 下放 .cs 不会编进主工程。
 * **数据集合整体替换而非增量 Add**：`FolderTabViewModel.Items` 每次导航/排序都新建
   `ObservableCollection` 再赋值，避免逐条 Add 造成 O(n²) 的 UI 开销。
 * **中文注释**、中文 UI 文案。注释解释“为什么”，不要复述代码。
@@ -1172,7 +1246,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     另：`UIElement.ContextRequested` 在有些控件上压根不冒泡（跟 `ContextFlyout` 有关），
     `RightTapped` 更可靠；两个都挂上、拿时间戳防一下重复（菜单是模态弹出的，
     第一个处理完用户关掉菜单后第二个才会被调用）。
-41. **窗口位置/尺寸存坏了会让整个界面“看起来没做出来”**：曾经 settings.json 里被写下
+41. **窗口位置/尺寸存坏了会让整个界面“看起来没做出来”**：曾经 config.json 里被写下
     `WindowWidth=157 / WindowHeight=25 / WindowX=-16000 / WindowY=-16000`，
     下次启动窗口就只有 360×240 DIP（侧边栏就占掉一大半），列表里几乎什么都点不到，
     很容易误判成“右键菜单没生效 / 控件找不到”。两个原因都在 `MainWindow`：
@@ -1457,8 +1531,8 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     * 不指望编译器帮忙把关：裁剪只在 publish 阶段发生，**改完必须重新 `tools\publish.ps1` 再跑一遍相关回归**
       （`tools\test-*.ps1 -Exe dist\win-x64\exdir.exe`，默认的 `-Exe` 是 Debug 未裁剪版，测不出问题）。
 
-66. **裁剪过的发布版里，反射式 `JsonSerializer` 会静默失改 —— settings.json 读写得走源生成**：
-    症状极具迷惑性：设置窗口里拨开关**界面当场生效**，但 `settings.json` 没变，重开又变回去；
+66. **裁剪过的发布版里，反射式 `JsonSerializer` 会静默失改 —— config.json 读写得走源生成**：
+    症状极具迷惑性：设置窗口里拨开关**界面当场生效**，但 `config.json` 没变，重开又变回去；
     而 `SettingsService` 为了保证“设置坏了也不阻塞启动”是把异常吞掉的，所以**一行日志都没有**。
     实测裁剪后 `tools\test-settings.ps1` 挂 9 条断言，全是“没落盘”。
     修法：`Services/SettingsJsonContext.cs`（`[JsonSerializable(typeof(AppSettings))]`）+
@@ -1466,7 +1540,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     `Deserialize(json, JsonTypeInfo)` **而不是泛型重载**（泛型重载的“要求未裁剪代码”标记与
     TypeInfoResolver 无关，IL2026/IL3050 会一直在）。
     另：`Load()` / `Save()` 的 catch 里现在会 `Log.Exception` —— 就是为了这种“静默失败”能留下线索。
-    **以后新增会写进 settings.json 的类型，要往那个 context 里加 `[JsonSerializable]`。**
+    **以后新增会写进 config.json 的类型，要往那个 context 里加 `[JsonSerializable]`。**
 
 67. **WinAppSDK 的两种“精简”各有官方钩子，不要用事后删文件代替**：
     * **语言资源（85 个 `*.mui` 目录）**：用 `MicrosoftWindowsAppSDKFilesExcluded`
@@ -1498,7 +1572,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     教训：**浅色主题下“某块区域黑得不对劲”先怀疑“半透明控件背后没有背板”**，
     而不是去翻主题资源字典（主题资源其实都是对的，`ThemeDictionaries` 里 Light 一套也生效了）。
     另：本机系统就是深色（`AppsUseLightTheme=0`），所以“浅色 exdir + 深色系统”这种组合必须特地
-    把 `settings.json` 的 `Theme` 改成 1（或点标题栏开关）才能复现 —— 验证换肤时两套主题都要看。
+    把 `config.json` 的 `Theme` 改成 1（或点标题栏开关）才能复现 —— 验证换肤时两套主题都要看。
 
 69. **PowerShell 7.4+ 把弯引号当字符串定界符：普通双引号字符串里不能出现弯引号**：
     写 `tools\release.ps1` 时把提示文案写成 `发布出去的“源码提交”会对不上`，脚本直接语法错误，
@@ -1581,6 +1655,72 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     * 验证只能看**句柄 + 日志**：`Process.MainWindowHandle`（它只认可见的顶层窗口）
       可以断言“预热时没有窗口”，`exdir.log` 里的「预热启动：…」「预热完成：… 目录=… 图标=…」
       可以断言“真的做了预热、确实先没有窗口”——见 `tools/test-autostart.ps1`。
+
+76. **配置文件从 `%LOCALAPPDATA%\exdir\settings.json` 搬到了 `~/.config/exdir/config.json`**（2026-09）：
+    老位置在 LocalAppData 里，“清缓存 / 重装 / 换机器”很容易把它一起清掉，而设置（会话、窗口位置、
+    列宽、固定目录、开机自启…）是用户资产，所以按 XDG 习惯放到用户主目录的 `.config\exdir`。
+    * **目录解析**（`SettingsService.ResolveDataDirectory`）：设了 `XDG_CONFIG_HOME` 且它是**绝对路径**时
+      用它，否则回退 `%USERPROFILE%\.config`，最后拼上 `exdir`。路径只在这一个地方算，
+      别处（包括回归脚本）不要硬编码 LocalAppData。
+    * **首次启动自动搬一次**（`SettingsService.MigrateLegacyConfig`，在 `Load()` 里读配置之前调用）：
+      只在“新位置没有配置、旧位置有”时 `File.Move` 过去（同卷是改名，跨卷也能搬），搬完旧文件就没了；
+      新位置已有配置时**不动旧文件** —— 用户可能已经在新位置改过设置，不能被老配置覆盖。
+      迁移失败只记一行日志、不阻塞启动（旧文件还在原处，用户手动搬也行）。
+    * 文件名从 `settings.json` 改成 `config.json`，日志 `exdir.log` **不跟着搬**（诊断产物留在
+      `%LOCALAPPDATA%\exdir`）；“关于”对话框展示的路径改为读 `ISettingsService.ConfigFilePath`。
+    * 15 个回归脚本里的 `$settingsPath` 也要同步：`XDG_CONFIG_HOME` 优先、回退 `%USERPROFILE%\.config`，
+      再 `Join-Path $configRoot 'exdir\config.json'`（不再有 `$env:LOCALAPPDATA 'exdir\settings.json'`）。
+
+77. **7-Zip 的接口 IID 换过布局，而且格式 CLSID 的 `kClassID` 不是字符串**：
+    `CreateObject` 全程报 `E_NOINTERFACE`（0x80004002），让人以为“clsid 不对”。实际是两件事：
+    * 接口 IID 在现在的 7-Zip 里是 `{23170F69-40C1-278A-0000-000G 00 SS 0000}`
+      （G = 接口组，archive 组是 6；SS = 组内编号，`IInArchive` = 0x60），
+      而网上大量老例子（包括早期的 SevenZipSharp）用的是 `...-1000-000110060000` —— 早就对不上了。
+      `IArchiveOpenCallback` = `-0000-000600100000`、`IArchiveExtractCallback` = `-0000-000600200000`、
+      `ISequentialInStream` = `-0000-000300010000`、`ISequentialOutStream` = `-0000-000300020000`、
+      `IInStream` = `-0000-000300030000`、`IOutStream` = `-0000-000300040000`、`IProgress` = `-0000-000000050000`、
+      `ICryptoGetTextPassword` = `-0000-000500100000`、`ICryptoGetTextPassword2` = `-0000-000500110000`。
+      权威定义在 7-Zip 源码的 `CPP/7zip/IDecl.h` / `IArchive.h` / `IStream.h` / `IPassword.h`（宏 `Z7_DECL_IFACE_7ZIP_SUB`）。
+    * **`GetHandlerProperty2(i, kClassID)` 返回的是一个「BSTR 里装 16 字节 GUID 内存」的怪东西**
+      （7-Zip 自己的 `SetPropGUID` 就是 `SysAllocStringByteLen((char*)&guid, 16)`），
+      按 BSTR 读会得到一串乱码 UTF-16（看着像 `ཀྵ⌗䃁➊…`）。要把指针指向的 16 字节 `Marshal.Copy` 出来交给 `new Guid(byte[])`。
+    这两个坑都不是编译/运行时报错，而是“格式表解析出一串鬼画符”和“CreateObject 永远 E_NOINTERFACE”。
+78. **7-Zip 会拿 NULL 调回调的 `out` 指针**：`IInStream::Seek(offset, origin, newPosition)` 在它内部只是
+    “顺便问问位置”，`newPosition` 可以是 NULL（`IStream.h` 里也写了 Read/Write 的 `processedSize` 允许为 NULL）。
+    托管实现里如果把这些参数声明成 `out uint` / `out ulong`，封送层会去解引用空指针 —— 报的是
+    `NullReferenceException`，而它变成的 HRESULT 是 `0x80004003`（E_POINTER）。症状极具欺骗性：
+    7z.dll 先调我们的 `GetStream` / `PrepareOperation` 都正常，紧接着 `Extract` 就返回 E_POINTER。
+    **修法：托管回调里的输出参数全部写成 `IntPtr`，自己判 `IntPtr.Zero` 再用 `Marshal.WriteInt32/64` 写。**
+    排查手段：给 callback 加临时 trace，或挂 `AppDomain.FirstChanceException` 把第一次抛的异常栈打出来 ——
+    这里就是靠它看到栈帧停在 `ManagedInStream.Seek` 上的。
+79. **托管类实现 COM 接口（CCW）必须 `public` + `[ComVisible(true)]`**，接口同样要 `[ComVisible(true)]` +
+    `[Guid]` + `[InterfaceType(InterfaceIsIUnknown)]`：`internal` 类型会被 `ComWrappers` 拒掉，
+    报 `ArgumentException: The specified type must be visible from COM. (Parameter 't')`；
+    而如果接口写了 `[ComImport]` 却让托管类去实现，CCW 虽然能建出来，但在
+    `Marshal.GetComInterfaceForObject` 这条路上会直接 NRE（表现为“native 调回来就是 0x80004003”）。
+    现在的做法：接口一律不写 `[ComImport]`（只有我们**调用**的 `IInArchive` 保留），实现类全部 `public sealed partial`。
+80. **单文件压缩器（gzip/xz/bzip2/zstd/lzma/lz）根本不给条目名**：`kpidPath` 是空串（甚至 `VT_EMPTY`），
+    所以 `GetEntry` 不能把“空路径”当成无效条目返回 null（否则 `.tar.gz` 整个列表是空的）。
+    内层文件名要按压缩包名派生（`foo.tar.gz` → `foo.tar`、`foo.tgz` → `foo.tar`、`log.gz` → `log`），
+    而且只在“整包真的只有一个条目”时才派生（免得包里真有坏条目时凭空多出一行）。
+81. **`tar -C dir .` 造的包，条目名带 `./` 前缀**（`./sub/inner.txt`）。
+    如果虚拟路径规范化把 `.` 段当成非法段拒掉，整个 tar 会一行都列不出来（表现是“`.tar.gz` 点进去是空的”）。
+    `ArchivePath.NormalizeInner` 要**跳过** `.` 段（但继续拒绝 `..`），顺便把 `/` 统一成 `\`、去掉重复分隔符。
+82. **加密 zip：列表不要密码，取文件才要；而且解码器问的是旧版接口**：
+    ZipCrypto（以及 AES）的条目名存在明文中央目录里，所以 `.zip` 不加密码也能列出条目名；
+    真正读数据时 7-Zip 的 zip 解码器是对**Extract 回调** QI `IID_ICryptoGetTextPassword`（v1，只给一个 BSTR），
+    只实现 `ICryptoGetTextPassword2` 会一直报“密码错误”（`NOperationResult::kWrongPassword` = 9）。
+    所以两个都实现（`SevenZipInterop.ManagedExtractCallback`），并且没有密码时返回 `E_ABORT` + 记一个
+    `AskedForPassword` 标志，才能把“需要密码”和“用户取消”分开（否则只能拿到一个 0x80004003 / 9）。
+83. **压缩包的写路径要单独守**：`DirectoryExists` / `NormalizeDirectoryPath` 仍然只认真实路径，
+    所以粘贴 / 删除 / 新建 / 拖放天然会被拒 —— 但有一个例外：`NormalizeDirectoryPath("D:\a\b.zip")`
+    会返回它的**父目录**（因为那是一个真实存在的文件），于是“在包根上粘贴”会变成“粘到压缩包所在的目录里”。
+    所以所有写操作的入口都先在 `FolderTabViewModel.RefuseInArchive()` 里判一下 `IsInsideArchive`，
+    不能只靠路径规整；视图侧（`DetailsView`）另外把拖拽手势与右键菜单也挡掉。
+84. **压缩包临时目录的清理要“看人下菜”**：`%LOCALAPPDATA%\exdir\archive-cache` 里有两类东西 ——
+    链式解开的中间 tar（只有 exdir 在用，随时可删）与“给默认程序打开”的副本（用户可能正拿记事本/播放器开着）。
+    所以 `CleanupTemp()` 只直接删前者，后者只删**一天前**的（启动与退出各扫一次）；
+    一口气 `Directory.Delete(root, true)` 会让别人正在编辑的文件突然消失（删不掉时也只是静默失败，反而更难查）。
 
 ## 7. 非打包模式下的 API 限制
 
@@ -1675,6 +1815,16 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   `--preload` 的请求载荷是约定值 `@preload`，已有实例收到它**不会**弹窗口（空串才是“只唤窗口”）。
   回归：`tools/test-autostart.ps1`（3 个用例 18 条断言，靠进程句柄 + 日志，不需要交互桌面）
   与 `tools/test-settings.ps1` 用例 10（拨开关真的写 / 删 Run 项，用完还原注册表原状）。
+* **双击压缩包 = 以目录形式进入（只读浏览）**（2026-09，见第 4 节“压缩包只读浏览”与第 6 节第 77～83 条）：
+  `zip/zipx/7z/rar/tar/gz/tgz/bz2/tbz/tbz2/xz/txz/zst/tzst/lzma/tlz/lz/cpio/ar/deb` 双击后
+  在**当前标签页**当成目录导航进去（包内目录可继续下钻与行内展开，面包屑/前进后退/排序/状态栏照常，
+  导航条右侧有「只读」徽标）；包内一律只读（粘贴/删除/新建/剪切/复制/拖入拖出/终端/属性/“在资源管理器中显示”
+  全部禁用，右键菜单换成只读版且强制用内置菜单）；包内文件双击会解到 `%LOCALAPPDATA%\exdir\archive-cache`
+  再用默认程序打开；`.tar.gz`/`.tgz` 透明解开中间那层 tar；加密包会弹密码框（最多 3 次，密码不落盘）；
+  `exdir <压缩包>` 与 `exdir <压缩包>\<包内目录>` 都能进；F5 会丢掉索引缓存重读；
+  引擎是随包分发的原生 `7z.dll`（x64 1.9 MB，非 x64 / dll 缺失时这一块整体关闭并退回默认程序）。
+  回归：`tools/test-archive.ps1`（12 个用例，真鼠标双击 + 右键，需交互桌面）
+  与 `tools/archive-smoke`（服务级掱烟，不需要交互桌面；已验证 Debug 与裁剪过的自包含产物都 0 失败）。
 * 非打包工程改造、单实例主窗口、Mica 背景、自定义标题栏、图标与窗口位置持久化；
 * 磁盘条、固定目录、快捷菜单（按需求留空，仅设置驱动）、侧边栏文件夹树（懒加载）；
 * 1/2 窗格 + 自研分隔条、TabView 多标签；
@@ -1743,11 +1893,11 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     顺带修掉两个拦路的既有 bug：`TabView` 被 WinUI 默认样式压成 `VerticalAlignment=Top`
     （文件列表只占“内容那么高”）与窗口位置/尺寸存坏（见第 6 节第 39/41 条）；
 * **工具条“固定目录”支持拖放固定**（2026-09）：文件列表 / 侧边栏树里的目录可以直接拖到工具条右侧的
-  固定目录区（拖拽时强调色高亮 + “固定到工具条”提示，松手即写 `settings.json`），
+  固定目录区（拖拽时强调色高亮 + “固定到工具条”提示，松手即写 `config.json`），
   右键固定目录按钮可“取消固定”；最多固定 12 个（`MainViewModel.MaxPinnedFolders`）；
   验证脚本 `tools/test-pin-drag.ps1`（列表 → 固定、侧边栏 → 固定、右键 → 取消固定 三个用例）；
 * **工具条固定目录支持拖拽排序**（2026-09）：按住固定目录按钮横向拖到兄弟按钮上就换位
-  （拖动时按钮之间画 2px 强调色插入位置提示条 + “调整固定目录顺序”提示，松手即写 `settings.json`）；
+  （拖动时按钮之间画 2px 强调色插入位置提示条 + “调整固定目录顺序”提示，松手即写 `config.json`）；
   实现见第 4 节“拖拽排序”与第 6 节第 25 条（`Button` 的 `CanDrag` 在 WinUI 3 里无效，
   要在 `PinnedItemsHost` 上 `AddHandler(..., handledEventsToo: true)` + `StartDragAsync`），
   排序落点走 `MainViewModel.MovePinnedFolder`；`tools/test-pin-drag.ps1` 第 4 个用例验证

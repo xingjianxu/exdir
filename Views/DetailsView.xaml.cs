@@ -393,6 +393,13 @@ public sealed partial class DetailsView : UserControl
     /// </summary>
     private void DetailsRoot_DragStarting(UIElement sender, DragStartingEventArgs args)
     {
+        // 压缩包里的条目没有真实路径，拖出去只会得到一个空数据包，直接从源头取消
+        if (ViewModel?.IsInsideArchive == true)
+        {
+            args.Cancel = true;
+            return;
+        }
+
         _dragStarted = true;
         _internalDropHandled = false;
 
@@ -889,7 +896,7 @@ public sealed partial class DetailsView : UserControl
             EntryList.SelectedItem = item;
         }
 
-        if (viewModel.UseBuiltInContextMenu)
+        if (viewModel.UseBuiltInContextMenu || viewModel.IsInsideArchive)
         {
             ShowBuiltInContextMenu(viewModel, item is not null, position);
         }
@@ -940,6 +947,29 @@ public sealed partial class DetailsView : UserControl
         }
 
         var flyout = new MenuFlyout();
+
+        // 压缩包里是**只读**的：只留看得懂、做得了的那几项，写操作的入口根本不给
+        //（Ctrl+C/X/V/Delete 这些键盘入口由 ViewModel 里的守卫挡，见 FolderTabViewModel.RefuseInArchive）
+        if (viewModel.IsInsideArchive)
+        {
+            if (onRow)
+            {
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+                flyout.Items.Add(new MenuFlyoutSeparator());
+                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
+            }
+            else
+            {
+                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
+                AddContextMenuAction(flyout, "全选", SelectAllRows);
+                flyout.Items.Add(new MenuFlyoutSeparator());
+                AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand);
+            }
+
+            Log.Write($"内置右键菜单：压缩包{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项（只读）");
+            flyout.ShowAt(DetailsRoot, new FlyoutShowOptions { Position = position });
+            return;
+        }
 
         if (onRow)
         {
@@ -1143,6 +1173,7 @@ public sealed partial class DetailsView : UserControl
         move = false;
 
         if (string.IsNullOrEmpty(viewModel.CurrentPath)
+            || viewModel.IsInsideArchive
             || e.DataView.Contains(DragDropHelper.PinnedReorderFormat))
         {
             return false;

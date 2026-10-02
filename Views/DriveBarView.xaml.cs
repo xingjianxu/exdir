@@ -68,7 +68,7 @@ public sealed partial class DriveBarView : UserControl
         }
     }
 
-    /// <summary>右键固定目录按钮 → 取消固定（否则只能靠手改 settings.json 才能去掉一个）。</summary>
+    /// <summary>右键固定目录按钮 → 取消固定（否则只能靠手改 config.json 才能去掉一个）。</summary>
     private void PinnedButton_ContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
         if (sender is not FrameworkElement { DataContext: PinnedFolderViewModel folder } element

@@ -83,6 +83,13 @@ foreach ($xaml in $sources) {
 if (-not (Test-Path (Join-Path $stageDir 'Assets\exdir.ico'))) {
     throw "发布目录缺少 Assets\exdir.ico（托盘图标与窗口图标都靠它）"
 }
+# 压缩包只读浏览靠随包分发的原生 7z.dll（见 native/README.md）：它不在 .NET 的发布文件列表里，
+# 靠 csproj 里的 Content + Link 带出来，这里守一道，免得哪天改成别的写法后 dist 里悄悄没了它
+foreach ($item in '7z.dll', 'LICENSE-7z.txt') {
+    if (-not (Test-Path (Join-Path $stageDir $item))) {
+        throw "发布目录缺少 $item（压缩包浏览 / 许可声明要用它）"
+    }
+}
 # 语言资源必须只剩中文/英文（见 exdir.csproj 的 ExcludeUnneededWinAppSdkLanguageResources）
 $langDirs = @(Get-ChildItem $stageDir -Directory |
     Where-Object { $_.Name -match '^[a-z]{2,3}(-[A-Za-z]{2,4})+$' })

@@ -101,7 +101,7 @@ public sealed class SettingsViewModel : ObservableObject
         // 主题下拉框：0 = 跟随系统 / 1 = 浅色 / 2 = 深色（见 ThemeHelper，与 SettingsView.xaml 里的项顺序一致）
         _themeIndex = ThemeHelper.ToIndex(settings.Theme);
 
-        // 行高：settings.json 可能被手改过，夹进可用区间再填给滑条
+        // 行高：config.json 可能被手改过，夹进可用区间再填给滑条
         _rowHeight = ColumnLayout.NormalizeRowHeight(settings.RowHeight);
     }
 
@@ -206,7 +206,7 @@ public sealed class SettingsViewModel : ObservableObject
     /// </summary>
     private void RebuildShellMenuItems(IEnumerable<ShellMenuItem> items)
     {
-        // 用索引器而不是 ToDictionary：万一 settings.json 被手改出重复 key，也不能把窗口开崩
+        // 用索引器而不是 ToDictionary：万一 config.json 被手改出重复 key，也不能把窗口开崩
         var previous = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var existing in ShellMenuItems)
         {

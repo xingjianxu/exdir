@@ -6,13 +6,13 @@
 #
 # 十个用例：
 #   1. 窗口结构：左侧 6 个分类（文件列表 / 外观 / 布局 / 启动 / 侧边栏 / 右键菜单）、默认停在「文件列表」，
-#      右侧只有当前分类的项（切分类真的换页），初始值与 settings.json 一致；
-#   2. 即时生效：拨一下开关，settings.json 立刻变（没有「保存 / 取消」按钮）；
+#      右侧只有当前分类的项（切分类真的换页），初始值与 config.json 一致；
+#   2. 即时生效：拨一下开关，config.json 立刻变（没有「保存 / 取消」按钮）；
 #   3. 生效到界面：关掉「显示文件扩展名」，文件列表行名里的 ".xxx" 立刻消失；
 #   4. 跨分类 + 关窗重开：在「布局」页打开双窗格 → 主窗口真变双窗格；重新打开设置窗口仍是新值；
 #   5. 「右键菜单」页：列出系统右键菜单项（默认全开），菜单风格开关默认开（内置），
 #      关掉「属性」后立即落盘 verb:properties，重新打开窗口时它仍是关的，再拨回来就清空；
-#   6. 「文件列表」页的「行高」滑块：初值与 settings.json 一致、切到别的分类就读不到，
+#   6. 「文件列表」页的「行高」滑块：初值与 config.json 一致、切到别的分类就读不到，
 #      拖动后立即落盘，并且文件列表的数据行**真的**变高（UIA 量 ListItem 的高度，取中位数）；
 #   7. 「侧边栏」页的分组开关：关掉「云存储」分组后侧边栏树里真的读不到它（其它分组不受影响），
 #      再拨回来又回来；「主目录」里默认只显示「桌面」与「下载」，
@@ -34,7 +34,7 @@
 #
 # 全程用 UIA 模式（Invoke / Toggle / SelectionItem / RangeValue / Window.Close）驱动，
 # 不模拟鼠标：设置窗口是普通窗口，不需要前台焦点，脚本在任何会话里都能跑。
-# 跑完会还原 settings.json 的原始内容。
+# 跑完会还原 config.json 的原始内容。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe"
@@ -61,12 +61,14 @@ $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
 $repoDir = [System.IO.Path]::GetFullPath("$PSScriptRoot\..")
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
-# 开机自启是写注册表的，不属于 settings.json：跑之前记下原状，收尾时还原
+# 开机自启是写注册表的，不属于 config.json：跑之前记下原状，收尾时还原
 # （用例 10 会把 Debug 的 exe 登记进去，不还原的话这台机器登录时会去启动一个 Debug 构建）
 $runKeyExisted = $false
 $originalRunValue = $null
@@ -83,7 +85,7 @@ function Assert {
 }
 
 # 配置项：UIA 名字（= SettingsCard 的 Header，也是里面 ToggleSwitch 的 AutomationProperties.Name）
-# → settings.json 里的字段名。名字必须和 Views/SettingsView.xaml 里的 Header 一模一样。
+# → config.json 里的字段名。名字必须和 Views/SettingsView.xaml 里的 Header 一模一样。
 $KeyMap = [ordered]@{
     '显示隐藏文件'           = 'hidden'
     '显示文件扩展名'         = 'extension'
@@ -126,7 +128,7 @@ $CategoryMap = [ordered]@{
 $NameOfKey = @{}
 foreach ($pair in $KeyMap.GetEnumerator()) { $NameOfKey[$pair.Value] = $pair.Key }
 
-# ------------------------------------------------------------------ settings.json 读写
+# ------------------------------------------------------------------ config.json 读写
 
 function Get-Setting {
     param([string]$Name)
@@ -137,7 +139,7 @@ function Set-Setting {
     param([string]$Name, $Value)
     $json = Get-Content $script:settingsPath -Raw | ConvertFrom-Json
 
-    # 老版本的 settings.json 里可能还没有这个字段（例如刚加的 ShellMenuDisabledItems），
+    # 老版本的 config.json 里可能还没有这个字段（例如刚加的 ShellMenuDisabledItems），
     # 直接 $json.$Name = $Value 会报“找不到属性”，所以用 Add-Member -Force
     $json | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force
     $json | ConvertTo-Json -Depth 10 | Set-Content $script:settingsPath -Encoding utf8
@@ -539,11 +541,11 @@ function Remove-Autostart {
 
 Write-Host '--- 用例 1：设置窗口结构（左导航 / 右卡片）与初始状态 ---'
 # 除了两个用来验证“初始值一致”的项，双窗格也要先归零：
-# 用例 4 会按“现在单窗格 → 拨开 → 断言双窗格”推，而 settings.json 里上次退出时的值是不确定的。
+# 用例 4 会按“现在单窗格 → 拨开 → 断言双窗格”推，而 config.json 里上次退出时的值是不确定的。
 Set-Setting 'EnableListAnimations' $true
 Set-Setting 'ShowExtensions' $true
 Set-Setting 'IsDualPane' $false
-# 行高也要先归位：用例 6 要断言“滑块初值 = settings.json”，历史值（或被手改过）会让它不可控
+# 行高也要先归位：用例 6 要断言“滑块初值 = config.json”，历史值（或被手改过）会让它不可控
 Set-Setting 'RowHeight' 28
 # 标签页默认是直角：用例 8 要断言“拨一下就变圆角”，历史值同样会让它不可控
 Set-Setting 'SquareTabCorners' $true
@@ -597,7 +599,7 @@ foreach ($category in $CategoryMap.Keys) {
     Assert (((($foundKeys | Sort-Object) -join ',') -eq (($expected | Sort-Object) -join ','))) "「$category」页的开关正是: $($expected -join ' / ')"
 }
 
-# 初始值应与 settings.json 一致
+# 初始值应与 config.json 一致
 $states = [ordered]@{}
 foreach ($pair in $CategoryMap.GetEnumerator()) {
     $category = $pair.Key
@@ -607,8 +609,8 @@ foreach ($pair in $CategoryMap.GetEnumerator()) {
     }
 }
 foreach ($key in $KeyMap.Values) { Write-Host ("  {0,-14} = {1}" -f $key, $states[$key]) }
-Assert ($states['animations'] -eq 'On') '设置窗口读到的「过渡动画」与 settings.json（true）一致'
-Assert ($states['extension'] -eq 'On') '设置窗口读到的「显示文件扩展名」与 settings.json（true）一致'
+Assert ($states['animations'] -eq 'On') '设置窗口读到的「过渡动画」与 config.json（true）一致'
+Assert ($states['extension'] -eq 'On') '设置窗口读到的「显示文件扩展名」与 config.json（true）一致'
 
 # 非开关类的项单独认：『文件列表』页里的「行高」滑块
 $rowHeightSetting = [double](Get-Setting 'RowHeight')
@@ -617,15 +619,15 @@ $slider = Find-Slider -Settings $settings -Name '行高'
 Assert ($null -ne $slider) '「文件列表」页里有「行高」滑块'
 if ($null -ne $slider) {
     $sliderValue = Get-SliderValue -Element $slider
-    Write-Host ("  行高滑块 = {0}（settings.json = {1}）" -f $sliderValue, $rowHeightSetting)
-    Assert ($sliderValue -eq $rowHeightSetting) '行高滑块的初值与 settings.json 一致'
+    Write-Host ("  行高滑块 = {0}（config.json = {1}）" -f $sliderValue, $rowHeightSetting)
+    Assert ($sliderValue -eq $rowHeightSetting) '行高滑块的初值与 config.json 一致'
 }
 
 # ================================================================== 用例 2：即时生效（没有保存按钮）
 
 Write-Host '--- 用例 2：拨一下开关就立刻落盘（没有「保存 / 取消」） ---'
 Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'animations'
-Assert ((Get-Setting 'EnableListAnimations') -eq $false) '拨一下「过渡动画」后 settings.json 立刻变成 false'
+Assert ((Get-Setting 'EnableListAnimations') -eq $false) '拨一下「过渡动画」后 config.json 立刻变成 false'
 Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'animations') -eq 'Off') '窗口里的开关状态也变了'
 Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'animations'
 Assert ((Get-Setting 'EnableListAnimations') -eq $true) '再拨回来又立刻落盘（true）'
@@ -708,7 +710,7 @@ Write-Host ("  ShellMenuKnownItems 落了 {0} 项" -f $known.Count)
 Assert ($known.Count -ge 10) '菜单项清单也落盘了（ShellMenuKnownItems）'
 
 # 重新打开：被关掉的项应该还是关着的（关掉的状态真的读回来了）
-# 注意：改设置前必须先关掉旧窗口（它手里那份编辑模型会把 settings.json 覆盖回去）
+# 注意：改设置前必须先关掉旧窗口（它手里那份编辑模型会把 config.json 覆盖回去）
 Close-Settings -Settings $settings
 $settings = Open-Settings -Session $session
 Select-Category -Settings $settings -Name '右键菜单'
@@ -807,7 +809,7 @@ Set-Setting 'SquareTabCorners' $true
 
 $session = Start-Session
 $settings = Open-Settings -Session $session
-Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'squareTabCorners') -eq 'On') '默认用直角（settings.json 里为 true）'
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '外观' -Key 'squareTabCorners') -eq 'On') '默认用直角（config.json 里为 true）'
 
 Invoke-ToggleByKey -Settings $settings -Category '外观' -Key 'squareTabCorners'
 Assert ((Get-Setting 'SquareTabCorners') -eq $false) '拨一下「标签页使用直角」就立即落盘（SquareTabCorners=false）'
@@ -837,7 +839,7 @@ Select-Category -Settings $settings -Name '外观'
 
 $combo = Find-ThemeCombo -Settings $settings
 Assert ($null -ne $combo) '「外观」页里有「主题」下拉框'
-Assert ((Get-ThemeComboText -Combo $combo) -eq '跟随系统') '下拉框的初值是「跟随系统」（settings.json 里 Theme=0）'
+Assert ((Get-ThemeComboText -Combo $combo) -eq '跟随系统') '下拉框的初值是「跟随系统」（config.json 里 Theme=0）'
 
 Select-ThemeComboItem -Settings $settings -Name '深色'
 Assert ((Get-Setting 'Theme') -eq 2) '选「深色」就立即落盘（Theme=2）'
@@ -872,7 +874,7 @@ Set-Setting 'StartWithWindows' $false
 
 $session = Start-Session
 $settings = Open-Settings -Session $session
-Assert ((Get-ToggleStateByKey -Settings $settings -Category '启动' -Key 'startWithWindows') -eq 'Off') '默认不自动启动（settings.json 里 StartWithWindows=false）'
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '启动' -Key 'startWithWindows') -eq 'Off') '默认不自动启动（config.json 里 StartWithWindows=false）'
 Assert ($null -eq (Get-AutostartCommand)) '默认状态下注册表里没有 exdir 的自启项'
 
 Invoke-ToggleByKey -Settings $settings -Category '启动' -Key 'startWithWindows'
@@ -902,7 +904,7 @@ Stop-Session -Session $session
 
 if ($null -ne $originalSettings) {
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json'
+    Write-Host '已还原 config.json'
 }
 
 # 注册表按跑之前的原状还原（用户如果本来就开着自启，不能因为跑了一趟回归就没掉）

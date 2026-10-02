@@ -419,6 +419,9 @@ public sealed partial class MainWindow : Window
             SaveWindowPlacement();
             ViewModel.SaveSession();
 
+            // 退出时把压缩包的临时文件收一收（中间 tar 直接删，解出来的副本只删一天前的）
+            ViewModel.CleanupArchiveTemp();
+
             // 窗口都要销毁了，卷插拔监听也一并摘掉
             _deviceChange.Detach();
 
@@ -684,7 +687,7 @@ public sealed partial class MainWindow : Window
                 Text = "exdir —— 一个紧凑型双窗格文件管理器\n\n"
                      + "技术栈：WinUI 3 + Windows App SDK（非打包部署）\n"
                      + $"版本：{typeof(App).Assembly.GetName().Version}\n"
-                     + $"配置文件：{ViewModel.SettingsFilePath}",
+                     + $"配置文件：{ViewModel.ConfigFilePath}",
                 TextWrapping = TextWrapping.Wrap,
             },
             CloseButtonText = "确定",

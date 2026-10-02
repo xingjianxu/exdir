@@ -12,7 +12,7 @@
 #   3. 预热进程里照样能按命令行参数导航（`exdir <目录>` → 新标签页打开该目录），
 #      证明“藏起来的预热进程”就是一个正常的 exdir。
 #
-# 这个脚本不改注册表、不改 settings.json 的语义（只在用例 3 里把会话目录临时指到一个测试目录，
+# 这个脚本不改注册表、不改 config.json 的语义（只在用例 3 里把会话目录临时指到一个测试目录，
 # 结束时原样还原），也不弹任何窗口。
 #
 # 与 tools\test-settings.ps1 用例 10 的分工：那边验证“设置里拨一下开关真的会写 / 删 HKCU 的 Run 项”，
@@ -29,7 +29,9 @@ if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
 $exeDir = Split-Path $exePath
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
 $failures = 0
@@ -148,7 +150,7 @@ finally {
 
     if ($null -ne $originalSettings) {
         Set-Content $settingsPath $originalSettings -Encoding utf8
-        Write-Host '已还原 settings.json'
+        Write-Host '已还原 config.json'
     }
 
     if (Test-Path $testDir) { Remove-Item $testDir -Recurse -Force -ErrorAction SilentlyContinue }

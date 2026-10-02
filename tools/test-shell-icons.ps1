@@ -11,7 +11,7 @@
 #   3. 同扩展名的文件只提取一次图标（3 个 .txt 只留 1 行日志）；
 #   4. 滚动到列表末尾后，新出现的行同样有真实图标（虚拟化容器回收/重建的路径没漏掉）。
 #
-# 需要交互桌面（真鼠标点击 + SendKeys + 截图）。跑完会还原 settings.json 的原始内容。
+# 需要交互桌面（真鼠标点击 + SendKeys + 截图）。跑完会还原 config.json 的原始内容。
 #
 # 注意：本脚本会把 exdir 窗口设成 TOPMOST —— 终端窗口常常铺满屏幕，
 # 不置顶的话 CopyFromScreen 拍到的是终端而不是 exdir。
@@ -56,7 +56,9 @@ public static class Native {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
@@ -105,7 +107,7 @@ $expected = @($programs.Keys) + @('notepad.lnk', 'subdir')
 
 # 让会话确定地打开这个目录、显示扩展名（行名与日志里的文件名一致，方便对照）
 #
-# 先确保没有别的 exdir 实例在跑：残留实例退出时会把 settings.json 写成它自己的会话，
+# 先确保没有别的 exdir 实例在跑：残留实例退出时会把 config.json 写成它自己的会话，
 # 正好盖掉下面刚写好的会话（症状：脚本断言的行全是用户主目录的内容）
 Get-Process -Name 'exdir' -ErrorAction SilentlyContinue | ForEach-Object {
     try { $_.Kill(); $_.WaitForExit(5000) } catch { }
@@ -323,7 +325,7 @@ Stop-Session -Session $session
 
 if ($null -ne $originalSettings) {
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json'
+    Write-Host '已还原 config.json'
 }
 
 if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }

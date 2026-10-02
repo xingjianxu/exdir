@@ -16,5 +16,9 @@ public interface IShellIconService
     /// </summary>
     /// <param name="path">条目完整路径。</param>
     /// <param name="isDirectory">是否目录。</param>
-    Task<IconBitmap?> GetIconAsync(string path, bool isDirectory);
+    /// <param name="isVirtualDirectory">
+    /// 目录是不是压缩包内的目录（路径在磁盘上并不存在）。为 true 时只按“目录属性”取通用文件夹图标，
+    /// 不去问外壳要那个路径（问了也拿不到，白花一次系统调用）。
+    /// </param>
+    Task<IconBitmap?> GetIconAsync(string path, bool isDirectory, bool isVirtualDirectory = false);
 }

@@ -12,7 +12,7 @@
 #   3. 「文件 → 隐藏到托盘」再藏一次，然后点通知区域里的托盘图标 → 窗口唤回；
 #   4. 「文件 → 退出」→ 进程真的结束（这是唯一的退出方式，关窗口只是隐藏）。
 #
-# 脚本要求有交互桌面（真鼠标点关闭按钮 / 点托盘图标）；跑完会还原 settings.json 的原始内容。
+# 脚本要求有交互桌面（真鼠标点关闭按钮 / 点托盘图标）；跑完会还原 config.json 的原始内容。
 #
 # 为什么不禁托盘右键菜单（显示主窗口 / 退出 exdir）：它是 H.NotifyIcon 用 `TrackPopupMenu` 弹出的
 # **Win32 弹出菜单**，UIA 里读不到菜单项（同 AGENTS.md 第 6 節第 42 条的坑），
@@ -49,7 +49,9 @@ public static class TrayNative {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 

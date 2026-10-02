@@ -13,7 +13,7 @@
 #   4. 把网络位置目录删掉后再刷新，它就消失了。
 #
 # 全程 UIA + SendMessage（与 test-drive-hotplug.ps1 同一套路），不需要交互桌面。
-# 跑完会删掉伪造的网络位置与目标目录，并还原 settings.json。
+# 跑完会删掉伪造的网络位置与目标目录，并还原 config.json。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe"
@@ -39,7 +39,9 @@ public static class NativeNetLoc {
 $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 
 $failures = 0
 function Assert {
@@ -74,14 +76,14 @@ $sc.TargetPath = $targetDir
 $sc.Save()
 Write-Host "伪造网络位置: $locationDir -> $targetDir"
 
-# ------------------------------------------------------------------ settings.json
+# ------------------------------------------------------------------ config.json
 
 if (-not (Test-Path $settingsPath)) {
     $boot = Start-Process -FilePath $exePath -WorkingDirectory (Split-Path $exePath) -PassThru
     $deadline = (Get-Date).AddSeconds(30)
     while ((Get-Date) -lt $deadline -and -not (Test-Path $settingsPath)) { Start-Sleep -Milliseconds 500 }
     try { if (-not $boot.HasExited) { $boot.Kill() } } catch { }
-    if (-not (Test-Path $settingsPath)) { throw "启动一次后仍然没有 settings.json: $settingsPath" }
+    if (-not (Test-Path $settingsPath)) { throw "启动一次后仍然没有 config.json: $settingsPath" }
 }
 
 $originalSettings = Get-Content $settingsPath -Raw
@@ -201,7 +203,7 @@ finally {
     if (Test-Path $targetDir) { Remove-Item $targetDir -Recurse -Force }
 
     Set-Content $settingsPath $originalSettings -Encoding utf8
-    Write-Host '已还原 settings.json 并清掉伪造的网络位置'
+    Write-Host '已还原 config.json 并清掉伪造的网络位置'
 }
 
 Write-Host ("SUMMARY failures={0}" -f $failures)

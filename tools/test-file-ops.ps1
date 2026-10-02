@@ -19,7 +19,7 @@
 #      exdir.log 记下“文件操作：删除到回收站”；
 #   I. Shift+Delete → 确认后永久删除（不进回收站），exdir.log 记下“文件操作：永久删除”。
 #
-# 需要交互桌面（真实鼠标拖动 + SendKeys + 截图）；跑完会还原 settings.json 并删掉测试目录。
+# 需要交互桌面（真实鼠标拖动 + SendKeys + 截图）；跑完会还原 config.json 并删掉测试目录。
 
 param(
     [string]$Exe = "$PSScriptRoot\..\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\exdir.exe"
@@ -61,7 +61,9 @@ $exePath = [System.IO.Path]::GetFullPath($Exe)
 if (-not (Test-Path $exePath)) { throw "找不到可执行文件: $exePath" }
 
 $shotDir = [System.IO.Path]::GetFullPath("$PSScriptRoot\..\.artifacts")
-$settingsPath = Join-Path $env:LOCALAPPDATA 'exdir\settings.json'
+# 配置文件在 ~/.config/exdir/config.json（设了 XDG_CONFIG_HOME 就用它；见 Services/SettingsService.cs）
+$configRoot = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-Path $env:USERPROFILE '.config' }
+$settingsPath = Join-Path $configRoot 'exdir\config.json'
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $originalSettings = if (Test-Path $settingsPath) { Get-Content $settingsPath -Raw } else { $null }
 
@@ -90,7 +92,7 @@ function Assert {
     else { Write-Host "FAIL $Message"; $script:failures++ }
 }
 
-# ------------------------------------------------------------------ settings.json / 日志
+# ------------------------------------------------------------------ config.json / 日志
 
 function Get-Setting {
     param([string]$Name)
@@ -633,7 +635,7 @@ finally {
 
     if ($null -ne $originalSettings) {
         Set-Content $settingsPath $originalSettings -Encoding utf8
-        Write-Host '已还原 settings.json'
+        Write-Host '已还原 config.json'
     }
 }
 
