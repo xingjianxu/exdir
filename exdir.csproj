@@ -258,6 +258,20 @@
     <PackageReference Include="Microsoft.WindowsAppSDK.Widgets" Version="2.0.5" ExcludeAssets="all" PrivateAssets="all" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <!--
+      远程位置（SFTP / FTP）的两个协议库：
+      SSH.NET 提供 SFTP（密码 / 私钥两种认证），FluentFTP 提供 FTP 与 FTPS（显式 TLS、被动模式）。
+      两个都是纯托管库，**没有**自己的原生负载；两者都没标 IsTrimmable，所以 TrimMode=partial 下会被原样保留。
+      体积代价：Renci.SshNet.dll 0.31 MB + FluentFTP.dll 0.22 MB +
+      **BouncyCastle.Cryptography.dll 4.92 MB**（SSH.NET 2026 的传递依赖，它把加密算法搬到 BouncyCastle 了）。
+      实测 dist 从 171 文件 / 84 MB 变成 193 文件 / 93 MB。
+      BouncyCastle 不要试着用 TrimmableAssembly 裁（它靠反射查算法，裁了会在运行时炸）。
+      版本：SSH.NET 锁 2026.0.0 —— 2024.2.0 有已知高危漏洞（NU1903：GHSA-mggc-4xg6-vcxf 等），
+      别因为“能跑”就退回去；FluentFTP 锁 55.0.0。
+      另：这两个库都在 dist（裁剪 + 自包含）上跑过 tools\remote-smoke 与 tools\test-remote.ps1。
+    -->
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <PackageReference Include="FluentFTP" Version="55.0.0" />
+    <!--
       设置窗口里的 SettingsCard / SettingsExpander —— Windows 11 设置界面的卡片式行布局。
       版本锁 8.2.251219（8.x 里最后一个稳定版）：它出 net8.0-windows10.0.19041 目标，
       依赖 Microsoft.WindowsAppSDK >= 1.6（本项目是 2.5.1，向上兼容）。

@@ -58,8 +58,28 @@ public interface IArchiveService
         IReadOnlyList<string> innerPaths,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 把包内若干条目（文件，或目录——目录含整棵子树）解到临时目录，供“把包内条目拖到别处”使用。
+    /// 与 <see cref="ExtractForCopyAsync" /> 的差别只在临时目录的分类（<c>drag</c>）与清理时机：
+    /// 拖到资源管理器时副本是**别的进程**在拷，交出去之后我们不知道什么时候拷完，
+    /// 所以只能留在原地等 <see cref="CleanupTemp" /> 按时间扫（拖进 exdir 自己的窗格时
+    /// 复制一完成就会 <see cref="ReleaseStagingFor" /> 掉）。
+    /// </summary>
+    Task<ArchiveExtraction> ExtractForDragAsync(
+        string archiveFile,
+        IReadOnlyList<string> innerPaths,
+        CancellationToken cancellationToken = default);
+
     /// <summary>删掉 <see cref="ExtractForCopyAsync" /> 用过的临时目录（只认它自己造的那一类目录）。</summary>
     void ReleaseStaging(string stagingDirectory);
+
+    /// <summary>
+    /// 按“解出来的路径”反查并删掉 <see cref="ExtractForDragAsync" /> 创建的临时目录。
+    /// 一次文件复制 / 移动完成（<see cref="IFileOperationService.Completed" />）后调用：
+    /// 源路径里凡是落在 <c>archive-cache\drag\&lt;guid&gt;</c> 下的，就是这次拖拽解出来的临时副本，
+    /// 复制完了就没用了。真实路径与 <c>copy</c> 分类（粘贴的中转副本）一律不动。
+    /// </summary>
+    void ReleaseStagingFor(IReadOnlyList<string> paths);
 
     /// <summary>丢掉某个压缩包的索引缓存（外部改过压缩包时用；F5 会调）。</summary>
     void Invalidate(string? archiveFile);

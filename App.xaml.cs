@@ -46,6 +46,9 @@ public partial class App : Application
             // 压缩包只读浏览：启动时清一次临时文件（链式解开的中间 tar / 双击包内文件解出来的副本）
             Services.GetRequiredService<IArchiveService>().CleanupTemp();
 
+            // 远程位置：同样在启动时清一次本地中转目录（见 Helpers/RemoteCache）
+            Services.GetRequiredService<IRemoteFileService>().CleanupTemp();
+
             var window = Services.GetRequiredService<MainWindow>();
             MainWindow = window;
 
@@ -106,6 +109,10 @@ public partial class App : Application
 
         // 压缩包只读浏览（原生 7z.dll，见 Services/Native/SevenZipInterop.cs）
         services.AddSingleton<IArchiveService, ArchiveService>();
+
+        // 远程位置（SFTP / FTP）：只读浏览 + 下载到本地，见 Services/RemoteFileService.cs
+        services.AddSingleton<IRemoteLocationSource, SettingsRemoteLocationSource>();
+        services.AddSingleton<IRemoteFileService, RemoteFileService>();
 
         // 打包成 zip（右键「压缩」；走 BCL 的 System.IO.Compression，与上面那条只读的路互不干扰）
         services.AddSingleton<ICompressionService, CompressionService>();

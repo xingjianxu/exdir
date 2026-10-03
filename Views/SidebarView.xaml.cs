@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Exdir.Diagnostics;
 using Exdir.Helpers;
+using Exdir.Models;
 using Exdir.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -73,13 +74,22 @@ public sealed partial class SidebarView : UserControl
     }
 
     /// <summary>
-    /// 把树节点（已加载的目录）作为拖放内容：分组标题节点（云存储 / 此电脑 / 收藏夹）没有路径，
-    /// 拖它们不产生任何数据，直接取消。
+    /// 把树节点（已加载的目录）作为拖放内容：分组标题节点（云存储 / 此电脑 / 收藏夹 / 远程）没有路径，
+    /// 拖它们不产生任何数据，直接取消；**远程位置的路径也不能拖** —— 它的落点（工具条固定目录 /
+    /// 侧边栏收藏）只接受真实的本地目录，拖过去也只会被拒（还不如根本不让它开始拖）。
     /// </summary>
     private void FolderTree_DragItemsStarting(TreeView sender, TreeViewDragItemsStartingEventArgs args)
     {
-        var paths = args.Items
-            .OfType<SidebarNodeViewModel>()
+        var nodes = args.Items.OfType<SidebarNodeViewModel>().ToList();
+
+        if (nodes.Any(static node => node.Kind == SidebarNodeKind.Remote
+                                     || RemotePath.LooksRemote(node.FullPath)))
+        {
+            args.Cancel = true;
+            return;
+        }
+
+        var paths = nodes
             .Select(node => node.FullPath)
             .Where(path => !string.IsNullOrEmpty(path))
             .ToList();

@@ -387,6 +387,16 @@
                 Severity="Warning"
                 Title="无法打开" />
 
+            <!-- “正在解出压缩包内条目…”：拖拽开始前要先解出真实文件，几百 MB 的条目会等一会儿。
+                 不可关闭、没有按钮（区别于下面的“做完了”提示）。 -->
+            <InfoBar
+                AutomationProperties.Name="请稍候"
+                IsClosable="False"
+                IsOpen="{x:Bind ViewModel.HasBusy, Mode=OneWay}"
+                Message="{x:Bind ViewModel.BusyMessage, Mode=OneWay}"
+                Severity="Informational"
+                Title="请稍候" />
+
             <InfoBar
                 AutomationProperties.Name="操作结果"
                 CloseButtonClick="StatusInfoBar_CloseButtonClick"

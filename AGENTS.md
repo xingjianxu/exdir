@@ -19,9 +19,13 @@
 
 界面语言：**简体中文硬编码**（不引入 .resw）。
 
-**尚未实现**（见 `plan.md`）：键盘导航其余部分（`Ctrl+Shift+A` 反选、回车打开、type-ahead）、重命名、重命名以外
-的新建、哈希；拖拽不能拖到资源管理器（数据包里只有自定义格式与纯文本，没放 `StorageItems`）；右键菜单只做了
+**尚未实现**（见 `plan.md`）：键盘导航其余部分（`Ctrl+Shift+A` 反选、回车打开、type-ahead；打开选中项可以用
+「文件 → 打开」菜单或双击）、重命名、重命名以外
+的新建、哈希；拖拽不能把**真实目录里的**文件拖到资源管理器（数据包里只有自定义格式与纯文本，没放 `StorageItems`；
+压缩包里的条目可以，见下面“压缩包只读浏览”）；右键菜单只做了
 文件列表（条目 + 空白处），侧边栏 / 固定目录 / 磁盘按钮还没有。
+远程位置（SFTP / FTP）只做到“浏览 + 下载到本地”（2026-10）：**不能往远程上传 / 删除 / 重命名 / 新建目录**，
+远程条目也不能拖到资源管理器之外的地方做“移动”（拖出去永远是复制，见下面“远程位置”）。
 
 ## 2. 环境与命令（重要）
 
@@ -47,6 +51,9 @@ pwsh -NoProfile -File tools\inspect-ui.ps1 [-Filter 名] [-Click 名] [-Hover �
 pwsh -NoProfile -File tools\make-icon.ps1                      # icon.svg → Assets 图标（改完要重新 build/publish）
 pwsh -NoProfile -File tools\shot-settings.ps1                  # 设置窗口各分类截图（需交互桌面）
 dotnet run -c Debug --project tools\archive-smoke              # 压缩包服务级冒烟（不需交互桌面；裁剪版加 --no-iso，见第 89 条）
+node tools\remote-test-server\server.js                        # 远程位置回归用的本机 FTP + SFTP 测试服务器（见下两行）
+dotnet run -c Debug --project tools\remote-smoke               # 远程位置服务级冒烟（真实 FTP / SFTP；需先起上面那个服务器）
+pwsh -NoProfile -File tools\test-remote.ps1                    # 远程位置界面回归（UIA，不需交互桌面；自己起测试服务器）
 pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-Clobber] [-Draft] [-Prerelease]
 ```
 
@@ -54,6 +61,9 @@ pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-C
 * `inspect-ui.ps1`：打印控件树（名称 + 物理坐标 + 尺寸）、按名字查元素、真鼠标点击/悬停并截图到 `.artifacts`。
 * `make-icon.ps1`：`icon.svg` → `Assets\exdir.ico`（exe / 标题栏 / 任务栏 / 托盘都用它）+ 各尺寸徽标 PNG；栅格化用
   系统 Edge（headless、透明底），找不到用 `-Edge` / `EXDIR_EDGE` 指定。
+* `tools\remote-test-server`（node，依赖在 `node_modules`，首次跑 `npm install`）：本机的 **FTP + SFTP 测试服务器**，
+  只做只读那一半（列目录 + 取文件），根目录由 `--root` 指定、就绪时往 stdout 打一行 `READY {json}`。
+  `tools\test-remote.ps1` 会自己起它；手跑冒烟时自己启动（见第 2 节命令表）。
 
 ### 回归脚本（改哪块跑哪块，**不要每次全跑**）
 
@@ -74,12 +84,22 @@ pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-C
 | `test-network-locations.ps1`（4 用例） | 假网络位置启动时出现在「此电脑」、排磁盘之后 / 点它导航到 `target.lnk` 目标 / `WM_DEVICECHANGE` 刷新后它还在（差量刷新不误删）/ 删掉目录再刷新就消失 | 不需 |
 | `test-command-line.ps1`（10 用例） | 带路径启动 → 新标签页 / 已在运行时转发给已有实例 / 工作目录是程序或系统目录 → 只唤回窗口 / path 是文件 → 打开所在目录并选中 / 路径不存在 → 当前标签页「无法打开」 | 不需 |
 | `test-autostart.ps1`（3 用例） | `--preload` 起来后进程驻留、无可见主窗口、日志有「预热启动：不显示主窗口」「预热完成：… 目录=… 图标=…」/ 预热进程在跑时再启动 → 第二个进程瞬时退出、预热进程窗口真的显示 / 带路径的请求照样能转发进来新开标签页。靠进程句柄 + `exdir.log`，不改注册表 | 不需 |
-| `test-archive.ps1`（13 用例） | 双击 `.zip`/`.7z` 进包 / 上一级 / 点面包屑里压缩包那段回包根 / 包内目录行内展开 / 包内排序与图标 / 只读守卫（菜单无写操作、`Ctrl+V` 只弹提示、拖拽不启动）/ 双击包内文件解到临时目录 / `.tar.gz` 透明解开 / 会话恢复到包内 / 命令行进包 / 用例 13：**真实目录里点压缩包行的箭头就地展开**（行数只多两行、无「只读」徽标、双击包内条目仍解到临时目录、再点一次折叠回去） | 需 |
+| `test-archive.ps1`（14 用例） | 双击 `.zip`/`.7z` 进包 / 上一级 / 点面包屑里压缩包那段回包根 / 包内目录行内展开 / 包内排序与图标 / 只读守卫（菜单无写操作、`Ctrl+V` 只弹提示；包内条目能开始拖拽但落在包内不接受、不会拷到压缩包所在的目录）/ 双击包内文件解到临时目录 / `.tar.gz` 透明解开 / 会话恢复到包内 / 命令行进包 / 用例 13：**真实目录里点压缩包行的箭头就地展开**（行数只多两行、无「只读」徽标、双击包内条目仍解到临时目录、再点一次折叠回去）/ 用例 14：**把就地展开的包内行拖到列表空白处（= 当前目录）** → 拖拽开始时先解到临时目录、文件真的复制出来、临时副本被回收 | 需 |
 | `test-archive-copy.ps1`（9 用例） | 包内复制只记在内存里（不动磁盘、清空系统剪贴板）→ 上一级 → 粘贴 → 文件真落到磁盘、日志有「压缩包复制：sample.zip 解出 1 项」/ 多选（文件 + 目录）时目录按整棵子树解出来 / 中转副本用完就删 / 系统剪贴板优先 / `.iso` 也当目录进、也能复制出来（测试 ISO 用系统 IMAPI2FS 现造，造不出就 SKIP）/ 用例 7～9：真实目录里就地展开压缩包，展开出来的行仍是只读的（「复制」进内存、「删除」被拦、折叠后行集合复原） | 不需 |
 | `test-archive-extract.ps1`（4 用例） | 压缩包行的内置菜单里有「使用 7-Zip 打开」与「解压到下载文件夹」（没装 7-Zip 时那一项置灰且标题写明原因，与本机实际情况比对）/ 普通文件行没有这两项 / 点「解压到下载文件夹」→ `Downloads\<包名>\` 里真的出现包内文件与子目录、绿色「解压完成」InfoBar（带「打开目录」）、日志有「解压：…」/ 同一个包再解一次落到 `<包名> (2)`。收尾删掉解出来的目录并还原 config.json | 需 |
 | `test-compress.ps1`（4 用例） | 文件行 / 目录行的内置菜单里有「压缩」，空白处没有 / 点「压缩」→ 默认输出目录（「下载」文件夹）出现 `<名字>.zip`、包内条目与源一致、**剪贴板里就是这个 zip**（`CF_HDROP` + DropEffect=1）、绿色「压缩完成」InfoBar（带「打开目录」）、日志有「压缩：…」「压缩产物已复制到剪贴板：…」/ 多选时包名 = 当前文件夹名、再压一次落到 `… (2).zip` / 设置里的「压缩输出目录」指向别处后压缩落到那里。收尾删掉生成的 zip 并还原 config.json。等待条件用「zip 能真的打开」/「剪贴板里已出现它」（第 94 条）| 需 |
 
 真鼠标那条路（右键菜单里的「复制」）在 `test-archive.ps1` 用例 12。
+
+远程位置（SFTP / FTP）的回归脚本：`tools\test-remote.ps1`（9 用例，全程 UIA、不需交互桌面；自己起
+`tools\remote-test-server` 并写一份测试用 `config.json`，跑完清理）。用例：侧边栏「远程」分组有配置的三个位置 /
+点 FTP 位置列出服务器目录（状态栏项数）/ 点 SFTP 位置（密码登录）一样能列 / 行内箭头就地展开远程子目录 /
+只读守卫（选中远程文件后「编辑 → 删除」什么都不发生 + 弹「远程位置不支持该操作」）/ 「编辑 → 复制」把文件下到
+`remote-cache\copy` 并放进系统剪贴板 / 「文件 → 打开」下到 `remote-cache\open` 并交给默认程序 /
+标签页标题与面包屑认远程路径（`user@host`，不是整条 `sftp://…`）、远程文件行不当压缩包 / 设置窗口「远程」页：
+列已有位置 → 新增一个匿名 FTP（真的写进 `config.json`）→ 侧边栏立即多出它 → 删除（确认框）。
+真鼠标 / 拖拽（双击下载打开、拖到资源管理器、右键菜单里的「下载到…」）需要交互桌面，目前靠
+`tools\remote-smoke`（服务级，覆盖两个协议的真下载链路）+ 代码审查保证。
 
 ### 任务收尾（每个任务都必须做）
 
@@ -135,31 +155,39 @@ exdir/
 ├─ MainWindow.xaml(.cs)       外壳：TitleBar（菜单栏）/ 工具条 / 侧边栏 / 1~2 个窗格 + 托盘图标
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
 ├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / AppTheme / QuickCommand / CloudSyncState /
-│                             ShellMenuItem / IconBitmap / ArchivePath / 枚举（含 SettingsCategory）
+│                             ShellMenuItem / IconBitmap / ArchivePath / RemoteLocation / RemotePath /
+│                             枚举（含 SettingsCategory / RemoteProtocol / RemoteAuthMethod）
 ├─ Services/                  接口 + 实现成对；Native/ 放 Win32 互操作
-│   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态
+│   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态；远程 / 压缩包路径分派
 │   ├─ IDriveService / IKnownFolderService / INetworkLocationService / ICloudSyncService / IShellIconService
 │   ├─ IArchiveService / IArchiveClipboardService / ICompressionService / IDialogService / ISettingsService
+│   ├─ IRemoteFileService / IRemoteLocationSource（远程位置：列目录 + 下载到本地，只读）
 │   ├─ IShellService / IClipboardService / IFileOperationService / IShellContextMenuService / IDeviceChangeService
+│   ├─ Remote/                远程连接：RemoteSession 抽象 + SftpSession（SSH.NET）+ FtpSession（FluentFTP）+
+│   │                         RemoteSessionPool（按连接身份缓存、失败重连、空闲回收）
 │   └─ Native/                ShellPropertyStore / ShellIconExtractor / ShellContextMenuInterop / VolumeChangeWatcher /
-│                             ClipboardInterop / FileOperationInterop / SevenZipInterop / ShellLinkInterop
+│                             ClipboardInterop / FileOperationInterop / SevenZipInterop / ShellLinkInterop /
+│                             DpapiInterop（凭据加密）
 ├─ ViewModels/                MainViewModel / PanelViewModel / FolderTabViewModel / PathSegmentViewModel /
 │                             SidebarViewModel（懒加载 + 收藏夹镜像 + ApplyGroupVisibility / ApplyHomeFolders /
-│                             差量 RefreshDrives）/ FileItemViewModel / PinnedFolderViewModel / StatusBarViewModel /
-│                             SettingsCategoryViewModel / ShellMenuItemViewModel / SettingsViewModel
+│                             ApplyRemoteLocations / 差量 RefreshDrives）/ FileItemViewModel / PinnedFolderViewModel /
+│                             StatusBarViewModel / SettingsCategoryViewModel / ShellMenuItemViewModel /
+│                             SettingsViewModel / RemoteLocationItemViewModel
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 │                             （DetailsView 还管文件列表的拖放与右键菜单）/ StatusBarView / SettingsWindow / SettingsView
+│                             （+ SettingsView.Remote.cs：远程位置编辑对话框）
 ├─ Controls/                  PaneSplitter.cs（自研分隔条，WinUI 没有 GridSplitter）；ColumnResizeHandle.cs
 ├─ Helpers/                   ColumnLayout / ThemeHelper / CloudSyncStateHelper / DpiHelper / FileTypeHelper /
 │                             IconImageHelper / SizeFormatter / DragDropHelper / CommandLine / AutoStart /
 │                             SingleInstance / ArchiveFormats / CompressTargets / FolderPicker /
-│                             SevenZipLocator（找系统的 7zFM.exe）
+│                             SecretProtector（DPAPI 凭据）/ RemoteCache（远程中转目录）/ SevenZipLocator（找 7zFM.exe）
 ├─ Converters/CommonConverters.cs / Diagnostics/Log.cs（可多进程同时追加，第 72 条）
 ├─ icon.svg                   程序图标唯一源文件（改它再跑 tools\make-icon.ps1）
 ├─ Assets/                    图标（exdir.ico + 各尺寸徽标 PNG，都由 make-icon.ps1 生成）
 ├─ native/                    原生组件（x64\7z.dll + LICENSE-7z.txt + 来源/升级说明 README.md）
 └─ tools/                     capture / inspect-ui / shot-settings / test-*.ps1 / measure-row-align / publish /
-                              release / make-icon，以及 archive-smoke（不需交互桌面的服务级冒烟工程）
+                              release / make-icon，以及 archive-smoke（不需交互桌面的服务级冒烟工程）、
+                              remote-smoke（远程位置的服务级冒烟）、remote-test-server（本机 FTP + SFTP 测试服务器）
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -487,6 +515,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     （第 59 条）、也不用 `e.OriginalSource`。命中行高亮：`FileItemViewModel.IsDropTarget` → 行模板那层强调色 `Border`。
   * **兜底**：`StartDragAsync` 返回后再判一次 —— 左键还按着（= 用户按了 Esc）或光标已不在本列表就不管，否则按松开时
     光标位置自己把这次移动做完（日志 `拖放兜底：…`，第 60 条）。
+  * **压缩包里的条目拖出来是另一条路**（拖拽开始时先解出真实文件、永远是复制），见下面“压缩包只读浏览”。
   * 回归 `test-file-ops.ps1`（9 个用例；需交互桌面，shell 是管理员时自动改用 `explorer.exe` 降权，第 21 条）。
 
 ### 压缩包只读浏览（双击压缩包 = 以目录形式进入，2026-09）
@@ -510,8 +539,9 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     终端 / 拖入）与 `RefuseSelectionInArchive()`（选中项里有包内行，管剪切 / 删除 / 属性 / 在资源管理器中显示）；
     「复制」不走拒绝，而是按选中项自己解析出压缩包走内存剪贴板（`CopyArchiveSelection`），真实文件与包内行混选、
     或跨两个包混选时明确报错。
-  * 就地展开出来的包内行：双击目录 → 进包（导航），双击文件 → 解到临时目录用默认程序打开；拖拽从源头取消、
-    拖到包内目录行上不接受（`DetailsView.DragStarting` / `TryResolveDrop`），右键一律用只读版内置菜单。
+  * 就地展开出来的包内行：双击目录 → 进包（导航），双击文件 → 解到临时目录用默认程序打开；**能拖出去**
+    （见下面“把包内条目拖到别处”，永远是复制），但拖到包内目录行上不接受（`DetailsView.DragStarting` /
+    `TryResolveDrop`），右键一律用只读版内置菜单。
     行内图标按 `isVirtualDirectory: IsInsideArchive || item.IsInArchive` 取（包内目录用通用文件夹图标）。
   * 包内的**嵌套压缩包**不单独展开（`ArchivePath.TryParse` 只认最外层那个包，`IsArchive` 保持 false）；
     只比目录多了一项：压缩包行本身仍是文件，排序 / 删除 / 拖拽都按文件走。
@@ -540,11 +570,11 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
 * **`.tar.gz` / `.tgz` 透明解开一层**：单文件压缩器里只有一个条目、且派生出来的内层名以 `.tar` 结尾时，把中间那个 tar
   解到 `%LOCALAPPDATA%\exdir\archive-cache\tar\<hash>.tar` 再用 tar 处理器打开（内层 > 2 GB 时降级为显示 `xxx.tar`
   一行）。单文件压缩器的 `kpidPath` 是空的，内层名由压缩包名派生（第 80 条）。
-* **只读**：粘贴 / 删除（Del、Shift+Del）/ 新建文件夹 / 剪切 / 拖拽（拖入拖出都不启动）/ 在此处打开终端 / 在资源管理器
-  中显示 / 属性 全部禁用并提示「压缩包内不支持该操作（只读浏览）」；**唯一例外是「复制」**。内置右键菜单在包内换成
+* **只读**：粘贴 / 删除（Del、Shift+Del）/ 新建文件夹 / 剪切 / 在此处打开终端 / 在资源管理器中显示 / 属性
+  全部禁用并提示「压缩包内不支持该操作（只读浏览）」；**两个例外是「复制」与“把条目拖出去”**。内置右键菜单在包内换成
   “只读版”（行：打开 / 复制 / 复制路径；背景：刷新 / 全选 / 复制当前路径），而且包内**强制用内置菜单**（系统外壳菜单
-  处理不了虚拟路径）。守卫写在 `FolderTabViewModel`（`RefuseInArchive()`）+ `DetailsView`（`DragStarting` /
-  `TryResolveDrop`），键盘入口与右键入口共用同一套。
+  处理不了虚拟路径）。守卫写在 `FolderTabViewModel`（`RefuseInArchive()`）+ `DetailsView`（`TryResolveDrop` /
+  `CompleteInternalDropAsync`），键盘入口与右键入口共用同一套。
 * **包内「复制」→ 外部目录粘贴**：包内条目没有真实路径、写不进 `CF_HDROP` → 分两拍：包内 `Ctrl+C` / 右键「复制」把
   「压缩包 + 包内相对路径」记在**内存**（`IArchiveClipboardService`，不动磁盘、顺手清空系统剪贴板）；到真实目录
   `Ctrl+V` / 右键「粘贴」时才 `ExtractForCopyAsync` 把选中条目（目录含整棵子树、空目录也保住）解到
@@ -553,6 +583,20 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   → 它非空就一定更新）。每个选中项解到自己的 `<序号>` 子目录 → 跨目录同名不覆盖，而交出去的文件名仍是包内那个
   （`SHFileOperation` 只看最后一段）。回归 `test-archive-copy.ps1` + `archive-smoke` + `test-archive.ps1` 用例 12；
   第 85 条。
+* **把包内条目拖到别处（永远是复制）**：包内条目没有真实路径，数据包里必须有**真实文件**才行 ——
+  WinUI 3 的“延迟提供 `StorageItems`”（`SetDataProvider`）有已知 bug，资源管理器会直接拒绝数据包
+  （microsoft-ui-xaml#9629），所以只能在拖拽手势里先把选中条目（目录含整棵子树）用
+  `IArchiveService.ExtractForDragAsync` 解到 `archive-cache\drag\<guid>\<序号>\…`，再 `SetStorageItems`
+  把解出来的真实文件交给系统 → 另一个窗格 / 目录行 / 列表空白处 / 资源管理器 / 桌面都能收，与拖真实文件同一条路。
+  * 顺序很重要：解包与建 `StorageItems` 都在 `StartDragAsync` **之前**做完（`DetailsView.PrepareArchiveDragAsync`），
+    数据包在 `DragStarting` 里同步写完；失败 / 用户取消密码框就干脆不启动这一次拖拽。
+  * 数据包里带标记格式 `exdir/archive-drag`（`DragDropHelper.ArchiveDragFormat`）：工具条固定目录区与侧边栏收藏夹
+    据此拒绝（不能把缓存里的临时目录固定 / 收藏起来，`MayContainFolder` 第一行就返回 false），文件列表据此
+    **一律按复制**处理（包是只读的，交出去的也只是临时副本；按住 Shift 也不会变）。
+  * 解出来的临时副本：复制完成后由 `MainViewModel.OnFileOperationCompleted` → `ReleaseStagingFor(源路径)` 回收
+    （只认 `drag` 分类，真实路径与粘贴的 `copy` 分类不动）；拖到资源管理器时对方可能还在拷 → 不回收，
+    `CleanupTemp()` 只删**一天前**的（与 `open` 同一套规则）。拖拽被 Esc 取消 / 落在包内时也会留到那时。
+  * 回归 `test-archive.ps1` 用例 6 与 14（真鼠标）、`archive-smoke`（服务级）；第 95 条。
 * **包内文件双击**：解到 `archive-cache\open\<hash>-<压缩包名>\<包内相对路径>`（同名且大小一致就复用）再用默认程序
   打开；日志留一行 `打开压缩包内文件：… → …`。
 * **加密包**：要密码就抛 `ArchivePasswordRequiredException`，`FolderTabViewModel` 问
@@ -579,6 +623,53 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
 
 * 回归：`test-archive.ps1`（真鼠标，需交互桌面）、`test-archive-copy.ps1`（全程 UIA，不需交互桌面）、
   `test-archive-extract.ps1`（真鼠标右键，需交互桌面）、`tools/archive-smoke`（服务级，不需交互桌面）。
+
+### 远程位置（SFTP / FTP）：只读浏览 + 下载到本地（2026-10）
+
+侧边栏多一个「远程」分组，里面是设置里配好的 SFTP / FTP 位置（一个位置一个节点）；点一下就**当目录浏览**：
+列表 / 面包屑 / 前进后退 / 排序 / 状态栏都照常（导航条上不额外加徽标，与压缩包那种“进包”不同）。
+
+* **路径就是字符串**（与压缩包的虚拟路径同一种思路）：`sftp://user@host:22/home/me/docs`、`ftp://host/pub`、
+  `ftps://host:2121/x`。于是面包屑（`FolderTabViewModel.SplitPath` 的远程分支）、`GetParentDirectory`、会话落盘、
+  `exdir <远程路径>` 都不用为远程单独写一套。`Models/RemotePath.cs` 负责解析 / 拼接 / 规整（反斜杠统一、
+  消掉 `.` 与 `..`、IPv6 加方括号、端口是协议默认值时不写进字符串）。
+* **路由全在 `FileSystemService` 一处**：`IsRemotePath` / `EnumerateDirectoryAsync` / `EnumerateSubDirectoriesAsync` /
+  `GetParentDirectory` / `ResolveDirectoryAsync` 先看协议头，命中了就交给 `IRemoteFileService`；
+  **`DirectoryExists` / `FileExists` / `NormalizeDirectoryPath` 故意不处理远程路径**（一律 false / null）——
+  它们被粘贴 / 删除 / 新建文件夹 / 拖放落点 / 固定目录那些写操作守卫当成“磁盘上真有这个路径”，
+  远程在那里必须是不存在的，否则会“往远程路径上真去建目录”。
+* **连接与认证**（`Services/Remote/`）：SFTP 用 **SSH.NET**（密码 / 私钥文件两种认证），FTP 与 FTPS 用
+  **FluentFTP**（默认被动模式，FTPS 是显式 TLS）。`RemoteSessionPool` 按**连接身份**（协议 + 用户名 + 主机 + 端口）
+  缓存连接：同一时刻只跑一个操作（两边库都不线程安全，用信号量串行），操作失败就丢掉这条连接下次重连，
+  空闲 5 分钟或超过 8 条时回收。SFTP 主机密钥默认接受、但把 SHA256 指纹写进日志（没有 known_hosts 界面）。
+* **只读**：远程目录里的粘贴 / 删除 / 剪切 / 新建文件夹 / 压缩 / 终端 / 属性 / “在资源管理器中显示”全部拒绝
+  （`FolderTabViewModel.RefuseInRemote()`，文案「远程位置不支持该操作（只能浏览与下载）」），右键菜单换成
+  “远程只读版”（行：打开 / 下载到… / 复制 / 复制路径；背景：刷新 / 全选 / 复制当前路径），并且**强制用内置菜单**
+  （系统外壳菜单处理不了 `sftp://` 这种路径）。键盘入口与右键入口共用同一套守卫。
+* **双击文件 = 先下到本地再看**：下到 `%LOCALAPPDATA%\exdir\remote-cache\open\<路径哈希>\<文件名>`
+  （同名且大小一致就复用上次的副本），再用默认程序打开 —— 与压缩包内文件同一个做法。
+* **下载到本地三条路**（都不往远程写）：
+  * 右键「下载到…」→ 系统文件夹选择器（`IDialogService.PickFolderAsync`）→ `DownloadAsync`（目录含整棵子树、
+    空目录也保住、本地重名加 `(2)`）→ 绿色 InfoBar「下载完成」（带「打开目录」）；
+  * 「复制」（`Ctrl+C` / 编辑菜单）：把选中项下到 `remote-cache\copy\<guid>\` 再写进**系统剪贴板**
+    （`CF_HDROP` + 复制意图）—— 粘到本地目录、粘到资源管理器都能用；中转副本在复制完成后由
+    `MainViewModel.OnFileOperationCompleted` → `ReleaseStagingFor(源路径)` 回收；
+  * **拖出去**：与压缩包里条目同一条路（`BuildDragPayloadAsync` 先下到 `remote-cache\drag\<guid>\`，
+    `DragStarting` 里同步 `SetStorageItems`），数据包里带 `exdir/archive-drag` 标记 → 工具条固定目录与侧边栏收藏夹
+    据此拒绝、文件列表据此**永远按复制**处理（第 95 条）。
+* **远程条目没有本地路径**：不问外壳要图标（行模板里的字形占位就是它）、不当压缩包（`IsArchive` 永远 false，
+  双击 `.zip` 也是“下载再打开”而不是进包）、不跟随 `exdir/paths` 拖进工具条固定目录 / 侧边栏收藏（拖拽直接被取消）。
+* **凭据加密**：密码与私钥口令用 **DPAPI（当前用户）** 加密后存 `config.json`
+  （`Helpers/SecretProtector` + `Services/Native/DpapiInterop`，没引 `ProtectedData` 那个 NuGet 包）。
+  解不开（换了 Windows 用户 / 换了机器）时按“没存过密码”处理并记一行日志。
+* **设置窗口新增「远程」分类**：列出已配好的位置（每行「编辑… / 删除」）+ 「添加位置…」，编辑对话框是代码搭的
+  （`Views/SettingsView.Remote.cs`）：名称 / 协议 / 主机 / 端口 / 用户名 / 登录方式（密码 / 私钥 / 匿名）/
+  密码 / 私钥文件（可浏览）/ 私钥口令 / 起始目录 / 被动模式 / 允许无效证书，按协议与登录方式互相置灰。
+  改完立即落盘（与其它设置一样走 `MainViewModel.ApplySettings`），只有**连接相关的字段真的变了**才作废已有连接。
+* **中转目录**（`%LOCALAPPDATA%\exdir\remote-cache`，规则与 `archive-cache` 完全一致，见 `Helpers/RemoteCache`）：
+  `copy` 随时可删（启动时全清）、`open` 与 `drag` 只删一天前的（用户可能正开着 / 对方进程可能还在拷）。
+* 回归：`tools\test-remote.ps1`（9 用例，UIA，不需交互桌面）、`tools\remote-smoke`（服务级，需先起
+  `tools\remote-test-server`）；真鼠标与拖拽需要交互桌面，见上面「回归脚本」那一节。
 
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
@@ -1113,6 +1204,61 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
       「能真的 `OpenRead` 出中央目录」/「剪贴板里已出现这个路径」，见脚本里的 `Wait-Zip` / `Wait-ClipboardContains`。
     * 另：桌面被锁时（`GetForegroundWindow()` 为 0、`OpenInputDesktop` 失败、有 `LogonUI.exe`）`SetCursorPos` /
       `mouse_event` / `SendKeys` 全部静默失效 → 真鼠标脚本会把「菜单没弹」报成产品问题。**跑之前先确认屏幕没锁。**
+
+95. **把压缩包里的条目拖出去：数据包必须在拖拽开始前就有真实文件。** 包内条目是虚拟路径，交不出 `CF_HDROP`；
+    而 WinUI 3 的“延迟提供数据”（`DataPackage.SetDataProvider(StandardDataFormats.StorageItems, …)`）有已知 bug
+    （microsoft-ui-xaml#9629，2024-05 至今仍开）：拖到桌面 / 资源管理器时直接显示禁止光标，延迟那一步根本不会被走到。
+    → 只能在手势里先解包，再 `SetStorageItems`。几个必须按这个顺序做的地方：
+    * **解包放在 `StartDragAsync` 之前**（`DetailsView.PrepareArchiveDragAsync`），`DragStarting` 里同步写数据包 ——
+      `DragStarting` 是同步事件，写包时不能 await；虽然它提供了 `GetDeferral()`，但那条路要跨 await 碰 WinRT 事件参数，
+      而不预解包还有一个硬约束：**拖拽循环一旦开始，数据包就改不了了**。
+    * **预解出来的东西不要放进 `_draggingPaths`**，否则“拖拽没启动（例如按下后只晃了一下就松手）”时，
+      收尾的兜底（`CompleteInternalDropAsync`）会拿它真做一次复制 —— 单击变复制。只在 `DragStarting` 里写。
+    * **落到包内必须整个不接受**：那时 `CurrentPath` 是虚拟路径，而 `NormalizeDirectoryPath` 对 "…\a.zip" 返回的是
+      它**所在的目录**（第 83 条）→ 兜底路径会把包内条目拷到压缩包旁边。所以 `CompleteInternalDropAsync` 里除了
+      “行是包内行”还要判 `IsInsideArchive`。
+    * **临时副本要分类清理**：`archive-cache\drag\<guid>`（拖出去，对方进程可能正在拷）与 `copy`（粘贴中转，用完就删）
+      不同 —— 前者只能按时间扫（一天前），后者可以随时删。拖进 exdir 自己的窗格时靠 `OnFileOperationCompleted` →
+      `ReleaseStagingFor(源路径)` 马上回收；拖到资源管理器 / 被 Esc 取消 / 落在包内则留到下次启动的扫描。
+    * **别把临时副本当成用户的目录**：这类拖拽带 `StorageItems`，工具条固定目录区与侧边栏收藏夹本来会当成普通拖入
+      （把它们固定 / 收藏起来就是缓存里一个迟早被删的路径）→ 数据包里额外带标记格式 `exdir/archive-drag`，
+      `DragDropHelper.MayContainFolder` 见到它直接返回 false。远程位置拖出去走的是同一条路（只是临时文件是下下来的）。
+
+96. **`config.json` 里的 `double.NaN` 会让 `Save()` 直接抛异常，而异常被吞掉**：`AppSettings.WindowX/Y` 的默认值是
+    `double.NaN`（“还没定位过”），而 JSON 没有 NaN 字面量 → 任何一次“窗口还没定位就 Save”的写入都抛
+    `ArgumentException: .NET number values such as positive and negative infinity cannot be written as valid JSON`。
+    症状跟第 66 条一模一样（设置里改了东西、界面当场生效、但 `config.json` 没变、重开又变回去）。
+    修法：`SettingsService.SerializerOptions.NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals`
+    （写出来是 `"NaN"` 字符串，读回来还是 NaN）。**新增任何 `double` 字段都要想到这件事** ——
+    测试时把 `config.json` 删掉、开窗口就去改设置，最容易撞上。
+    另：**只读的计算属性会被 System.Text.Json 一起写进 `config.json`**（`RemoteLocation` 的
+    `DisplayName` / `EffectivePort` / `ConnectionKey` 全部跑进去了），给它们加 `[JsonIgnore]`。
+
+97. **SSH.NET 的 SFTP 服务器是“一个 READDIR 一个响应”**：写 `tools\remote-test-server` 时照着 RFC 草稿做成
+    “NAME（带条目）+ STATUS(EOF)”被 SSH.NET 夹在一起来 → 客户端报 `Invalid response.`
+    （`SftpSession.HandleResponse` 里 `_requests` 找不到这个响应 id 就抛）。正确做法：每次 READDIR 只回一个响应，
+    目录列完了的**下一次** READDIR 才回 `STATUS(EOF)`（`SftpRequest.Complete` 会在收到第一个响应后就把请求从表里摘掉）。
+    ssh2 自己的客户端对“多回一个 EOF”是宽容的，只有 SSH.NET 不容 —— 两边都测一下最稳。
+
+98. **远程路径不能交给 `DirectoryInfo` / `Path.GetPathRoot`**：里面的 `:` 会被当成非法字符（`DirectoryInfo` 直接抛），
+    而 `Path.GetPathRoot("sftp://host/a")` 是空串（面包屑会变成空的）。所以：
+    `FolderTabViewModel.CurrentDirectoryName` 与 `SplitPath` 都有远程分支（根那一段显示成 `user@host` 而不是整条
+    `sftp://…`），`FileSystemService.GetParentDirectory` 先看协议头。另：`DriveService.GetDriveForPath` 对这种路径
+    返回 null（状态栏的磁盘容量那段留空），不用特殊处理。
+
+99. **SSH.NET 2026 会把 BouncyCastle 拖进来**（`BouncyCastle.Cryptography.dll` 4.92 MB，dist 84 MB → 93 MB）。
+    别退回 2024.x（有已知高危漏洞：NU1903），也别想着用 `TrimmableAssembly` 裁 BouncyCastle ——
+    它靠反射查算法，裁了会在运行时才炸。FluentFTP 自带 FTPS 支持，不用额外包。
+    两个库在 `TrimMode=partial` 下**原样保留**（它们没标 `IsTrimmable`），已经在 dist 上跑过
+    `tools\remote-smoke` 与 `test-remote.ps1`（43 断言）。
+
+100. **远程位置必须把“能不能写”做成一套与压缩包并列的守卫**（不是复用压缩包那套）：远程目录里的
+    `IsInsideArchive` 是 false，于是 `RefuseInArchive()` 放行，而实际上一写就会落到 `NormalizeDirectoryPath` 上 ——
+    它对 `sftp://…` 返回 null（“目标目录不存在”）或对 `…/a.zip` 返回压缩包**所在的目录**（第 83 条）。
+    现在的做法：`FolderTabViewModel.IsRemote` + `RefuseInRemote()`，写操作入口（粘贴 / 剪切 / 删除 / 新建文件夹 /
+    终端 / 属性 / 在资源管理器中显示 / 压缩 / `TransferAsync`）逐个加，右键菜单另做一份“远程只读版”；
+    拖放落点则在 `DetailsView.TryResolveDrop` / `CompleteInternalDropAsync` 里遇到远程行 / 远程当前目录**整个不接受**
+    （不能退回到“当前目录”，那会搬错地方）。
 
 ## 7. 非打包模式下的 API 限制
 

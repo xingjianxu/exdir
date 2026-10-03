@@ -47,6 +47,7 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _sidebarShowFavorites;
     private bool _sidebarShowCloud;
     private bool _sidebarShowComputer;
+    private bool _sidebarShowRemote;
     private bool _sidebarHomeDesktop;
     private bool _sidebarHomeDocuments;
     private bool _sidebarHomeDownloads;
@@ -66,6 +67,7 @@ public sealed class SettingsViewModel : ObservableObject
             new(SettingsCategory.Layout, "布局"),
             new(SettingsCategory.Startup, "启动"),
             new(SettingsCategory.Sidebar, "侧边栏"),
+            new(SettingsCategory.Remote, "远程"),
             new(SettingsCategory.ShellMenu, "右键菜单"),
         };
 
@@ -98,6 +100,13 @@ public sealed class SettingsViewModel : ObservableObject
         _sidebarHomeVideos = settings.SidebarHomeVideos;
         _useBuiltInContextMenu = settings.UseBuiltInContextMenu;
         _startWithWindows = settings.StartWithWindows;
+        _sidebarShowRemote = settings.SidebarShowRemote;
+
+        // 远程位置：编辑的是一份**深拷贝**（设置窗口自己不改 config.json）
+        foreach (var location in settings.RemoteLocations)
+        {
+            RemoteLocationItems.Add(new RemoteLocationItemViewModel(location.Clone()));
+        }
 
         // 主题下拉框：0 = 跟随系统 / 1 = 浅色 / 2 = 深色（见 ThemeHelper，与 SettingsView.xaml 里的项顺序一致）
         _themeIndex = ThemeHelper.ToIndex(settings.Theme);
@@ -141,6 +150,7 @@ public sealed class SettingsViewModel : ObservableObject
             OnPropertyChanged(nameof(IsLayoutPageVisible));
             OnPropertyChanged(nameof(IsStartupPageVisible));
             OnPropertyChanged(nameof(IsSidebarPageVisible));
+            OnPropertyChanged(nameof(IsRemotePageVisible));
             OnPropertyChanged(nameof(IsShellMenuPageVisible));
         }
     }
@@ -159,6 +169,9 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>右侧是否显示「侧边栏」页。</summary>
     public bool IsSidebarPageVisible => _selectedCategory.Key == SettingsCategory.Sidebar;
+
+    /// <summary>右侧是否显示「远程」页。</summary>
+    public bool IsRemotePageVisible => _selectedCategory.Key == SettingsCategory.Remote;
 
     /// <summary>右侧是否显示「右键菜单」页。</summary>
     public bool IsShellMenuPageVisible => _selectedCategory.Key == SettingsCategory.ShellMenu;
@@ -427,6 +440,69 @@ public sealed class SettingsViewModel : ObservableObject
     {
         get => _sidebarShowComputer;
         set => SetAndNotify(ref _sidebarShowComputer, value);
+    }
+
+    /// <summary>显示「远程」分组（SFTP / FTP 位置）。</summary>
+    public bool SidebarShowRemote
+    {
+        get => _sidebarShowRemote;
+        set => SetAndNotify(ref _sidebarShowRemote, value);
+    }
+
+    // ------------------------------------------------------------------ 远程位置（SFTP / FTP）
+
+    /// <summary>
+    /// 配置好的远程位置（设置窗口「远程」页里那几行）。
+    /// 每行点「编辑…」弹对话框改的就是这份副本；改完立即发一次 <see cref="Changed" />。
+    /// </summary>
+    public ObservableCollection<RemoteLocationItemViewModel> RemoteLocationItems { get; } = new();
+
+    /// <summary>一行都没有时显示“还没有远程位置”的提示。</summary>
+    public bool HasRemoteLocations => RemoteLocationItems.Count > 0;
+
+    /// <summary>
+    /// 交给 <c>MainViewModel.ApplySettings</c> 的清单快照（都是副本，改这份不会动设置里的对象）。
+    /// </summary>
+    public IReadOnlyList<RemoteLocation> RemoteLocations
+        => RemoteLocationItems.Select(static item => item.Location.Clone()).ToList();
+
+    /// <summary>新增一个位置（对话框确认后调）。</summary>
+    public void AddRemoteLocation(RemoteLocation location)
+    {
+        RemoteLocationItems.Add(new RemoteLocationItemViewModel(location));
+        AfterRemoteLocationsChanged();
+    }
+
+    /// <summary>替换一行（编辑对话框确认后调）；行不在集合里时什么都不做。</summary>
+    public void UpdateRemoteLocation(RemoteLocationItemViewModel item, RemoteLocation location)
+    {
+        var index = RemoteLocationItems.IndexOf(item);
+        if (index < 0)
+        {
+            return;
+        }
+
+        item.Update(location);
+
+        // 名字 / 起始目录变了可能影响排序，但用户自己排的顺序更该尊重 —— 原位替换
+        RemoteLocationItems[index] = item;
+        AfterRemoteLocationsChanged();
+    }
+
+    /// <summary>删掉一行。</summary>
+    public void RemoveRemoteLocation(RemoteLocationItemViewModel item)
+    {
+        if (RemoteLocationItems.Remove(item))
+        {
+            AfterRemoteLocationsChanged();
+        }
+    }
+
+    private void AfterRemoteLocationsChanged()
+    {
+        OnPropertyChanged(nameof(RemoteLocations));
+        OnPropertyChanged(nameof(HasRemoteLocations));
+        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     // ------------------------------------------------------------------ 侧边栏：主目录里的标准文件夹

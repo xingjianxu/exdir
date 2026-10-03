@@ -6,7 +6,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%USERPROFILE%\.config\exdir\config.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 9;
+    public const int CurrentSchemaVersion = 10;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -35,6 +35,9 @@ public sealed class AppSettings
 
     /// <summary>侧边栏「此电脑」分组（各磁盘）是否显示。</summary>
     public bool SidebarShowComputer { get; set; } = true;
+
+    /// <summary>侧边栏「远程」分组（SFTP / FTP 位置）是否显示。</summary>
+    public bool SidebarShowRemote { get; set; } = true;
 
     // ---------- 侧边栏：主目录里显示哪些标准文件夹 ----------
     // 侧边栏「主目录」分组本身（SidebarShowHome）控制的是这个分组在不在；
@@ -122,6 +125,15 @@ public sealed class AppSettings
     /// 非空时该目录不存在会自动建出来。
     /// </summary>
     public string CompressionOutputDirectory { get; set; } = string.Empty;
+
+    // ---------- 远程位置（SFTP / FTP） ----------
+
+    /// <summary>
+    /// 用户配置的远程位置（SFTP / FTP / FTPS），显示在侧边栏「远程」分组里。
+    /// 密码与私钥口令是 DPAPI 加密后的 Base64（见 <see cref="Exdir.Helpers.SecretProtector" />），
+    /// config.json 里看不到明文。
+    /// </summary>
+    public List<RemoteLocation> RemoteLocations { get; set; } = new();
 
     // ---------- 会话 ----------
     /// <summary>左（主）窗格打开的标签页路径。</summary>

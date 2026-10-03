@@ -32,6 +32,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private readonly IArchiveService _archive;
     private readonly IArchiveClipboardService _archiveClipboard;
     private readonly ICompressionService _compression;
+    private readonly IRemoteFileService _remote;
     private readonly IDialogService _dialogs;
     private readonly IKnownFolderService _knownFolders;
 
@@ -65,6 +66,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private bool _showExtensions = true;
     private bool _enableListAnimations = true;
     private CornerRadius _tabCornerRadius;
+    private string? _busyMessage;
     private string? _statusMessage;
     private string? _statusTitle;
     private string? _statusTargetPath;
@@ -82,6 +84,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         IArchiveService archive,
         IArchiveClipboardService archiveClipboard,
         ICompressionService compression,
+        IRemoteFileService remote,
         IKnownFolderService knownFolders,
         IDialogService dialogs)
     {
@@ -95,6 +98,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         _archive = archive;
         _archiveClipboard = archiveClipboard;
         _compression = compression;
+        _remote = remote;
         _knownFolders = knownFolders;
         _dialogs = dialogs;
 
@@ -146,6 +150,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
                 OnPropertyChanged(nameof(TooltipText));
                 OnPropertyChanged(nameof(IsInsideArchive));
                 OnPropertyChanged(nameof(ArchiveFile));
+                OnPropertyChanged(nameof(IsRemote));
             }
         }
     }
@@ -164,6 +169,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
     public string? ArchiveFile
         => _fileSystem.TryParseArchivePath(_currentPath, out var location) ? location.ArchiveFile : null;
 
+    /// <summary>
+    /// 当前目录在远程位置（SFTP / FTP）上：整个标签页只读 —— 粘贴 / 删除 / 剪切 / 新建文件夹 /
+    /// 拖入 / 终端 / 属性 / 在资源管理器中显示全部拒绝，双击文件改成“先下到本地再用默认程序打开”。
+    /// 例外是「复制」与“拖出去”：它们把远程条目下到本地中转目录再交给系统（见 AGENTS.md“远程位置”）。
+    /// </summary>
+    public bool IsRemote => _fileSystem.IsRemotePath(_currentPath);
+
     /// <summary>地址栏面包屑分段（随 <see cref="CurrentPath"/> 变化整体替换）。</summary>
     public IReadOnlyList<PathSegmentViewModel> PathSegments
     {
@@ -179,6 +191,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
             if (string.IsNullOrEmpty(_currentPath))
             {
                 return "此电脑";
+            }
+
+            // 远程路径不能交给 DirectoryInfo 解：里面的 ':' 会被当成非法字符
+            //（根目录用登录身份当名字：sftp://user@host/ → user@host）
+            if (RemotePath.TryParse(_currentPath, out var remote))
+            {
+                return remote.Path == "/" ? RemotePath.RootDisplayOf(remote) : RemotePath.NameOf(remote);
             }
 
             try
@@ -311,6 +330,24 @@ public sealed partial class FolderTabViewModel : ObservableObject
     }
 
     public bool HasStatus => !string.IsNullOrEmpty(_statusMessage);
+
+    /// <summary>
+    /// 一件“看得见会慢一点”的事正在做时的提示（目前只有“拖拽之前先把包内条目解到临时目录”，
+    /// 见 <see cref="BuildDragPayloadAsync" />）：文件列表顶部一条不可关闭、没有按钮的 InfoBar。
+    /// </summary>
+    public string? BusyMessage
+    {
+        get => _busyMessage;
+        private set
+        {
+            if (SetProperty(ref _busyMessage, value))
+            {
+                OnPropertyChanged(nameof(HasBusy));
+            }
+        }
+    }
+
+    public bool HasBusy => !string.IsNullOrEmpty(_busyMessage);
 
     /// <summary>
     /// 提示条的标题（「解压完成」/「压缩完成」）：由 <see cref="SetStatus" /> 按具体操作设置。
@@ -580,6 +617,22 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     /// <summary>压缩包里只读：写操作的统一拒绝文案。</summary>
     public const string ArchiveReadOnlyMessage = "压缩包内不支持该操作（只读浏览）";
+
+    /// <summary>远程位置（SFTP / FTP）只读：写操作的统一拒绝文案。</summary>
+    public const string RemoteReadOnlyMessage = "远程位置不支持该操作（只能浏览与下载）";
+
+    /// <summary>当前目录是远程位置（SFTP / FTP）；是的话显示只读提示并返回 true。</summary>
+    private bool RefuseInRemote()
+    {
+        if (!IsRemote)
+        {
+            return false;
+        }
+
+        Log.Write("远程位置只读：当前目录在远程位置上，拒绝写操作");
+        ErrorMessage = RemoteReadOnlyMessage;
+        return true;
+    }
 
     /// <summary>
     /// 弹密码框并记下来；返回 false 表示不该重试（已经给出错误文案）。
@@ -863,7 +916,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// 内置右键菜单里的「压缩」据此决定可不可点（命令的 CanExecute 同源）。
     /// 目录与文件都可以压缩。
     /// </summary>
-    public bool CanCompressSelection => _selection.Count > 0 && _selection.All(static item => !item.IsInArchive);
+    public bool CanCompressSelection => _selection.Count > 0
+                                        && !IsRemote
+                                        && _selection.All(static item => !item.IsInArchive);
 
     /// <summary>
     /// 内置右键菜单「压缩」：把选中的文件 / 目录（目录含整棵子树）打成一个 zip，
@@ -1087,6 +1142,94 @@ public sealed partial class FolderTabViewModel : ObservableObject
         OpenItem(item);
     }
 
+    /// <summary>
+    /// 远程文件：先下到 <c>remote-cache\open</c>（同名且大小一致就复用上次的副本），
+    /// 再交给默认程序打开。下载期间显示一条忙提示。
+    /// </summary>
+    private async Task OpenRemoteFileAsync(FileItemViewModel item)
+    {
+        var target = RemoteCache.OpenPathFor(item.FullPath, item.Name, item.Size);
+
+        SetBusy($"正在下载 {item.DisplayName}…");
+
+        try
+        {
+            await _remote.DownloadFileToAsync(item.FullPath, target, item.Size).ConfigureAwait(true);
+            _shell.OpenWithDefaultApp(target);
+            Log.Write($"打开远程文件：{item.FullPath} → {target}");
+        }
+        catch (OperationCanceledException)
+        {
+            // 用户取消：什么都不做
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            Log.Exception($"下载远程文件（{item.FullPath}）", ex);
+        }
+        finally
+        {
+            BusyMessage = null;
+        }
+    }
+
+    /// <summary>
+    /// 「下载到…」：把选中项（目录含整棵子树）下到用户挑的本地目录。
+    /// 只对远程位置上的选中项有意义（本地条目用普通复制）。
+    /// </summary>
+    public bool CanDownloadSelection => _selection.Count > 0 && IsRemote;
+
+    [RelayCommand(CanExecute = nameof(CanDownloadSelection))]
+    private async Task DownloadSelectionAsync()
+    {
+        var paths = _selection.Select(i => i.FullPath).ToList();
+        if (paths.Count == 0)
+        {
+            return;
+        }
+
+        string? destination;
+        try
+        {
+            destination = await _dialogs.PickFolderAsync(ResolveDownloadsDirectory()).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("选择远程下载目录", ex);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(destination))
+        {
+            return;
+        }
+
+        IsLoading = true;
+        ErrorMessage = null;
+
+        try
+        {
+            var written = await _remote.DownloadAsync(paths, destination).ConfigureAwait(true);
+
+            // 绿色提示条（带「打开目录」）——与「解压到下载文件夹」同一套
+            SetStatus("下载完成", $"已下载 {written.Count} 项到 {destination}", destination);
+            Log.Write($"远程下载完成：{written.Count} 项 → {destination}");
+        }
+        catch (OperationCanceledException)
+        {
+            // 用户取消
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+            Log.Exception($"下载远程条目（{paths.Count} 项）", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
     // ------------------------------------------------------------------ 图标
 
     /// <summary>
@@ -1103,6 +1246,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
         // 先置位再 await：容器反复回收重建时同一行不会重复排队
         item.IconRequested = true;
+
+        // 远程条目没有本地路径，问外壳要图标没意义（可能拿到一个不相干的通用图标，还白花时间）：
+        // 直接用按扩展名推断的字形（行模板里字形就是没图标时的占位）
+        if (IsRemote || _fileSystem.IsRemotePath(item.FullPath))
+        {
+            return;
+        }
 
         try
         {
@@ -1143,12 +1293,20 @@ public sealed partial class FolderTabViewModel : ObservableObject
         return loaded;
     }
 
-    /// <summary>双击 / 回车打开某一项。</summary>
+    /// <summary>双击 / 回车打开某一项。目录进入，文件交给默认程序。</summary>
     public void OpenItem(FileItemViewModel item)
     {
         if (item.IsDirectory)
         {
             _ = NavigateAsync(item.FullPath);
+            return;
+        }
+
+        // 远程位置上的文件：没有本地路径，先下到中转目录再用默认程序打开
+        //（与压缩包里的文件同一种做法，见 AGENTS.md“远程位置”）
+        if (IsRemote || _fileSystem.IsRemotePath(item.FullPath))
+        {
+            _ = OpenRemoteFileAsync(item);
             return;
         }
 
@@ -1209,6 +1367,17 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     public void OpenSelectionWithDefaultApp()
     {
+        // 远程位置：没有本地路径，先下到中转目录再分别交给默认程序
+        if (IsRemote)
+        {
+            foreach (var item in _selection.Where(static i => !i.IsDirectory).ToList())
+            {
+                _ = OpenRemoteFileAsync(item);
+            }
+
+            return;
+        }
+
         // 包内条目没有真实路径，交给外壳也打不开
         if (RefuseSelectionInArchive())
         {
@@ -1245,6 +1414,14 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CopySelection()
     {
+        // 远程位置的条目：先下到中转目录，再把**真实文件**放进系统剪贴板
+        //（粘到本地目录 / 粘到资源管理器都能用；中转副本在复制完成后回收，见 RemoteCache）
+        if (IsRemote)
+        {
+            _ = CopyRemoteSelectionAsync();
+            return;
+        }
+
         // 压缩包内部的条目（含在真实目录里就地展开出来的那几行）没有真实路径：
         // 只能把“压缩包 + 包内路径”记进内存，到真实目录粘贴时再解出来
         if (SelectionContainsArchiveEntries())
@@ -1268,6 +1445,59 @@ public sealed partial class FolderTabViewModel : ObservableObject
         if (_clipboard.SetFiles(paths, move: false))
         {
             Log.Write($"复制到剪贴板：{paths.Count} 项");
+        }
+    }
+
+    /// <summary>
+    /// 远程「复制」：把选中项（目录含整棵子树）下到 <c>remote-cache\copy\&lt;guid&gt;</c>，
+    /// 再把解出来的真实文件写进系统剪贴板（<c>CF_HDROP</c> + 复制意图）。
+    ///
+    /// <para>
+    /// 为什么不只记在内存里：剪贴板必须能跨进程用（粘到资源管理器、粘贴时交给 <c>SHFileOperation</c>），
+    /// 而 <c>CF_HDROP</c> 只认真实文件路径。代价是“按 Ctrl+C”那一刻就开始下载了。
+    /// </para>
+    /// </summary>
+    private async Task CopyRemoteSelectionAsync()
+    {
+        var remotePaths = _selection.Select(i => i.FullPath).ToList();
+        if (remotePaths.Count == 0)
+        {
+            return;
+        }
+
+        var staging = RemoteCache.NewStaging(RemoteCache.CopyCategory);
+        SetBusy($"正在下载 {remotePaths.Count} 项到剪贴板…");
+
+        try
+        {
+            var written = await _remote.DownloadAsync(remotePaths, staging).ConfigureAwait(true);
+
+            // 剪贴板只能有一份内容：复制真实文件就把内存里的包内条目清掉
+            _archiveClipboard.Clear();
+
+            if (_clipboard.SetFiles(written, move: false))
+            {
+                Log.Write($"远程复制到剪贴板：{written.Count} 项（中转目录 {staging}）");
+            }
+            else
+            {
+                _remote.ReleaseStaging(staging);
+                ErrorMessage = "无法写入剪贴板";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _remote.ReleaseStaging(staging);
+        }
+        catch (Exception ex)
+        {
+            _remote.ReleaseStaging(staging);
+            ErrorMessage = ex.Message;
+            Log.Exception($"下载远程条目到剪贴板（{remotePaths.Count} 项）", ex);
+        }
+        finally
+        {
+            BusyMessage = null;
         }
     }
 
@@ -1322,7 +1552,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CutSelection()
     {
-        if (RefuseSelectionInArchive())
+        // 远程位置只读：不能从远程剪走东西（“复制到本地”请用「下载到…」或「复制」）
+        if (RefuseInRemote() || RefuseSelectionInArchive())
         {
             return;
         }
@@ -1346,7 +1577,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private async Task PasteAsync()
     {
-        if (RefuseInArchive())
+        // 包内 / 远程目录都不能粘（写的是虚拟路径 / 只读位置）
+        if (RefuseInArchive() || RefuseInRemote())
         {
             return;
         }
@@ -1451,6 +1683,174 @@ public sealed partial class FolderTabViewModel : ObservableObject
     }
 
     /// <summary>
+    /// 拖拽开始前把选中项变成“交给外壳的真实路径”。
+    ///
+    /// <para>
+    /// 真实条目原样用；**压缩包里的条目没有真实路径**，先解到临时目录
+    /// （<see cref="IArchiveService.ExtractForDragAsync" />）—— 否则数据包里就没有
+    /// <c>CF_HDROP</c>，拖到资源管理器 / 桌面会被直接拒掉（WinUI 3 的“延迟提供 StorageItems”
+    /// 有已知 bug，不能让壳自己去问，见 AGENTS.md 第 6 节第 95 条）。
+    /// </para>
+    /// <para>
+    /// 返回 null 表示这次拖拽不该开始（原因已经写进 <see cref="ErrorMessage" />）。
+    /// 解包期间显示一条忙提示（几百 MB 的大条目要等一会儿）；加密包照旧问密码。
+    /// </para>
+    /// </summary>
+    public async Task<DragPayload?> BuildDragPayloadAsync(IReadOnlyList<FileItemViewModel> items)
+    {
+        var paths = new List<string>();
+        var staging = new List<string>();
+
+        // 包内行 -> “压缩包 + 包内路径”；解析不出来的按陈旧选中项跳过
+        var archiveEntries = new List<(string ArchiveFile, string InnerPath)>();
+
+        // 远程行：没有本地路径，要先把它们下到中转目录（交不出 CF_HDROP 就拖不出去）
+        var remoteEntries = new List<string>();
+
+        foreach (var item in items)
+        {
+            if (_fileSystem.IsRemotePath(item.FullPath))
+            {
+                remoteEntries.Add(item.FullPath);
+                continue;
+            }
+
+            if (item.IsInArchive)
+            {
+                if (_fileSystem.TryParseArchivePath(item.FullPath, out var location) && location.InnerPath.Length > 0)
+                {
+                    archiveEntries.Add((location.ArchiveFile, location.InnerPath));
+                }
+
+                continue;
+            }
+
+            paths.Add(item.FullPath);
+        }
+
+        if (archiveEntries.Count == 0 && remoteEntries.Count == 0)
+        {
+            return paths.Count > 0 ? new DragPayload(paths, staging) : null;
+        }
+
+        var succeeded = true;
+
+        // 先把远程条目下下来（可能很慢，所以显示忙提示）
+        if (remoteEntries.Count > 0)
+        {
+            var directory = RemoteCache.NewStaging(RemoteCache.DragCategory);
+            SetBusy($"正在从远程位置下载 {remoteEntries.Count} 项…");
+
+            try
+            {
+                var written = await _remote.DownloadAsync(remoteEntries, directory).ConfigureAwait(true);
+                paths.AddRange(written);
+                staging.Add(directory);
+            }
+            catch (OperationCanceledException)
+            {
+                _remote.ReleaseStaging(directory);
+                succeeded = false;
+            }
+            catch (Exception ex)
+            {
+                _remote.ReleaseStaging(directory);
+                ErrorMessage = $"无法从远程位置下载：{ex.Message}";
+                Log.Exception($"拖拽前下载远程条目（{remoteEntries.Count} 项）", ex);
+                succeeded = false;
+            }
+            finally
+            {
+                BusyMessage = null;
+            }
+        }
+
+        // 再解压缩包内的条目（一个包只解一次）
+        if (succeeded && archiveEntries.Count > 0)
+        {
+            SetBusy($"正在解出压缩包内条目（{archiveEntries.Count} 项）…");
+
+            try
+            {
+                succeeded = await ExtractForDragAsync(archiveEntries, paths, staging).ConfigureAwait(true);
+            }
+            finally
+            {
+                BusyMessage = null;
+            }
+        }
+
+        if (!succeeded)
+        {
+            // 中途失败（或用户取消）：前面已经解出来 / 下下来的临时副本没用了，别占着磁盘
+            foreach (var directory in staging)
+            {
+                _archive.ReleaseStaging(directory);
+                _remote.ReleaseStaging(directory);
+            }
+
+            return null;
+        }
+
+        Log.Write(
+            $"拖拽准备：{paths.Count} 项（其中 {staging.Count} 处临时副本：远程 {remoteEntries.Count} 项、"
+            + $"包内 {archiveEntries.Count} 条）");
+
+        return new DragPayload(paths, staging);
+    }
+
+    /// <summary>
+    /// 按压缩包分组解出包内条目：一个包只解一次（固实包逐个条目解会把同一块数据重复解多遍）。
+    /// 失败 / 取消时返回 false（提示已经写好）。
+    /// </summary>
+    private async Task<bool> ExtractForDragAsync(
+        IReadOnlyList<(string ArchiveFile, string InnerPath)> entries,
+        List<string> paths,
+        List<string> staging)
+    {
+        foreach (var group in entries.GroupBy(static entry => entry.ArchiveFile, StringComparer.OrdinalIgnoreCase))
+        {
+            var inner = group.Select(static entry => entry.InnerPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    var extraction = await _archive.ExtractForDragAsync(group.Key, inner).ConfigureAwait(true);
+                    paths.AddRange(extraction.Paths);
+                    staging.Add(extraction.StagingDirectory);
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    return false;
+                }
+                catch (ArchivePasswordRequiredException ex)
+                {
+                    if (!await TryAskPasswordAsync(ex, attempt).ConfigureAwait(true))
+                    {
+                        return false;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    ErrorMessage = $"无法解出压缩包内条目：{ex.Message}";
+                    Log.Exception($"解出压缩包内条目（{group.Key}）", ex);
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private void SetBusy(string message)
+    {
+        ErrorMessage = null;
+        BusyMessage = message;
+    }
+
+    /// <summary>
     /// 拖放落下：把一批文件 / 目录移动（按住 Ctrl 时是复制）到目标目录。
     /// 目标可能是当前目录（拖到列表空白处），也可能是列表里的某个目录行，甚至另一个窗格。
     /// </summary>
@@ -1472,7 +1872,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     private async Task RunDeleteAsync(bool permanent)
     {
-        if (RefuseSelectionInArchive())
+        if (RefuseSelectionInArchive() || RefuseInRemote())
         {
             return;
         }
@@ -1509,8 +1909,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         bool move,
         bool skipItemsAlreadyInTarget)
     {
-        // 包内不能粘 / 拖入（写入路径）；包内条目也拖不出来（没有真实路径），统一拒绝
-        if (RefuseInArchive())
+        // 包内 / 远程目录不能粘 / 拖入（写的是虚拟路径 / 只读位置）；
+        // 包内条目**拖出去**走的是解出来的临时副本（真实路径），不在这里拒绝
+        if (RefuseInArchive() || RefuseInRemote())
         {
             return false;
         }
@@ -1585,7 +1986,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void RevealInExplorer()
     {
-        if (RefuseSelectionInArchive())
+        if (RefuseSelectionInArchive() || RefuseInRemote())
         {
             return;
         }
@@ -1601,7 +2002,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void ShowProperties()
     {
-        if (RefuseSelectionInArchive())
+        if (RefuseSelectionInArchive() || RefuseInRemote())
         {
             return;
         }
@@ -1620,7 +2021,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private async Task CreateNewFolderAsync()
     {
-        if (RefuseInArchive())
+        if (RefuseInArchive() || RefuseInRemote())
         {
             return;
         }
@@ -1660,7 +2061,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private void OpenTerminal()
     {
-        if (RefuseInArchive())
+        if (RefuseInArchive() || RefuseInRemote())
         {
             return;
         }
@@ -1671,7 +2072,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private void OpenTerminalAsAdmin()
     {
-        if (RefuseInArchive())
+        if (RefuseInArchive() || RefuseInRemote())
         {
             return;
         }
@@ -1979,7 +2380,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// <summary>把路径切成面包屑分段；最后一段即当前目录。</summary>
     private static IReadOnlyList<PathSegmentViewModel> BuildSegments(string path)
     {
-        var raw = SplitPath(path);
+        // 远程路径（sftp://…）不能走 SplitPath：它靠 Path.GetPathRoot 拆盘符，对协议头一无所知
+        var raw = RemotePath.TryParse(path, out var remote)
+            ? RemotePath.Segments(remote)
+            : SplitPath(path);
+
         var segments = new List<PathSegmentViewModel>(raw.Count);
 
         for (var i = 0; i < raw.Count; i++)

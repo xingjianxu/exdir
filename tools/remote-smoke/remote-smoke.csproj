@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    远程位置（SFTP / FTP）的**服务级**冒烟测试（不需要交互桌面，见 AGENTS.md 第 2 节）：
+    直接把 app 里那几个源文件编进来跑真实实现，覆盖路径解析 / 连接池 / 列目录 / 存在性判断 /
+    递归下载 / 中转目录回收；协议那一头是本机跑起来的 tools\remote-test-server（node）。
+
+    跑法（先起服务器，参数：root / ftp-port / sftp-port / user / password / key）：
+      node tools\remote-test-server\server.js  （具体用例与参数见 tools\test-remote.ps1）
+      然后 dotnet run（工程就是 tools\remote-smoke）
+
+    界面部分（侧边栏出现节点、点击浏览、右键下载到…）在 tools\test-remote.ps1 里。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>remote-smoke</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Services\IRemoteFileService.cs" />
+    <Compile Include="..\..\Services\IRemoteLocationSource.cs" />
+    <Compile Include="..\..\Services\RemoteFileService.cs" />
+    <Compile Include="..\..\Services\Remote\RemoteEntry.cs" />
+    <Compile Include="..\..\Services\Remote\RemoteSession.cs" />
+    <Compile Include="..\..\Services\Remote\RemoteSessionPool.cs" />
+    <Compile Include="..\..\Services\Remote\SftpSession.cs" />
+    <Compile Include="..\..\Services\Remote\FtpSession.cs" />
+    <Compile Include="..\..\Services\Native\DpapiInterop.cs" />
+    <Compile Include="..\..\Models\RemoteLocation.cs" />
+    <Compile Include="..\..\Models\RemotePath.cs" />
+    <Compile Include="..\..\Models\FileSystemEntry.cs" />
+    <Compile Include="..\..\Models\CloudSyncState.cs" />
+    <Compile Include="..\..\Helpers\SecretProtector.cs" />
+    <Compile Include="..\..\Helpers\RemoteCache.cs" />
+    <Compile Include="..\..\Helpers\FileTypeHelper.cs" />
+    <Compile Include="..\..\Diagnostics\Log.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <PackageReference Include="FluentFTP" Version="55.0.0" />
+  </ItemGroup>
+
+</Project>

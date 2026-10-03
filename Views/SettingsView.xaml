@@ -255,6 +255,14 @@
                             OnContent="" />
                     </controls:SettingsCard>
 
+                    <controls:SettingsCard Description="SFTP / FTP 位置（在「远程」页里增删改）" Header="显示「远程」分组">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「远程」分组"
+                            IsOn="{x:Bind ViewModel.SidebarShowRemote, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
                     <TextBlock
                         Margin="4,12,4,4"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -309,6 +317,61 @@
                             OffContent=""
                             OnContent="" />
                     </controls:SettingsCard>
+                </StackPanel>
+
+                <!-- ============================ 远程 ============================ -->
+                <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.IsRemotePageVisible, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock
+                        Margin="4,0,0,12"
+                        Style="{ThemeResource TitleTextBlockStyle}"
+                        Text="远程" />
+
+                    <TextBlock
+                        Margin="4,0,4,8"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Text="SFTP / FTP 位置会出现在侧边栏「远程」分组里，点一下就能浏览。密码与私钥口令用当前 Windows 用户的凭据加密后保存，config.json 里看不到明文。"
+                        TextWrapping="Wrap" />
+
+                    <TextBlock
+                        Margin="4,0,4,8"
+                        Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                        Style="{ThemeResource CaptionTextBlockStyle}"
+                        Text="还没有远程位置，点下面的「添加位置…」新建一个。"
+                        Visibility="{x:Bind ViewModel.HasRemoteLocations, Mode=OneWay, Converter={StaticResource InverseBoolToVisibility}}"
+                        TextWrapping="Wrap" />
+
+                    <!-- 用 ItemsControl 不用 ListView：默认不虚拟化，所有行都在 UIA 树里（同右键菜单那页） -->
+                    <ItemsControl ItemsSource="{x:Bind ViewModel.RemoteLocationItems, Mode=OneWay}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:RemoteLocationItemViewModel">
+                                <controls:SettingsCard
+                                    Margin="0,0,0,4"
+                                    Description="{x:Bind Subtitle}"
+                                    Header="{x:Bind Title}">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <!-- Tag 是兜底：模板里 x:Bind 的 DataContext 不保证可用（见 AGENTS.md 第 7 条） -->
+                                        <Button
+                                            AutomationProperties.Name="{x:Bind EditButtonName, Mode=OneWay}"
+                                            Click="EditRemoteLocation_Click"
+                                            Content="编辑…"
+                                            Tag="{x:Bind}" />
+                                        <Button
+                                            AutomationProperties.Name="{x:Bind DeleteButtonName, Mode=OneWay}"
+                                            Click="DeleteRemoteLocation_Click"
+                                            Content="删除"
+                                            Tag="{x:Bind}" />
+                                    </StackPanel>
+                                </controls:SettingsCard>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Button
+                        Margin="4,4,0,0"
+                        AutomationProperties.Name="添加位置"
+                        Click="AddRemoteLocation_Click"
+                        Content="添加位置…" />
                 </StackPanel>
 
                 <!-- ============================ 右键菜单 ============================ -->

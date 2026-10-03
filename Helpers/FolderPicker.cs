@@ -26,8 +26,11 @@ public static class FolderPicker
     /// <summary>FOS_PICKFOLDERS：选目录而不是选文件。</summary>
     private const uint FosPickFolders = 0x00000020;
 
-    /// <summary>FOS_FORCEFILESYSTEM：只让选真实文件系统里的目录（否则会返回“库”这种没有路径的项）。</summary>
+    /// <summary>FOS_FORCEFILESYSTEM：只让选真实文件系统里的项（否则会返回“库”这种没有路径的项）。</summary>
     private const uint FosForceFileSystem = 0x00000040;
+
+    /// <summary>FOS_FILEMUSTEXIST：只能选已经存在的文件。</summary>
+    private const uint FosFileMustExist = 0x00001000;
 
     /// <summary>FOS_PATHMUSTEXIST：只能选已经存在的目录。</summary>
     private const uint FosPathMustExist = 0x00000800;
@@ -40,6 +43,16 @@ public static class FolderPicker
     /// <paramref name="initialDirectory" /> 存在时对话框从它开始。
     /// </summary>
     public static string? PickFolder(nint ownerWindow, string? initialDirectory)
+        => Show(ownerWindow, initialDirectory, pickFolders: true, "选择文件夹");
+
+    /// <summary>
+    /// 弹出「选择文件」（远程位置的 SFTP 私钥文件用）。返回选中的文件全路径；取消 / 失败返回 null。
+    /// 不做扩展名过滤 —— OpenSSH 的私钥文件（<c>id_rsa</c>、<c>id_ed25519</c>、<c>*.pem</c>…）没有统一后缀。
+    /// </summary>
+    public static string? PickFile(nint ownerWindow, string? initialFilePath)
+        => Show(ownerWindow, initialFilePath, pickFolders: false, "选择私钥文件");
+
+    private static string? Show(nint ownerWindow, string? initialPath, bool pickFolders, string title)
     {
         object? dialogObject = null;
         IShellItem? startFolder = null;
@@ -51,21 +64,34 @@ public static class FolderPicker
             var dialog = (IFileOpenDialog)dialogObject;
 
             dialog.GetOptions(out var options);
-            dialog.SetOptions(options | FosPickFolders | FosForceFileSystem | FosPathMustExist | FosDontAddToRecent);
-            dialog.SetTitle("选择文件夹");
+            dialog.SetOptions(pickFolders
+                ? options | FosPickFolders | FosForceFileSystem | FosPathMustExist | FosDontAddToRecent
+                : options | FosForceFileSystem | FosFileMustExist | FosDontAddToRecent);
+            dialog.SetTitle(title);
 
-            if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
+            if (!string.IsNullOrWhiteSpace(initialPath))
             {
-                var shellItemIid = typeof(IShellItem).GUID;
+                // 选文件时把起点定在它所在的目录，并把文件名填进输入框
+                var directory = pickFolders ? initialPath : Path.GetDirectoryName(initialPath);
 
-                if (SHCreateItemFromParsingName(initialDirectory, nint.Zero, ref shellItemIid, out startFolder) == 0
-                    && startFolder is not null)
+                if (!pickFolders && !string.IsNullOrWhiteSpace(Path.GetFileName(initialPath)))
                 {
-                    dialog.SetFolder(startFolder);
+                    dialog.SetFileName(Path.GetFileName(initialPath));
+                }
+
+                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+                {
+                    var shellItemIid = typeof(IShellItem).GUID;
+
+                    if (SHCreateItemFromParsingName(directory, nint.Zero, ref shellItemIid, out startFolder) == 0
+                        && startFolder is not null)
+                    {
+                        dialog.SetFolder(startFolder);
+                    }
                 }
             }
 
-            // Show 返回 S_OK(0) 表示按了“选择文件夹”；取消 / 失败统一当“没选”
+            // Show 返回 S_OK(0) 表示确认（“选择文件夹”/“打开”）；取消 / 失败统一当“没选”
             if (dialog.Show(ownerWindow) != 0)
             {
                 return null;
@@ -82,8 +108,8 @@ public static class FolderPicker
         }
         catch (Exception ex)
         {
-            // COM 不可用 / 对话框起不来：只记日志，设置项本身（可手填的文本框）照常可用
-            Log.Exception("文件夹选择器", ex);
+            // COM 不可用 / 对话框起不来：只记日志，调用方保留原值（设置项本身可手填）
+            Log.Exception("文件夹 / 文件选择器", ex);
             return null;
         }
         finally
@@ -104,7 +130,6 @@ public static class FolderPicker
             }
         }
     }
-
     // ---------------------------------------------------------------- COM 声明
 
     /// <summary>CLSID_FileOpenDialog 的 coclass。</summary>

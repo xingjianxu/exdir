@@ -12,10 +12,12 @@
 #   5. 包内仍然能排序；行首有图标
 #  13. 真实目录里点压缩包文件行的行首箭头 → 就地展开（不进包）：列表多出包内条目、
 #      导航条上没有「只读」徽标、再点一次能折叠回去、双击包内条目仍能解到临时目录
+#  14. 把就地展开出来的包内行拖到列表空白处（= 当前目录）：拖拽开始时先解到临时目录，
+#      文件真的复制到磁盘上（复制完成后临时副本被回收）
 #   （注：压缩包行与目录行同款箭头，见 AGENTS.md 第 4 节“压缩包只读浏览”）
 #   6. 只读守卫：包内右键菜单里没有剪切/粘贴/删除/属性/“在资源管理器中显示”（「复制」保留，见用例 12），
 #      空白处菜单里没有粘贴/新建文件夹/在此处打开终端；Ctrl+V 只弹只读提示、磁盘无变化；
-#      包内拖拽根本不启动（日志里没有「拖拽开始」）
+#      包内条目能开始拖拽（先解出真实文件），但落在包内不接受、也不会把文件拷到压缩包所在的目录
 #   7. 双击包内文件 → 解到临时目录（日志有「打开压缩包内文件：」，临时文件真的在）
 #   8. .tar.gz → 直接看到 tar 里的内容（透明解开中间那层）
 #   9. 会话能恢复到包内目录
@@ -544,12 +546,16 @@ Assert ($infoBar.Count -ge 1) '包内 Ctrl+V 弹出「压缩包内不支持该�
 $afterFiles = (Get-ChildItem $workDir -Force | Measure-Object).Count
 Assert ($beforeFiles -eq $afterFiles) '包内 Ctrl+V 没有在磁盘上建出任何文件'
 
-# 拖拽：包内条目根本没有真实路径，手势不该启动
-$logBefore = (Get-LogTail -Lines 400 | Where-Object { $_ -match '拖拽开始（文件列表）' }).Count
+# 拖拽：包内条目现在也能拖出去（拖拽开始时先解到临时目录，见 AGENTS.md 第 6 节第 95 条），
+# 但**落在包内**仍然不接受 —— 而且不能因此退回到“压缩包所在的目录”把文件真拷出去
+# （那种情况下 CurrentPath 是虚拟路径，退回去当落点会落到压缩包所在的目录）
+$beforeFiles = @(Get-ChildItem $workDir -Force).Count
+$logBefore = @(Get-LogTail -Lines 400 | Where-Object { $_ -match '拖拽开始（压缩包内条目）' }).Count
 Invoke-DragAttempt -Session $session -FromX ([int]($fileRect.X + $fileRect.Width / 3)) -FromY ([int]($fileRect.Y + $fileRect.Height / 2)) `
     -ToX ([int]($fileRect.X + $fileRect.Width / 2)) -ToY ([int]($fileRect.Y + $fileRect.Height * 2.5))
-$logAfter = (Get-LogTail -Lines 400 | Where-Object { $_ -match '拖拽开始（文件列表）' }).Count
-Assert ($logAfter -eq $logBefore) '包内拖拽不产生「拖拽开始」日志（手势被取消）'
+$logAfter = @(Get-LogTail -Lines 400 | Where-Object { $_ -match '拖拽开始（压缩包内条目）' }).Count
+Assert ($logAfter -gt $logBefore) '包内条目也能开始拖拽（拖拽开始时先解出真实文件）'
+Assert (@(Get-ChildItem $workDir -Force).Count -eq $beforeFiles) '落在包内时不接受拖放，压缩包所在的目录里不会多出文件'
 
 # ------------------------------------------------------------------ 用例 7：双击包内文件 → 临时目录
 
@@ -769,6 +775,45 @@ if ($null -ne $expander) {
     Assert (@(Get-LogTail | Where-Object { $_ -match '打开压缩包内文件：(.*) :: (.*) → (.*)$' }).Count -ge 1) `
         '就地展开出来的包内文件双击能解到临时目录打开'
     Assert ((Get-CrumbNames -Session $session) -notcontains 'sample.zip') '双击包内文件后仍在真实目录（没导航走）'
+
+    # ---------------------------------------------------------------- 用例 14：把包内行拖出来 → 解到临时目录再复制到落点
+    Write-Host '--- 用例 14：把就地展开的包内行拖到列表空白处（= 当前目录）→ 真的复制出来 ---'
+
+    # 拖出来的临时副本在 archive-cache\drag；用例 6 那次“落在包内”的拖拽没人回收，先清干净
+    $dragCache = Join-Path $env:LOCALAPPDATA 'exdir\archive-cache\drag'
+    Remove-Item $dragCache -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $workDir 'hello.txt') -Force -ErrorAction SilentlyContinue
+
+    $innerRow = Get-RowByName -Session $session -Name 'hello.txt'
+    $innerRect = $innerRow.Current.BoundingRectangle
+    $lastRow = ((Get-Rows -Session $session) |
+        Sort-Object { $_.Current.BoundingRectangle.Top } | Select-Object -Last 1).Current.BoundingRectangle
+    $dropX = [int]($lastRow.Left + $lastRow.Width / 2)
+    $dropY = [int]($lastRow.Bottom + 30)
+
+    Invoke-DragAttempt -Session $session -FromX ([int]($innerRect.X + $innerRect.Width / 3)) -FromY ([int]($innerRect.Y + $innerRect.Height / 2)) `
+        -ToX $dropX -ToY $dropY
+    Start-Sleep -Seconds 3
+
+    Assert (Test-Path (Join-Path $workDir 'hello.txt')) '包内条目拖到列表空白处（当前目录）后真的落在磁盘上'
+    if (Test-Path (Join-Path $workDir 'hello.txt')) {
+        Assert ((Get-Content (Join-Path $workDir 'hello.txt') -Raw) -match 'hello') '拖出来的内容与包内一致'
+    }
+    Assert (@(Get-LogTail -Lines 400 | Where-Object { $_ -match '拖拽开始（压缩包内条目）：1 项' }).Count -ge 1) `
+        '日志有「拖拽开始（压缩包内条目）：1 项」'
+    Assert (@(Get-LogTail -Lines 400 | Where-Object { $_ -match '压缩包拖出：sample\.zip 解出 1 项' }).Count -ge 1) `
+        '日志有「压缩包拖出：sample.zip 解出 1 项」（拖拽开始时先解到临时目录）'
+    Assert (@(Get-LogTail -Lines 400 | Where-Object { $_ -match '拖放落下：1 项.*复制' }).Count -ge 1) `
+        '这次拖放是「复制」（包是只读的，不是移动）'
+    Assert (@(Get-LogTail -Lines 400 | Where-Object { $_ -match '压缩包拖出：回收 1 处临时副本' }).Count -ge 1) `
+        '复制完成后临时副本被回收'
+    Assert (@(Get-ChildItem $dragCache -Force -ErrorAction SilentlyContinue).Count -eq 0) 'archive-cache\drag 里没有残留'
+
+    # 收尾：删掉拖出来的文件并刷新，行集合回到“只有压缩包展开着”的样子
+    Remove-Item (Join-Path $workDir 'hello.txt') -Force -ErrorAction SilentlyContinue
+    Send-Keys -Session $session -Keys @('{F5}')
+    $names = Wait-RowNames -Session $session -Expected ($folderRows + $zipRootRows)
+    Assert (($names -join ',') -eq ((Sort-Rows ($folderRows + $zipRootRows)) -join ',')) '拖出来的文件删掉并刷新后，行集合回到展开状态'
 
     # 再点一次箭头折叠：行集合回到展开前
     $zipRow = Get-RowByName -Session $session -Name 'sample.zip'

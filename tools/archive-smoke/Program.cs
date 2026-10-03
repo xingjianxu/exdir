@@ -12,6 +12,7 @@ using Exdir.Services;
 // 直接把 app 里那几个源文件编进来跑真实实现（见 archive-smoke.csproj），覆盖：
 // 格式表 / 7z.dll 加载 / 虚拟路径解析（含 .. 与盘符冒号的拒绝、嵌套压缩包）/ 枚举与隐式目录 /
 // 目录存在性 / 解到临时目录（含深层目录与链式 tar）/ “包内复制 → 外部目录”中转（ExtractForCopyAsync）/ 
+// “把包内条目拖到别处”的临时副本（ExtractForDragAsync / ReleaseStagingFor）/ 
 // ISO（光盘映像）/ UDF（同一张盘上的两套文件系统，含“ISO9660 那半只有一张 UDF 说明文件”的混合盘）——
 // 测试映像用系统 IMAPI2FS 现造，IMAPI 造不出的那种混合盘由 TryCreateNoticeIso 手写 ISO9660 那半；
 // 加密包（列表不要密码、取文件要密码）/ 无目录条目的 zip /
@@ -245,6 +246,36 @@ try
     Assert(copyDup.Paths.Select(Path.GetFileName).All(n => n == "same.txt"), "同名条目交出去的名字仍是包内那个名字");
     Assert(copyDup.Paths.Select(File.ReadAllText).OrderBy(t => t).SequenceEqual(new[] { "AAA", "BBB" }), "同名条目的内容没有互相覆盖");
     service.ReleaseStaging(copyDup.StagingDirectory);
+
+    // “把包内条目拖到别处”：与“复制”同款解包，只是落点在 archive-cache\drag
+    // （那份临时副本要活到别的进程（资源管理器）拷完，所以不能复制一结束就删）
+    var drag = await service.ExtractForDragAsync(zipPath, new[] { "hello.txt", "sub" });
+    Console.WriteLine($"  drag 2 项 → {string.Join(", ", drag.Paths)}");
+    Assert(drag.Paths.Count == 2 && drag.Paths.All(p => File.Exists(p) || Directory.Exists(p)), "拖出用的临时副本也解得出来");
+    Assert(drag.Paths.All(p => p.StartsWith(Path.Combine(archiveCache, "drag"), StringComparison.OrdinalIgnoreCase)), "拖出的临时副本落在 archive-cache\\drag 下");
+    Assert(drag.Paths.Any(p => File.Exists(p) && File.ReadAllText(p) == "hello 世界")
+           && drag.Paths.Any(p => Directory.Exists(p) && File.Exists(Path.Combine(p, "inner.txt"))), "拖出的文件与目录都在（名字仍是包内那个）");
+
+    // 拖进 exdir 自己的窗格：复制完成后按“解出来的路径”回收；
+    // 粘贴的中转副本（copy 分类）与真实路径一律不动
+    var keepCopy = await service.ExtractForCopyAsync(zipPath, new[] { @"sub\inner.txt" });
+    service.ReleaseStagingFor(keepCopy.Paths.Concat(new[] { plainTxt, work }).ToList());
+    Assert(Directory.Exists(keepCopy.StagingDirectory), "ReleaseStagingFor 不会删除 copy 分类（粘贴的中转副本）");
+    service.ReleaseStaging(keepCopy.StagingDirectory);
+
+    Assert(File.Exists(plainTxt) && Directory.Exists(work), "ReleaseStagingFor 不会碰真实路径");
+
+    service.ReleaseStagingFor(drag.Paths);
+    Assert(!Directory.Exists(drag.StagingDirectory), "ReleaseStagingFor 按解出来的路径回收 drag 临时目录");
+
+    var dragNested = await service.ExtractForDragAsync(zipPath, new[] { "sub" });
+    service.ReleaseStagingFor(new[] { Path.Combine(dragNested.Paths[0], "deep", "deep.txt") });
+    Assert(!Directory.Exists(dragNested.StagingDirectory), "传子目录里的文件也能反查到 drag 临时目录");
+
+    // 这两份留给后面 CleanupTemp 那一节：一天前的要被扫掉、刚解出来的必须留着
+    var freshDrag = await service.ExtractForDragAsync(zipPath, new[] { "hello.txt" });
+    var staleDrag = await service.ExtractForDragAsync(zipPath, new[] { @"sub\inner.txt" });
+    File.SetLastWriteTimeUtc(staleDrag.Paths[0], DateTime.UtcNow.AddDays(-2));
 
     try
     {
@@ -555,6 +586,10 @@ try
     var cache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "exdir", "archive-cache");
     Assert(!Directory.Exists(Path.Combine(cache, "tar")), "CleanupTemp 清掉了链式解开的中间 tar 目录");
     Assert(!Directory.Exists(Path.Combine(cache, "copy")), "CleanupTemp 清掉了中转副本目录");
+    Assert(!File.Exists(staleDrag.Paths[0]), "CleanupTemp 扫掉了一天前拖出去留下的临时副本");
+    Assert(File.Exists(freshDrag.Paths[0]), "CleanupTemp 不动刚解出来的拖拽临时副本（对方可能还在拷）");
+    service.ReleaseStaging(freshDrag.StagingDirectory);
+    service.ReleaseStaging(staleDrag.StagingDirectory);
 
     // ---------------------------------------------------------------- 右键「压缩」：把选中项打成一个 zip
     // CompressionService 走 BCL 的 System.IO.Compression（与上面那条“只读浏览别人压缩包”的路互不干扰）；

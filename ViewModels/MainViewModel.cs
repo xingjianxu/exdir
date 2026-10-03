@@ -35,6 +35,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IArchiveService _archive;
     private readonly IArchiveClipboardService _archiveClipboard;
     private readonly ICompressionService _compression;
+    private readonly IRemoteFileService _remote;
     private readonly IDialogService _dialogs;
 
     private PanelViewModel _activePane = null!;
@@ -56,6 +57,8 @@ public sealed partial class MainViewModel : ObservableObject
         IArchiveService archive,
         IArchiveClipboardService archiveClipboard,
         ICompressionService compression,
+        IRemoteLocationSource remoteLocations,
+        IRemoteFileService remote,
         IDialogService dialogs)
     {
         _settings = settings;
@@ -69,6 +72,7 @@ public sealed partial class MainViewModel : ObservableObject
         _archive = archive;
         _archiveClipboard = archiveClipboard;
         _compression = compression;
+        _remote = remote;
         _dialogs = dialogs;
 
         // 复制 / 移动完成后要让受影响的目录重新枚举（可能是另一个窗格、另一个标签页）；
@@ -78,7 +82,10 @@ public sealed partial class MainViewModel : ObservableObject
         _archive.Extracted += OnArchiveExtracted;
         _compression.ArchiveCreated += OnArchiveCreated;
 
-        Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService, networkLocations);
+        // 远程位置「下载到…」完成后的刷新走同一个处理（目标目录与其父目录可能正开着）
+        _remote.Downloaded += OnArchiveExtracted;
+
+        Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService, networkLocations, remoteLocations);
         Sidebar.NavigateRequested += OnSidebarNavigateRequested;
         Sidebar.PinRequested += OnSidebarPinRequested;
         Sidebar.UnpinRequested += OnSidebarUnpinRequested;
@@ -86,8 +93,8 @@ public sealed partial class MainViewModel : ObservableObject
         // 侧边栏的「收藏夹」分组是工具条固定目录的镜像：增删、拖拽排序都立刻同步过去
         PinnedFolders.CollectionChanged += (_, _) => Sidebar.SyncFavorites(PinnedFolders);
 
-        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, knownFolders, dialogs);
-        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, knownFolders, dialogs);
+        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, remote, knownFolders, dialogs);
+        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, remote, knownFolders, dialogs);
 
         PrimaryPane.Navigated += OnPaneNavigated;
         SecondaryPane.Navigated += OnPaneNavigated;
@@ -108,8 +115,8 @@ public sealed partial class MainViewModel : ObservableObject
         // 每次启动按设置重写一遍：换了目录 / 升级后自动更正，设置里关着时顺手清掉残留。
         AutoStart.Apply(_settings.Current.StartWithWindows);
 
-        // 侧边栏四个分组的显示开关来自设置，必须在窗口首次渲染前生效（InitializeAsync 在 Loaded 里，
-        // 那时窗口已经可见，不在这里先应用的话会先闪一下全部四个分组）
+        // 侧边栏五个分组的显示开关来自设置，必须在窗口首次渲染前生效（InitializeAsync 在 Loaded 里，
+        // 那时窗口已经可见，不在这里先应用的话会先闪一下全部分组）
         ApplySidebarGroups();
     }
 
@@ -423,6 +430,9 @@ public sealed partial class MainViewModel : ObservableObject
             await tab.DeleteSelectionCommand.ExecuteAsync(null).ConfigureAwait(true);
         }
     }
+
+    [RelayCommand]
+    private void OpenSelection() => ActivePane.ActiveTab?.OpenSelectionCommand.Execute(null);
 
     [RelayCommand]
     private void RevealInExplorer() => ActivePane.ActiveTab?.RevealInExplorerCommand.Execute(null);
@@ -763,7 +773,13 @@ public sealed partial class MainViewModel : ObservableObject
     /// 清掉压缩包浏览的临时文件（链式解开的中间 tar、包内文件双击时解出来的副本）。
     /// 启动与退出各调一次，见 <see cref="ArchiveService.CleanupTemp" />。
     /// </summary>
-    public void CleanupArchiveTemp() => _archive.CleanupTemp();
+    public void CleanupArchiveTemp()
+    {
+        _archive.CleanupTemp();
+
+        // 远程位置的中转目录（下载打开 / 拖拽 / 粘贴）同一套规则，见 Helpers/RemoteCache
+        _remote.CleanupTemp();
+    }
 
     /// <summary>文件的完整路径（命令行里传进来的可能带引号或环境变量，选中时要和行上的 FullPath 对得上）。</summary>
     private static string? FullNameOf(string path)
@@ -841,11 +857,20 @@ public sealed partial class MainViewModel : ObservableObject
         settings.SquareTabCorners = edited.SquareTabCorners;
         settings.Theme = ThemeHelper.Normalize(ThemeHelper.FromIndex(edited.ThemeIndex));
 
-        // 侧边栏四个分组的显示开关（设置窗口「侧边栏」页）
+        // 侧边栏五个分组的显示开关（设置窗口「侧边栏」页）
         settings.SidebarShowHome = edited.SidebarShowHome;
         settings.SidebarShowFavorites = edited.SidebarShowFavorites;
         settings.SidebarShowCloud = edited.SidebarShowCloud;
         settings.SidebarShowComputer = edited.SidebarShowComputer;
+        settings.SidebarShowRemote = edited.SidebarShowRemote;
+
+        // 远程位置（SFTP / FTP）：清单真的变了才作废已有连接（改一个无关开关不应当把连接断掉）
+        var remoteLocations = edited.RemoteLocations;
+        if (!SameRemoteLocations(settings.RemoteLocations, remoteLocations))
+        {
+            settings.RemoteLocations = remoteLocations.Select(static location => location.Clone()).ToList();
+            _remote.ResetConnections();
+        }
 
         // 「主目录」分组里显示哪几个标准文件夹
         settings.SidebarHomeDesktop = edited.SidebarHomeDesktop;
@@ -916,14 +941,43 @@ public sealed partial class MainViewModel : ObservableObject
             + $"压缩输出目录={(string.IsNullOrEmpty(settings.CompressionOutputDirectory) ? "（下载）" : settings.CompressionOutputDirectory)} "
             + $"主题={ThemeHelper.ToDisplayName(settings.Theme)} "
             + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane} "
-            + $"侧边栏分组（主目录/收藏夹/云存储/此电脑）="
-            + $"{edited.SidebarShowHome}/{edited.SidebarShowFavorites}/{edited.SidebarShowCloud}/{edited.SidebarShowComputer} "
+            + $"侧边栏分组（主目录/收藏夹/云存储/此电脑/远程）="
+            + $"{edited.SidebarShowHome}/{edited.SidebarShowFavorites}/{edited.SidebarShowCloud}/{edited.SidebarShowComputer}/{edited.SidebarShowRemote} "
+            + $"远程位置={settings.RemoteLocations.Count} "
             + $"主目录文件夹（桌面/文档/下载/图片/音乐/视频）="
             + $"{edited.SidebarHomeDesktop}/{edited.SidebarHomeDocuments}/{edited.SidebarHomeDownloads}/"
             + $"{edited.SidebarHomePictures}/{edited.SidebarHomeMusic}/{edited.SidebarHomeVideos} "
             + $"开机自启={edited.StartWithWindows} "
             + $"右键菜单={(edited.UseBuiltInContextMenu ? "内置" : "系统")} "
             + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
+    }
+
+    /// <summary>两份远程位置清单是不是一样（只比会影响连接的那些字段，不比名字与 Id）。</summary>
+    private static bool SameRemoteLocations(IReadOnlyList<RemoteLocation> a, IReadOnlyList<RemoteLocation> b)
+    {
+        if (a.Count != b.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i].Protocol != b[i].Protocol
+                || !string.Equals(a[i].Host, b[i].Host, StringComparison.OrdinalIgnoreCase)
+                || a[i].EffectivePort != b[i].EffectivePort
+                || !string.Equals(a[i].EffectiveUserName, b[i].EffectiveUserName, StringComparison.Ordinal)
+                || a[i].Auth != b[i].Auth
+                || !string.Equals(a[i].ProtectedPassword, b[i].ProtectedPassword, StringComparison.Ordinal)
+                || !string.Equals(a[i].PrivateKeyPath, b[i].PrivateKeyPath, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(a[i].ProtectedPassphrase, b[i].ProtectedPassphrase, StringComparison.Ordinal)
+                || a[i].UsePassive != b[i].UsePassive
+                || a[i].AllowInvalidCertificate != b[i].AllowInvalidCertificate)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -962,7 +1016,11 @@ public sealed partial class MainViewModel : ObservableObject
             _settings.Current.SidebarShowHome,
             _settings.Current.SidebarShowFavorites,
             _settings.Current.SidebarShowCloud,
-            _settings.Current.SidebarShowComputer);
+            _settings.Current.SidebarShowComputer,
+            _settings.Current.SidebarShowRemote);
+
+        // 「远程」分组里有哪些位置（SFTP / FTP）；改过连接配置就把已有连接作废，下次重连
+        Sidebar.ApplyRemoteLocations(_settings.Current.RemoteLocations);
 
         // 「主目录」分组里显示哪几个标准文件夹（默认只开桌面与下载）
         Sidebar.ApplyHomeFolders(
@@ -1235,6 +1293,14 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     private void OnFileOperationCompleted(object? sender, FileOperationCompletedEventArgs e)
     {
+        // 从压缩包里拖出来的条目是临时解出来的（archive-cache\drag）：复制 / 移动完成后就没用了。
+        // 真实路径与粘贴的中转副本（copy 分类）不受影响（见 IArchiveService.ReleaseStagingFor）。
+        _archive.ReleaseStagingFor(e.SourcePaths);
+
+        // 远程位置拖出去 / 复制到剪贴板的中转副本（remote-cache\drag、\copy）同理：
+        // 交出去的只是临时副本，对方拷完就没用了
+        _remote.ReleaseStagingFor(e.SourcePaths);
+
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         if (!string.IsNullOrEmpty(e.DestinationDirectory))

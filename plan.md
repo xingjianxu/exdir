@@ -102,9 +102,13 @@
     （设了 `XDG_CONFIG_HOME` 且为绝对路径时以它为准），首次启动自动把旧 `%LOCALAPPDATA%\exdir\settings.json`
     搬过来；日志仍留在 `%LOCALAPPDATA%\exdir\exdir.log`；见 AGENTS.md 第 6 节第 76 条。
   - 会话与设置：窗口位置/尺寸/最大化、双窗格、侧边栏宽度、标签页集合、排序偏好、固定目录 → `%USERPROFILE%\.config\exdir\config.json`。
+  - **远程位置（SFTP / FTP）**（2026-10，S33～S35）：设置窗口「远程」里增删改连接（密码 / 私钥口令经 DPAPI 加密）、
+    侧边栏「远程」分组点一下就能浏览（列目录 / 进子目录 / 就地展开 / 排序 / 面包屑），
+    双击文件先下到本地再看，右键「下载到…」/「复制」/ 拖出去都能把远程内容弄到本地；**远程一律只读**。
+    见 AGENTS.md 第 4 节“远程位置”，回归 `tools\test-remote.ps1` + `tools\remote-smoke` + `tools\remote-test-server`。
   - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
   - 工具脚本：`capture.ps1`（截图）、`inspect-ui.ps1`（UIA 控件树 / 点击）、`publish.ps1`（Release 产物）、`make-icon.ps1`。
-  - Release 产物：`dist\win-x64\exdir.exe`（自包含，224 MB / 531 文件，已验证可运行）。
+  - Release 产物：`dist\win-x64\exdir.exe`（自包含 + 裁剪，2026-10 含远程位置后是 **193 文件 / 93 MB**，已验证可运行）。
   - 已知技术债：见本文件第 5 节。
 
 ---
@@ -255,7 +259,8 @@
     要在 `TreeView` 上用 `handledEventsToo` 再确认一次，否则松手没有 Drop。
     验收：`tools/test-pin-drag.ps1` 用例 0（收藏夹子项与 `config.json` 一致）、
     用例 5（拖 `音乐` 到收藏夹 → `config.json` 新增 `…\Music`，侧边栏同步出现）。
-  - [ ] 其余（文件本身可拖出到资源管理器、拖到目录行上悬停进入目录）仍未做。
+  - [ ] 其余（**真实目录里的**文件可拖出到资源管理器、拖到目录行上悬停进入目录）仍未做。
+    （压缩包里的条目已经能拖出去，含拖到资源管理器，见 S32e。）
 
 - [x] **S25 复制 / 剪切 / 粘贴 + 拖动移动**（2026-09，新增 6 个文件 / 改 10 个，~900 行）
   - 目标：内置右键菜单里能剪切 / 复制 / 粘贴（带常用快捷键），并要求“拖文件到目录上即移动”。
@@ -787,9 +792,74 @@
       9 个用例仍全绿（确认 `ExtractRoots` 的重构没改坏“包内复制 → 粘贴”那条路）；`SevenZipLocator` 另用一次性控制台
       工程直接跑过（本机找到 scoop 的 `7zFM.exe`）；`tools/test-archive-extract.ps1`（真鼠标右键）**本机无交互桌面，
       未跑**（与 S32b 那次同样的限制，脚本已按同一套断言写好）。
+  - [x] **S32e 把包内条目拖到别处（永远是复制）**（2026-10，改 8 个源文件 / 改 2 个测试 + 文档，~350 行）
+    - 需求：浏览压缩包内容时（进包，或在真实目录里就地展开），把包内的文件 / 目录拖到别的地方 —— 另一个窗格 /
+      目录行 / 列表空白处 / 资源管理器 / 桌面 —— 复制出来。
+    - 涉及：`Services/IArchiveService.cs` + `ArchiveService.cs`（`ExtractForDragAsync` / `ReleaseStagingFor`，
+      `CleanupTemp` 对 `drag` 分类用“只删一天前”）、`Helpers/DragDropHelper.cs`（`ArchiveDragFormat` /
+      `SetArchiveDrag` / `MayContainFolder` 拒绝临时副本）、`Models/DragPayload.cs`（新增）、
+      `ViewModels/FolderTabViewModel.cs`（`BuildDragPayloadAsync` + 忙碌提示条）、`ViewModels/MainViewModel.cs`
+      （复制完成回收临时副本）、`Views/DetailsView.xaml(.cs)`（手势里预解包 + `SetStorageItems` + 落点一律复制 +
+      兜底守卫）、`AGENTS.md`、`tools/archive-smoke`、`tools/test-archive.ps1`（改写用例 6 + 新增用例 14）。
+    - 做法：包内条目是虚拟路径、交不出 `CF_HDROP`；WinUI 3 的“延迟提供 `StorageItems`”（`SetDataProvider`）有已知
+      bug（microsoft-ui-xaml#9629，拖到资源管理器会被直接拒）→ 只能在**手势开始前**把选中条目解到
+      `archive-cache\drag\<guid>`，再用 `SetStorageItems` 交给系统（于是资源管理器 / 桌面也能收）。数据包额外带一个
+      标记格式 `exdir/archive-drag`：工具条固定目录区与侧边栏收藏夹据此拒绝（不把缓存里的临时目录固定 / 收藏起来），
+      文件列表据此一律按复制（`Ctrl` / `Shift` 都不改语义 —— 包是只读的，交出去的也只是临时副本）。临时副本在内部
+      复制完成后由 `ReleaseStagingFor(源路径)` 回收；拖到外部 / 被 Esc 取消 / 落在包内时留给 `CleanupTemp()` 按时间扫。
+    - 验收：`tools/archive-smoke` 新增 8 条断言（`drag` 分类落点 / 内容与名字 / `ReleaseStagingFor` 只认 `drag`、
+      不碰 `copy` 与真实路径 / 传子路径也能反查到根 / `CleanupTemp` 扫掉一天前的、留住刚解出来的）在 Debug 与
+      **裁剪过的产物**（`.artifacts\smoke-trimmed --no-iso`）上都 0 失败；`tools/test-archive-copy.ps1` 在 Debug 与
+      `dist\win-x64\exdir.exe` 上都 9 个用例全绿（确认没改坏“包内复制 → 粘贴”与就地展开那条路）。
+    - **真鼠标用例本轮未跑**：跑脚本的那个会话当时没有可用输入桌面（`GetForegroundWindow()` 为 0、
+      `SetCursorPos` / `SendKeys` / `CopyFromScreen` 全部失败，`test-archive.ps1` 连用例 1 的双击都点不动）——
+      环境问题，与被改的代码无关。要在**有交互桌面的会话**里补跑：`pwsh -NoProfile -File tools\test-archive.ps1`
+      （用例 6 / 14 是新增的）、`tools\test-file-ops.ps1`、`tools\test-pin-drag.ps1`（固定目录受
+      `MayContainFolder` 改动影响）。
   - [ ] 其余都还没做，按需再排：**包内条目**右键「解压到当前文件夹 / 解压到 <同名> 文件夹」（带进度对话框；
-    **真实压缩包文件行**已经有「解压到下载文件夹」了，见 S32c）、把包内条目拖到资源管理器、包内新建/删除/重命名条目
+    **真实压缩包文件行**已经有「解压到下载文件夹」了，见 S32c）、包内新建/删除/重命名条目
     （只 zip/7z）。
+
+---
+
+## Phase 10 — 远程位置（SFTP / FTP，只读浏览 + 下载到本地）
+
+一段一次做完的（用户直接提的需求：“支持在侧边栏中添加 sftp 与 ftp 位置，并支持点击后浏览”）。
+已确认的决策：范围 = **浏览 + 复制到本地**（不做上传 / 删除 / 重命名 / 新建）；客户端库 =
+**SSH.NET + FluentFTP**；凭据 = **DPAPI 加密后存 `config.json`**；SFTP 认证 = **密码 + 私钥文件**。
+
+- [x] **S33 远程位置的数据模型 / 路径解析 / 凭据加密**（2026-10，新增 4 个源文件 + 改 2 个，~500 行）
+  - 内容：`Models/RemoteLocation.cs`（协议 / 登录方式 / 主机 / 端口 / 起始目录 / 被动模式 / 允许无效证书）、
+    `Models/RemotePath.cs`（`sftp://` `ftp://` `ftps://` 的解析 / 拼接 / 规整 / 父目录 / 面包屑分段）、
+    `Services/Native/DpapiInterop.cs` + `Helpers/SecretProtector.cs`（`CryptProtectData` 两个 P/Invoke，不引 NuGet）、
+    `AppSettings` 新增 `RemoteLocations` + `SidebarShowRemote`（结构版本 9→10）。
+  - 验收：`tools/remote-smoke` 里的路径与凭据用例（35 断言，Debug 与裁剪产物都绿）。
+
+- [x] **S34 SFTP / FTP 会话与远程文件服务**（2026-10，新增 7 个源文件 + 改 2 个，~700 行）
+  - 内容：`Services/Remote/`（`RemoteSession` 抽象 + `SftpSession` + `FtpSession` + `RemoteSessionPool`）、
+    `IRemoteFileService` + `RemoteFileService`（列目录 / 存在性 / 递归下载）、`Helpers/RemoteCache.cs`（中转目录）、
+    `FileSystemService` 的远程分派、`exdir.csproj` 加两个包。
+  - 验收：`tools/remote-test-server`（node：ssh2 实现的最小 SFTP 服务 + ftp-srv）+ `tools/remote-smoke`
+    （135 断言：列目录 / 隐藏项 / 递归下载 / 重名 (2) / 错密码 / 连不上；FTP 与 SFTP 密码与私钥三种连接，
+    在 Debug 与裁剪过的产物上都 0 失败）。
+
+- [x] **S35 侧边栏「远程」分组 + 只读浏览 + 下载到本地 + 设置页**（2026-10，改 14 个源文件 / 新增 2 个，~1100 行）
+  - 内容：侧边栏「远程」分组（`SidebarNodeKind.Remote` + `ApplyRemoteLocations` 差量更新）；
+    标签页的远程只读守卫（`RefuseInRemote`）与远程只读版右键菜单；双击文件先下到 `remote-cache\open` 再打开；
+    右键「下载到…」（文件夹选择器 + 递归下载 + 绿色 InfoBar）；「复制」下到 `remote-cache\copy` 后进系统剪贴板；
+    拖出去（复用压缩包的临时副本拖拽那条路）；面包屑 / 标签页标题识别远程路径；
+    设置窗口新增「远程」分类（列表 + 添加 / 编辑 / 删除对话框）；`文件 → 打开`（顺带补上）。
+  - 顺带修掉一个**老 bug**：`WindowX/WindowY` 还是 `double.NaN` 时 `Save()` 会抛（JSON 没有 NaN 字面量）→
+    任何“窗口还没定位就改设置”都“界面生效但 `config.json` 没变”（AGENTS.md 第 96 条）。
+  - 验收：`tools/test-remote.ps1`（9 用例 43 断言，全程 UIA，Debug 与 `dist\win-x64\exdir.exe` 都 0 失败）；
+    `tools/test-settings.ps1`（改为 7 个分类 118 断言，Debug 与 dist 都 0 失败）；
+    `test-drive-hotplug` / `test-network-locations` / `test-command-line` 重跑无回归。
+  - **未跑的部分**：真鼠标与拖拽（双击下载打开、拖到资源管理器、右键菜单）需要交互桌面，
+    跑脚本的会话当时屏幕是锁的（`GetForegroundWindow()` 为 0、有 `LogonUI.exe`），按第 18/94 条只能 UIA。
+    补跑方式：在**未锁屏**的会话里 `pwsh -NoProfile -File tools\test-remote.ps1` + 手动点一遍双击 / 拖拽。
+
+- [ ] **S36 远程位置后续（按需）**：上传（拖进去 / 粘贴 / 新建目录 / 删除 / 重命名）、
+  FTPS 隐式 TLS、known_hosts 校验、多窗口同时浏览同一个远程位置（目前每条连接串行）。
 
 ---
 
@@ -815,7 +885,7 @@
 | 快捷菜单为空 | 按需求刻意留空，仅数据驱动 | S17 |
 | 设置窗口宽度有下限 | `SettingsCard` 在卡片宽 < 476 DIP 时把控件换行到标题下方，所以窗口默认 860 DIP 宽；屏幕比 860 DIP 还窄时会被系统夹小，卡片就换成竖排 | 需要时把左导航收成 compact（48 DIP）或调小 `SettingsCardWrapThreshold` |
 | 提权运行后拖放失效 | Windows 不允许高完整性级别（管理员）进程参与拖放：`DragItemsStarting` 会触发，但永远收不到 `DragOver`/`Drop`；以普通权限运行则正常（见 AGENTS.md 第 6 节第 21 条） | 系统限制，无解；必要时在界面上提示 |
-| 拖放只做了“目录 → 工具条固定目录”“工具条固定目录之间排序”与“目录 → 侧边栏收藏夹” | 文件本身不能拖出、不能拖到目录行上悬停进入目录 | S7 其余部分 |
+| 拖放的目标还很有限 | 已做：目录 → 工具条固定目录、工具条固定目录之间排序、目录 → 侧边栏收藏夹、文件 / 目录 → 目录行 / 列表空白处 / 另一个窗格、**压缩包里的条目 → 上面任何地方 + 资源管理器 / 桌面（永远是复制，见 S32e）** | 真实目录里的文件拖到资源管理器（数据包还只有自定义格式与纯文本，没放 `StorageItems`）、拖到目录行上悬停 1 秒进入目录 | S7 其余部分 |
 | 固定目录最多 12 个 | 工具条固定目录区不滚动，太多了会把左侧磁盘区挤没（`MainViewModel.MaxPinnedFolders`） | 需要时改成横向滚动 / 溢出菜单 |
 | 无右键菜单 | 需求未明确，需先确认路线 | S8（已解决 S8a/S8b：文件列表条目 + 空白处弹系统真菜单，设置页可逐项关闭；侧边栏/列头与自建命令项仍未做） |
 | 文件列表只有“内容那么高” | `TabView` 默认样式是 `VerticalAlignment=Top`，列上只有两三个文件时列表下面一大片空白既点不到也没有右键 | 已修（S8a 兼带：`PaneView` 的 TabView 显式 `Stretch`，见 AGENTS.md 第 6 节第 39 条） |

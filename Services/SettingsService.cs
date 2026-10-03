@@ -35,6 +35,15 @@ public sealed class SettingsService : ISettingsService
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+
+        // WindowX / WindowY 的默认值是 double.NaN（“还没定位过”），而 JSON 没有 NaN 字面量：
+        // 不打开这个开关，任何一次“窗口还没定位就 Save”的写入都会抛
+        // ArgumentException（.NET number values such as positive and negative infinity cannot be
+        // written as valid JSON）—— 异常被 Save 的 catch 吞掉，症状是
+        // “设置里改了东西、界面当场生效，但 config.json 没变、重开又变回去”。
+        // 打开后 NaN / Infinity 会写成 "NaN" / "Infinity" 字符串，读回来还是原来的值。
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+
         // 元数据走源生成（见 SettingsJsonContext）：裁剪过的发布版不能靠反射拿属性
         TypeInfoResolver = SettingsJsonContext.Default,
     };
@@ -190,6 +199,9 @@ public sealed class SettingsService : ISettingsService
 
         // v9 新增右键「压缩」的输出目录（CompressionOutputDirectory），默认空 = 用「下载」文件夹；
         // 旧设置里没有这个字段，反序列化会保留初始值空串，同样不需要迁移。
+
+        // v10 新增远程位置（RemoteLocations）与侧边栏「远程」分组开关（SidebarShowRemote）：
+        // 默认没有连接、分组显示；旧设置里没有这两个字段，反序列化会保留属性初始值，同样不需要迁移。
 
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }

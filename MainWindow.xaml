@@ -86,6 +86,9 @@
                         MinHeight="0"
                         Title="文件">
                         <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.OpenSelectionCommand}"
+                            Text="打开" />
+                        <MenuFlyoutItem
                             Command="{x:Bind ViewModel.NewTabCommand}"
                             KeyboardAcceleratorTextOverride="Ctrl+T"
                             Text="新建标签页" />

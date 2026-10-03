@@ -330,10 +330,29 @@ public sealed class ArchiveService : IArchiveService
 
     // ------------------------------------------------------------------ 解出一批条目（“包内复制 → 真实目录粘贴”用）
 
-    public async Task<ArchiveExtraction> ExtractForCopyAsync(
+    public Task<ArchiveExtraction> ExtractForCopyAsync(
         string archiveFile,
         IReadOnlyList<string> innerPaths,
         CancellationToken cancellationToken = default)
+        => ExtractToStagingAsync(archiveFile, innerPaths, CopyCategory, "压缩包复制", cancellationToken);
+
+    public Task<ArchiveExtraction> ExtractForDragAsync(
+        string archiveFile,
+        IReadOnlyList<string> innerPaths,
+        CancellationToken cancellationToken = default)
+        => ExtractToStagingAsync(archiveFile, innerPaths, DragCategory, "压缩包拖出", cancellationToken);
+
+    /// <summary>
+    /// 把包内若干条目解到 <c>archive-cache\&lt;分类&gt;\&lt;guid&gt;</c>。
+    /// “包内复制 → 粘贴”与“把包内条目拖到别处”只差一个落点目录（与日志前缀）：
+    /// 两者都要把虚拟路径变成真实文件，才能交给外壳的复制 / 拖放。
+    /// </summary>
+    private async Task<ArchiveExtraction> ExtractToStagingAsync(
+        string archiveFile,
+        IReadOnlyList<string> innerPaths,
+        string category,
+        string logPrefix,
+        CancellationToken cancellationToken)
     {
         var index = await GetIndexAsync(archiveFile, cancellationToken).ConfigureAwait(true);
         var roots = SelectRoots(index, innerPaths);
@@ -343,7 +362,7 @@ public sealed class ArchiveService : IArchiveService
             throw new ArchiveOpenException($"压缩包里没有可复制的条目：{Path.GetFileName(archiveFile)}");
         }
 
-        var staging = Path.Combine(TempRoot, "copy", Guid.NewGuid().ToString("N"));
+        var staging = Path.Combine(TempRoot, category, Guid.NewGuid().ToString("N"));
 
         try
         {
@@ -356,7 +375,7 @@ public sealed class ArchiveService : IArchiveService
                 throw new ArchiveOpenException($"压缩包里没有可复制的条目：{Path.GetFileName(archiveFile)}");
             }
 
-            Log.Write($"压缩包复制：{Path.GetFileName(archiveFile)} 解出 {sources.Count} 项到临时目录");
+            Log.Write($"{logPrefix}：{Path.GetFileName(archiveFile)} 解出 {sources.Count} 项到临时目录");
             return new ArchiveExtraction(sources, staging);
         }
         catch
@@ -537,14 +556,65 @@ public sealed class ArchiveService : IArchiveService
             return;
         }
 
-        // 只删我们自己造的那一类目录：传进来的路径被拼错（或被人改成父目录）时不至于删掉别人的东西
-        var root = Path.Combine(TempRoot, "copy") + Path.DirectorySeparatorChar;
-        if (!stagingDirectory.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        // 只删我们自己造的那两类目录：传进来的路径被拼错（或被人改成父目录）时不至于删掉别人的东西
+        var copyRoot = Path.Combine(TempRoot, CopyCategory) + Path.DirectorySeparatorChar;
+        var dragRoot = Path.Combine(TempRoot, DragCategory) + Path.DirectorySeparatorChar;
+
+        if (!stagingDirectory.StartsWith(copyRoot, StringComparison.OrdinalIgnoreCase)
+            && !stagingDirectory.StartsWith(dragRoot, StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
         TryDeleteDirectory(stagingDirectory);
+    }
+
+    public void ReleaseStagingFor(IReadOnlyList<string> paths)
+    {
+        if (paths is null || paths.Count == 0)
+        {
+            return;
+        }
+
+        var root = Path.Combine(TempRoot, DragCategory);
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var path in paths)
+        {
+            if (StagingRootOf(path, root) is { } staging)
+            {
+                roots.Add(staging);
+            }
+        }
+
+        if (roots.Count > 0)
+        {
+            Log.Write($"压缩包拖出：回收 {roots.Count} 处临时副本");
+        }
+
+        foreach (var staging in roots)
+        {
+            ReleaseStaging(staging);
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="path" /> 落在 <paramref name="root" /> 下的哪个临时目录里
+    /// （<c>root\&lt;guid&gt;\…</c> → <c>root\&lt;guid&gt;</c>）；不是我们自己解出来的就返回 null。
+    /// 目录段按结构取：只认第一段，避免传进来的路径被拼成更深 / 更浅时删错东西。
+    /// </summary>
+    private static string? StagingRootOf(string path, string root)
+    {
+        if (string.IsNullOrWhiteSpace(path)
+            || !path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var rest = path[(root.Length + 1)..];
+        var separator = rest.IndexOfAny(new[] { '\\', '/' });
+
+        return separator <= 0 ? null : Path.Combine(root, rest[..separator]);
     }
 
     /// <summary>把 7z.dll 报出来的失败转成异常：提到密码的就是“需要密码”，其余是打不开。</summary>
@@ -1055,10 +1125,21 @@ public sealed class ArchiveService : IArchiveService
         _passwords[archiveFile] = password;
     }
 
+    /// <summary>“包内复制 → 真实目录粘贴”的中转副本目录（粘贴完就 <see cref="ReleaseStaging" />）。</summary>
+    private const string CopyCategory = "copy";
+
+    /// <summary>
+    /// “把包内条目拖到别处”解出来的临时副本目录。比 <see cref="CopyCategory" /> 多活一会儿：
+    /// 拖到资源管理器时副本由**别的进程**在复制，交出去之后我们不知道什么时候拷完
+    /// （见 <see cref="CleanupTemp" /> 的清理策略）。
+    /// </summary>
+    private const string DragCategory = "drag";
+
     /// <summary>
     /// 临时目录：<c>%LOCALAPPDATA%\exdir\archive-cache</c>（日志所在目录旁边）。
-    /// 里面放三类东西：链式解开的中间 tar、双击打开时解出来的单个文件、
-    /// “包内复制 → 真实目录粘贴”中转用的临时副本（<c>copy</c>）。
+    /// 里面放四类东西：链式解开的中间 tar、双击打开时解出来的单个文件、
+    /// “包内复制 → 真实目录粘贴”中转用的临时副本（<c>copy</c>）、
+    /// “把包内条目拖到别处”解出来的临时副本（<c>drag</c>）。
     /// </summary>
     private string TempRoot
     {
@@ -1086,8 +1167,10 @@ public sealed class ArchiveService : IArchiveService
     /// <item><c>tar</c> 子目录（链式解开 <c>.tar.gz</c> 落地的中间 tar）每次都直接删 —— 那个文件只有 exdir 在用；</item>
     /// <item><c>copy</c> 子目录（“包内复制 → 真实目录粘贴”中转用的临时副本）也每次都直接删 ——
     ///       它只服务于一次粘贴，正常路径上粘完就 <see cref="ReleaseStaging" /> 了，还留在这里说明上次没跑完；</item>
-    /// <item><c>open</c> 子目录里“给默认程序打开”而解出来的文件只删**一天前**的：
-    ///       用户很可能正拿记事本 / 播放器开着它，删早了会让别人的保存失败。</item>
+    /// <item><c>open</c> 与 <c>drag</c> 子目录里的文件只删**一天前**的：
+    ///       前者是“给默认程序打开”解出来的（用户很可能正拿记事本 / 播放器开着它，删早了会让别人的保存失败），
+    ///       后者是“把包内条目拖到别处”解出来的（拖到资源管理器时对方可能还在拷，删早了那边会报错）。
+    ///       拖进 exdir 自己的窗格时复制一完成就会 <see cref="ReleaseStagingFor" /> 掉，正常不会积到一天。</item>
     /// </list>
     /// 启动时清一次、退出时再清一次（见 App.OnLaunched / MainWindow.RequestExit）。
     /// </summary>
@@ -1105,8 +1188,9 @@ public sealed class ArchiveService : IArchiveService
         }
 
         TryDeleteDirectory(Path.Combine(TempRoot, "tar"));
-        TryDeleteDirectory(Path.Combine(TempRoot, "copy"));
-        SweepOldOpenFiles(Path.Combine(TempRoot, "open"));
+        TryDeleteDirectory(Path.Combine(TempRoot, CopyCategory));
+        SweepOldFiles(Path.Combine(TempRoot, "open"));
+        SweepOldFiles(Path.Combine(TempRoot, DragCategory));
     }
 
     private static void TryDeleteDirectory(string path)
@@ -1124,7 +1208,8 @@ public sealed class ArchiveService : IArchiveService
         }
     }
 
-    private static void SweepOldOpenFiles(string path)
+    /// <summary>只删“一天前的”文件（<c>open</c> / <c>drag</c> 那两类临时副本），顺手扫掉空目录。</summary>
+    private static void SweepOldFiles(string path)
     {
         try
         {

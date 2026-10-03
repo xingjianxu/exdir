@@ -15,11 +15,13 @@ public sealed class FileSystemService : IFileSystemService
 {
     private readonly ICloudSyncService _cloudSync;
     private readonly IArchiveService _archive;
+    private readonly IRemoteFileService _remote;
 
-    public FileSystemService(ICloudSyncService cloudSync, IArchiveService archive)
+    public FileSystemService(ICloudSyncService cloudSync, IArchiveService archive, IRemoteFileService remote)
     {
         _cloudSync = cloudSync;
         _archive = archive;
+        _remote = remote;
     }
 
     public Task<IReadOnlyList<FileSystemEntry>> EnumerateDirectoryAsync(
@@ -27,6 +29,12 @@ public sealed class FileSystemService : IFileSystemService
         bool includeHidden,
         CancellationToken cancellationToken = default)
     {
+        // 远程位置（SFTP / FTP）：条目来自网络，走的完全是另一套（见 IRemoteFileService）
+        if (_remote.IsRemotePath(path))
+        {
+            return _remote.ListAsync(path, includeHidden, cancellationToken);
+        }
+
         // 压缩包里的目录：条目来自 7z.dll，不碰真实文件系统
         if (_archive.TryParse(path, out var location))
         {
@@ -40,9 +48,21 @@ public sealed class FileSystemService : IFileSystemService
         string path,
         int maxCount,
         CancellationToken cancellationToken = default)
-        => Task.Run<IReadOnlyList<FileSystemEntry>>(
+    {
+        // 侧边栏懒加载：远程目录也只取子目录（同一个连接，少传一点数据）
+        if (_remote.IsRemotePath(path))
+        {
+            return _remote.ListDirectoriesAsync(path, maxCount, cancellationToken);
+        }
+
+        return Task.Run<IReadOnlyList<FileSystemEntry>>(
             () => Enumerate(path, includeHidden: false, cancellationToken, directoriesOnly: true, maxCount: maxCount),
             cancellationToken);
+    }
+
+    // 注意：DirectoryExists / FileExists 故意**不**处理远程路径（一律返回 false）。
+    // 它们被写操作守卫（粘贴 / 删除 / 新建文件夹 / 拖放落点 / 固定目录）当成“磁盘上真有这个路径”，
+    // 远程路径在那里必须是不存在的；远程目录的存在性判断走 ResolveDirectoryAsync。
 
     public bool DirectoryExists(string path)
     {
@@ -75,6 +95,12 @@ public sealed class FileSystemService : IFileSystemService
             return null;
         }
 
+        // 远程路径有自己的“上一层”（协议与登录身份那一段是根）
+        if (_remote.IsRemotePath(path))
+        {
+            return _remote.GetParent(path);
+        }
+
         try
         {
             var trimmed = path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -99,6 +125,12 @@ public sealed class FileSystemService : IFileSystemService
     public string? NormalizeDirectoryPath(string input)
     {
         if (string.IsNullOrWhiteSpace(input))
+        {
+            return null;
+        }
+
+        // 远程路径不是“真实目录”：写操作（粘贴 / 新建文件夹 / 拖放落点）拿到 null 自然就被拒了
+        if (_remote.IsRemotePath(input))
         {
             return null;
         }
@@ -130,6 +162,8 @@ public sealed class FileSystemService : IFileSystemService
 
     public bool IsInsideArchive(string path) => _archive.IsInsideArchive(path);
 
+    public bool IsRemotePath(string path) => _remote.IsRemotePath(path);
+
     public bool TryParseArchivePath(string path, out ArchivePath location) => _archive.TryParse(path, out location);
 
     public async Task<string?> ResolveDirectoryAsync(string input, CancellationToken cancellationToken = default)
@@ -144,6 +178,13 @@ public sealed class FileSystemService : IFileSystemService
         try
         {
             candidate = Environment.ExpandEnvironmentVariables(candidate);
+
+            // 远程位置：根目录不用连服务器（有些 FTP 对 "/" 的 STAT 支持很差），
+            // 其它目录要真连上去看一眼（不然“无法打开”就白报了）
+            if (_remote.IsRemotePath(candidate))
+            {
+                return await _remote.ResolveDirectoryAsync(candidate, cancellationToken).ConfigureAwait(true);
+            }
 
             if (Directory.Exists(candidate))
             {

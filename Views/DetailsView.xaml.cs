@@ -11,6 +11,7 @@ using System.Windows.Input;
 using Exdir.Controls;
 using Exdir.Diagnostics;
 using Exdir.Helpers;
+using Exdir.Models;
 using Exdir.ViewModels;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
@@ -23,6 +24,7 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Foundation;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.ApplicationModel.DataTransfer.DragDrop;
+using Windows.Storage;
 using Windows.System;
 using Windows.UI.Core;
 using WinRT.Interop;
@@ -395,19 +397,10 @@ public sealed partial class DetailsView : UserControl
     {
         // 取消的拖拽不能留下上一次的路径（否则拖拽收尾的兜底会拿旧路径做一次移动）
         _draggingPaths.Clear();
+        _draggingFromStaging = false;
 
-        var items = EntryList.SelectedItems.OfType<FileItemViewModel>().ToList();
-
-        // 按在没选中的行上时 ListView 会先把它选上；这里再兜一次底（顺序将来变了也不会拖错东西）
-        if (_dragCandidate is { } candidate && !items.Contains(candidate))
-        {
-            EntryList.SelectedItem = candidate;
-            items = new List<FileItemViewModel> { candidate };
-        }
-
-        // 压缩包里的条目没有真实路径，拖出去只会得到一个空数据包，直接从源头取消。
-        // 这一条同时覆盖“当前目录就在包内”与“在真实目录里就地展开了压缩包”两种情况。
-        if (items.Count == 0 || items.Any(static item => item.IsInArchive))
+        var items = SelectedDragItems();
+        if (items.Count == 0)
         {
             args.Cancel = true;
             return;
@@ -415,6 +408,31 @@ public sealed partial class DetailsView : UserControl
 
         _dragStarted = true;
         _internalDropHandled = false;
+
+        // 压缩包里的条目 / 远程位置上的条目没有本地真实路径（写不出 CF_HDROP）：
+        // 真实文件已经在手势开始前由 <see cref="PrepareStagingDragAsync" /> 解出来 / 下下来，
+        // 并放进了 <see cref="_stagingDrag" />（拖拽过程中不能再 await —— 这里必须同步把数据包写完）
+        if (items.Any(static item => item.IsInArchive || RemotePath.LooksRemote(item.FullPath)))
+        {
+            var ready = _stagingDrag;
+            _stagingDrag = null;
+
+            if (ready is null || ready.StorageItems.Count == 0)
+            {
+                Log.Write("拖拽：待中转的条目还没准备好（没有预解出 / 预下载的数据包），取消这次拖拽");
+                args.Cancel = true;
+                return;
+            }
+
+            _draggingPaths = ready.Payload.Paths.ToList();
+            _draggingFromStaging = true;
+
+            DragDropHelper.SetArchiveDrag(args.Data, ready.StorageItems, ready.Payload.StagingRoots);
+
+            Log.Write($"拖拽开始（包内 / 远程条目）：{items.Count} 项 → 交给外壳 {ready.StorageItems.Count} 个真实文件（临时副本 {ready.Payload.StagingRoots.Count} 处）");
+            return;
+        }
+
         _draggingPaths = items.Select(item => item.FullPath).ToList();
 
         var foldersOnly = items.All(item => item.IsDirectory);
@@ -426,6 +444,104 @@ public sealed partial class DetailsView : UserControl
             foldersOnly);
 
         Log.Write($"拖拽开始（文件列表）：{items.Count} 项（全是目录={foldersOnly}）");
+    }
+
+    /// <summary>
+    /// 要拖走的行。按在没选中的行上时 ListView 为了支持“拖动已选中的多项”会把选择推迟到鼠标松开，
+    /// 而那时拖拽已经开始了 —— 这里自己补上（与 <see cref="DetailsRoot_PointerPressed" /> 一致）。
+    /// </summary>
+    private List<FileItemViewModel> SelectedDragItems()
+    {
+        var items = EntryList.SelectedItems.OfType<FileItemViewModel>().ToList();
+
+        if (_dragCandidate is { } candidate && !items.Contains(candidate))
+        {
+            EntryList.SelectedItem = candidate;
+            items = new List<FileItemViewModel> { candidate };
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// 拖拽手势的第一步：选中项里有**压缩包内部条目 / 远程位置上的条目**时，
+    /// 先把它们解到 / 下到临时目录（<c>archive-cache\drag</c> / <c>remote-cache\drag</c>）、拿到真实文件
+    /// （那两类路径写不进 <c>CF_HDROP</c>，也交不给别的程序），才能开始拖拽。
+    ///
+    /// <para>
+    /// 解包可能很慢（大条目要解几秒）、还可能弹密码框，所以放在 <c>StartDragAsync</c> **之前**做：
+    /// 一来拖拽数据包能同步写完（拖拽一开始就不能再改了），
+    /// 二来解包失败 / 用户取消时干脆不启动这一次拖拽（见 AGENTS.md 第 6 节第 95 条）。
+    /// </para>
+    /// </summary>
+    /// <returns>false = 这一次不该开始拖拽。</returns>
+    private async Task<bool> PrepareStagingDragAsync()
+    {
+        _stagingDrag = null;
+
+        if (ViewModel is not { } viewModel)
+        {
+            return false;
+        }
+
+        var items = SelectedDragItems();
+        if (items.Count == 0)
+        {
+            return false;
+        }
+
+        // 真实路径不需要预先下载 / 解包（数据包里直接写它们的真实路径）
+        if (!items.Any(static item => item.IsInArchive || RemotePath.LooksRemote(item.FullPath)))
+        {
+            return true;
+        }
+
+        var payload = await viewModel.BuildDragPayloadAsync(items).ConfigureAwait(true);
+        if (payload is null || payload.Paths.Count == 0)
+        {
+            Log.Write("拖拽：包内 / 远程条目没能取出来（原因见上面的日志 / InfoBar），取消这次拖拽");
+            return false;
+        }
+
+        var storageItems = await CreateStorageItemsAsync(payload.Paths).ConfigureAwait(true);
+        if (storageItems.Count == 0)
+        {
+            Log.Write("拖拽：解出来 / 下下来的临时副本没能交给外壳（StorageItems 为空），取消这次拖拽");
+            return false;
+        }
+
+        _stagingDrag = new StagingDragReady(payload, storageItems);
+        return true;
+    }
+
+    /// <summary>
+    /// 把解出来的真实路径包成 <see cref="IStorageItem" />：资源管理器只认 <c>CF_HDROP</c>，
+    /// 而 WinRT 会把 StorageItems 换成它。取不到的对象跳过（极端情况：解出来的临时文件刚好被清掉）。
+    /// </summary>
+    private static async Task<List<IStorageItem>> CreateStorageItemsAsync(IReadOnlyList<string> paths)
+    {
+        var items = new List<IStorageItem>();
+
+        foreach (var path in paths)
+        {
+            try
+            {
+                if (Directory.Exists(path))
+                {
+                    items.Add(await StorageFolder.GetFolderFromPathAsync(path));
+                }
+                else if (File.Exists(path))
+                {
+                    items.Add(await StorageFile.GetFileFromPathAsync(path));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Exception($"拖拽：路径无法交给外壳（{path}）", ex);
+            }
+        }
+
+        return items;
     }
 
     /// <summary>列头固定高度也不变，这里只是为了把列头内容裁剪在窗格内（横向滚动时会平移出去）。</summary>
@@ -625,6 +741,21 @@ public sealed partial class DetailsView : UserControl
     /// <summary>本次拖拽真正拖走的路径（DragStarting 时定下来）。</summary>
     private List<string> _draggingPaths = new();
 
+    /// <summary>本次拖拽拖的是“交出去的临时副本”（从压缩包里解出来 / 从远程下下来的；收尾兜底据此强制按复制）。</summary>
+    private bool _draggingFromStaging;
+
+    /// <summary>
+    /// 这次手势已经准备好的临时副本：<see cref="PrepareStagingDragAsync" /> 填、
+    /// <see cref="DetailsRoot_DragStarting" /> 取（拖拽数据包必须在 DragStarting 里同步写完，
+    /// 所以解包 / 下载与建 StorageItems 都得在开始拖拽之前做完）。
+    /// </summary>
+    private StagingDragReady? _stagingDrag;
+
+    /// <summary>“把压缩包内条目 / 远程条目拖出去”这次手势准备好的东西。</summary>
+    /// <param name="Payload">解出来 / 下下来的真实路径 + 临时副本的根目录。</param>
+    /// <param name="StorageItems">交给外壳的 StorageItems（资源管理器只认它转出来的 CF_HDROP）。</param>
+    private sealed record StagingDragReady(DragPayload Payload, List<IStorageItem> StorageItems);
+
     /// <summary>本次拖拽的 Drop 有没有落到本列表上（落下处理用它防重复）。</summary>
     private bool _internalDropHandled;
 
@@ -668,6 +799,13 @@ public sealed partial class DetailsView : UserControl
     {
         try
         {
+            // 选中项里有包内条目时先把它们解到临时目录（可能要等几秒）、建好 StorageItems，
+            // 再开始拖拽 —— 拖拽数据包必须在 DragStarting 里同步写完，那里不能再 await
+            if (!await PrepareStagingDragAsync().ConfigureAwait(true))
+            {
+                return;
+            }
+
             await DetailsRoot.StartDragAsync(point);
         }
         catch (Exception ex)
@@ -681,6 +819,7 @@ public sealed partial class DetailsView : UserControl
             // 拖拽结束后才能再开始下一次；拖拽期间收不到 PointerReleased，得在这里清
             _dragStarted = false;
             _dragCandidate = null;
+            _stagingDrag = null;
         }
 
         // 兜底：WinUI 有时不会把 Drop 冒泡到列表上（行高亮着、松手却什么都没发生），
@@ -715,8 +854,16 @@ public sealed partial class DetailsView : UserControl
 
         var row = RowAt(position);
 
-        // 包内目录行是虚拟路径：与 DragOver 保持一致，不做任何事（而不是退回到当前目录）
-        if (row?.IsInArchive == true)
+        // 包内 / 远程目录行都不接受拖放：包内是虚拟路径（写不进去），远程位置只读
+        if (row?.IsInArchive == true || row is not null && RemotePath.LooksRemote(row.FullPath))
+        {
+            return;
+        }
+
+        // 当前目录在压缩包里 / 在远程位置上时不接受拖放：
+        // 压缩包那种情况 CurrentPath 是虚拟路径，退回去当落点会经 NormalizeDirectoryPath 落到
+        // **压缩包所在的目录**（见 AGENTS.md 第 6 节第 83 条）；远程位置则是根本不能写。
+        if (viewModel.IsInsideArchive || viewModel.IsRemote)
         {
             return;
         }
@@ -728,8 +875,8 @@ public sealed partial class DetailsView : UserControl
             return;
         }
 
-        // 和 DragOver 里的判定一致（默认移动，按住 Ctrl 是复制）
-        var move = !IsKeyDown(VkControl);
+        // 和 DragOver 里的判定一致（默认移动，按住 Ctrl 是复制；从压缩包里拖出来的永远是复制）
+        var move = !_draggingFromStaging && !IsKeyDown(VkControl);
 
         Log.Write($"拖放兜底：{_draggingPaths.Count} 项 → {target}（{(move ? "移动" : "复制")}）");
         await viewModel.DropFilesAsync(_draggingPaths, target, move).ConfigureAwait(true);
@@ -900,7 +1047,7 @@ public sealed partial class DetailsView : UserControl
             EntryList.SelectedItem = item;
         }
 
-        if (viewModel.UseBuiltInContextMenu || viewModel.IsInsideArchive || item?.IsInArchive == true)
+        if (viewModel.UseBuiltInContextMenu || viewModel.IsInsideArchive || viewModel.IsRemote || item?.IsInArchive == true)
         {
             ShowBuiltInContextMenu(viewModel, item, position);
         }
@@ -953,6 +1100,35 @@ public sealed partial class DetailsView : UserControl
         }
 
         var flyout = new MenuFlyout();
+
+        // 远程位置（SFTP / FTP）也是**只读**的：留看得懂的（打开 / 下载到… / 复制到本地），
+        // 写操作的入口（剪切 / 删除 / 粘贴 / 新建文件夹 / 压缩 / 属性 / 在资源管理器中显示）根本不给；
+        // 键盘入口由 FolderTabViewModel 里的守卫挡（RefuseInRemote）。
+        if (viewModel.IsRemote)
+        {
+            if (onRow)
+            {
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+                AddContextMenuItem(flyout, "下载到…", viewModel.DownloadSelectionCommand);
+
+                flyout.Items.Add(new MenuFlyoutSeparator());
+                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
+
+                flyout.Items.Add(new MenuFlyoutSeparator());
+                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
+            }
+            else
+            {
+                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
+                AddContextMenuAction(flyout, "全选", SelectAllRows);
+                flyout.Items.Add(new MenuFlyoutSeparator());
+                AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand);
+            }
+
+            Log.Write($"内置右键菜单：远程位置{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项（只读，可下载 / 复制到本地）");
+            flyout.ShowAt(DetailsRoot, new FlyoutShowOptions { Position = position });
+            return;
+        }
 
         // 压缩包内部是**只读**的：只留看得懂、做得了的那几项，写操作的入口根本不给
         //（Ctrl+X/V/Delete 这些键盘入口由 ViewModel 里的守卫挡，见 FolderTabViewModel.RefuseSelectionInArchive）
@@ -1210,13 +1386,16 @@ public sealed partial class DetailsView : UserControl
 
         if (string.IsNullOrEmpty(viewModel.CurrentPath)
             || viewModel.IsInsideArchive
+            || viewModel.IsRemote
             || e.DataView.Contains(DragDropHelper.PinnedReorderFormat))
         {
             return false;
         }
 
-        // 同进程拖拽（我们自己写的格式）与外部拖入（资源管理器）都接受；其它一律不接
-        var internalDrag = e.DataView.Contains(DragDropHelper.PathsFormat);
+        // 同进程拖拽（我们自己写的格式）与外部拖入（资源管理器）都接受；其它一律不接。
+        // 从压缩包里拖出来的那些同时带着 StorageItems，也算内部拖拽。
+        var archiveDrag = e.DataView.Contains(DragDropHelper.ArchiveDragFormat);
+        var internalDrag = e.DataView.Contains(DragDropHelper.PathsFormat) || archiveDrag;
         if (!internalDrag && !e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             return false;
@@ -1230,9 +1409,9 @@ public sealed partial class DetailsView : UserControl
 
         var hit = RowAt(point);
 
-        // 压缩包内的目录行是虚拟路径，写不进去：光标落在它上面时整个拖放都不接受。
-        // 不能退回到“当前目录” —— 用户盯的是那个包内目录，退回去会搬错地方。
-        if (hit?.IsInArchive == true)
+        // 包内的目录行与远程位置的行都不能当落点：前者是虚拟路径，后者只读。
+        // 不能退回到“当前目录” —— 用户盯的是那一行，退回去会搬错地方。
+        if (hit?.IsInArchive == true || (hit is not null && RemotePath.LooksRemote(hit.FullPath)))
         {
             return false;
         }
@@ -1245,7 +1424,9 @@ public sealed partial class DetailsView : UserControl
 
         // 自己拖的：默认移动（资源管理器在同盘内的习惯），按住 Ctrl 变成复制。
         // 从资源管理器拖进来的：默认复制（不客气地搬走别人窗口里的文件太危险），按住 Shift 才是移动。
-        move = internalDrag ? !control : shift && !control;
+        // 从压缩包里拖出来的：永远复制 —— 包本身只读，交出去的也只是临时副本，
+        // “移动”它没有任何意义（按 Shift 也不该变）。
+        move = archiveDrag ? false : internalDrag ? !control : shift && !control;
 
         return true;
     }

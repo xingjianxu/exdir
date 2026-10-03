@@ -20,6 +20,9 @@ dist/
 packages/
 project.lock.json
 
+## Node（tools\remote-test-server 的测试服务器依赖）
+node_modules/
+
 ## Misc
 *.log
 *.tmp

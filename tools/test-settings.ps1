@@ -140,6 +140,7 @@ $KeyMap = [ordered]@{
     '显示「收藏夹」分组'     = 'sidebarFavorites'
     '显示「云存储」分组'     = 'sidebarCloud'
     '显示「此电脑」分组'     = 'sidebarComputer'
+    '显示「远程」分组'       = 'sidebarRemote'
     '显示「桌面」'           = 'sidebarHomeDesktop'
     '显示「文档」'           = 'sidebarHomeDocuments'
     '显示「下载」'           = 'sidebarHomeDownloads'
@@ -159,9 +160,10 @@ $CategoryMap = [ordered]@{
     '外观'     = @('squareTabCorners', 'animations')
     '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
     '启动'     = @('startWithWindows')
-    '侧边栏'   = @('sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer',
+    '侧边栏'   = @('sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer', 'sidebarRemote',
                     'sidebarHomeDesktop', 'sidebarHomeDocuments', 'sidebarHomeDownloads',
                     'sidebarHomePictures', 'sidebarHomeMusic', 'sidebarHomeVideos')
+    '远程'     = @()
     '右键菜单' = $null
 }
 
@@ -638,7 +640,7 @@ $settings = Open-Settings -Session $session
 $navNames = Get-NavNames -Settings $settings
 Write-Host ("  左侧导航: {0}" -f ($navNames -join ' / '))
 Assert ($navNames.Count -eq $CategoryMap.Count) "左侧有 $($CategoryMap.Count) 个分类（实际 $($navNames.Count)）"
-Assert (($navNames -join '/') -eq (($CategoryMap.Keys) -join '/')) '左侧分类就是「文件列表 / 外观 / 布局 / 侧边栏 / 右键菜单」且顺序一致'
+Assert (($navNames -join '/') -eq (($CategoryMap.Keys) -join '/')) '左侧分类与 $CategoryMap（文件列表 / 外观 / 布局 / 启动 / 侧边栏 / 远程 / 右键菜单）及顺序一致'
 Assert ((Get-CurrentCategoryKey -Settings $settings) -eq '文件列表') '默认选中的是第一个分类「文件列表」'
 Assert ($null -eq (Find-First -From $settings.Window -Name '保存' -ControlType ([System.Windows.Automation.ControlType]::Button))) '设置窗口里没有「保存」按钮（改了就生效）'
 Assert ($null -eq (Find-First -From $settings.Window -Name '取消' -ControlType ([System.Windows.Automation.ControlType]::Button))) '设置窗口里没有「取消」按钮'

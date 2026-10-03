@@ -33,6 +33,12 @@ public interface IFileSystemService
     /// <summary>路径是不是指向某个压缩包（压缩包根或包内目录 / 文件）。</summary>
     bool IsInsideArchive(string path);
 
+    /// <summary>
+    /// 路径是不是远程位置（<c>sftp://</c> / <c>ftp://</c> / <c>ftps://</c>）。
+    /// 只看协议头，不联网；见 <c>IRemoteFileService</c>。
+    /// </summary>
+    bool IsRemotePath(string path);
+
     /// <summary>把路径解释成压缩包位置；不是压缩包路径时返回 false。</summary>
     bool TryParseArchivePath(string path, out ArchivePath location);
 

@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Exdir.Helpers;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -8,6 +9,37 @@ namespace Exdir.Services;
 /// <inheritdoc cref="IDialogService" />
 public sealed class DialogService : IDialogService
 {
+    /// <inheritdoc />
+    public Task<string?> PickFolderAsync(string? initialDirectory = null)
+    {
+        // 选择器要宿主窗口的 HWND（SetTitle / SetFolder / 模态都靠它）
+        if (App.MainWindow is not { } window)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        var picked = FolderPicker.PickFolder(
+            WinRT.Interop.WindowNative.GetWindowHandle(window),
+            initialDirectory);
+
+        return Task.FromResult(picked);
+    }
+
+    /// <inheritdoc />
+    public Task<string?> PickFileAsync(string? initialFilePath = null)
+    {
+        if (App.MainWindow is not { } window)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        var picked = FolderPicker.PickFile(
+            WinRT.Interop.WindowNative.GetWindowHandle(window),
+            initialFilePath);
+
+        return Task.FromResult(picked);
+    }
+
     public async Task<string?> RequestPasswordAsync(string archiveDisplayName)
     {
         // 主窗口的内容就是 RootGrid；拿它当 XamlRoot（非打包应用里 ContentDialog 必须显式指定）

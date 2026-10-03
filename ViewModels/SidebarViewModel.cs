@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.Models;
 using Exdir.Services;
@@ -39,6 +40,12 @@ public enum SidebarNodeKind
 
     /// <summary>收藏夹里的一个目录（等价于工具条上的一个固定目录）。</summary>
     Favorite,
+
+    /// <summary>「远程」分组标题（SFTP / FTP 位置，本身不可导航）。</summary>
+    RemoteGroup,
+
+    /// <summary>一个配置好的远程位置（SFTP / FTP）；展开时列的是服务器上的子目录。</summary>
+    Remote,
 
     /// <summary>普通文件夹。</summary>
     Folder,
@@ -119,6 +126,7 @@ public sealed partial class SidebarViewModel : ObservableObject
     private readonly IKnownFolderService _knownFolders;
     private readonly IDriveService _driveService;
     private readonly INetworkLocationService _networkLocations;
+    private readonly IRemoteLocationSource _remoteLocations;
 
     private readonly Dictionary<string, SidebarNodeViewModel> _index = new(StringComparer.OrdinalIgnoreCase);
 
@@ -135,11 +143,15 @@ public sealed partial class SidebarViewModel : ObservableObject
     private SidebarNodeViewModel? _cloudGroup;
     private SidebarNodeViewModel? _computerGroup;
 
+    /// <summary>「远程」分组的节点引用（SFTP / FTP 位置，见 <see cref="ApplyRemoteLocations" />）。</summary>
+    private SidebarNodeViewModel? _remoteGroup;
+
     // 分组显示开关（由 MainViewModel 在启动与设置改动时推过来，见 ApplyGroupVisibility）
     private bool _showHome = true;
     private bool _showFavorites = true;
     private bool _showCloud = true;
     private bool _showComputer = true;
+    private bool _showRemote = true;
 
     /// <summary>
     /// 「主目录」分组里当前显示哪几个标准文件夹（由设置推过来，见 <see cref="ApplyHomeFolders" />）。
@@ -152,12 +164,14 @@ public sealed partial class SidebarViewModel : ObservableObject
         IFileSystemService fileSystem,
         IKnownFolderService knownFolders,
         IDriveService driveService,
-        INetworkLocationService networkLocations)
+        INetworkLocationService networkLocations,
+        IRemoteLocationSource remoteLocations)
     {
         _fileSystem = fileSystem;
         _knownFolders = knownFolders;
         _driveService = driveService;
         _networkLocations = networkLocations;
+        _remoteLocations = remoteLocations;
 
         BuildTree();
     }
@@ -186,6 +200,8 @@ public sealed partial class SidebarViewModel : ObservableObject
         SyncHomeFolders(_homeGroup);
         _favoritesGroup = BuildFavoritesGroup();
         _cloudGroup = BuildCloudGroup();
+        _remoteGroup = BuildRemoteGroup();
+        ApplyRemoteLocations(_remoteLocations.Locations);
         _computerGroup = BuildComputerGroup();
 
         // 顶层默认展开
@@ -281,17 +297,83 @@ public sealed partial class SidebarViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 按设置显示 / 隐藏侧边栏的四个分组（设置窗口「侧边栏」页）。
+    /// 按设置显示 / 隐藏侧边栏的五个分组（设置窗口「侧边栏」页）。
     /// 启动时与设置改动时各调一次。
     /// </summary>
-    public void ApplyGroupVisibility(bool home, bool favorites, bool cloud, bool computer)
+    public void ApplyGroupVisibility(bool home, bool favorites, bool cloud, bool computer, bool remote)
     {
         _showHome = home;
         _showFavorites = favorites;
         _showCloud = cloud;
         _showComputer = computer;
+        _showRemote = remote;
 
         RefreshRoots();
+    }
+
+    /// <summary>
+    /// 把「远程」分组的子项对齐到当前配置的远程位置（SFTP / FTP）清单。
+    /// 与「主目录」一样只增删差异项、复用未变的节点（核心是保留已展开的子目录与展开状态）；
+    /// 设置里改了名字 / 主机 / 起始目录时那个节点会被换成新的。
+    /// </summary>
+    public void ApplyRemoteLocations(IReadOnlyList<RemoteLocation> locations)
+    {
+        if (_remoteGroup is null)
+        {
+            return;
+        }
+
+        var existing = new Dictionary<string, SidebarNodeViewModel>(StringComparer.Ordinal);
+        foreach (var node in _remoteGroup.Children)
+        {
+            existing[node.FullPath] = node;
+        }
+
+        var desired = new List<SidebarNodeViewModel>(locations.Count);
+        foreach (var location in locations)
+        {
+            var path = location.EntryPath;
+
+            desired.Add(existing.TryGetValue(path, out var node) && node.Name == location.DisplayName
+                ? node
+                : new SidebarNodeViewModel(
+                    location.DisplayName,
+                    path,
+                    FileTypeHelper.NetworkGlyph,
+                    SidebarNodeKind.Remote));
+        }
+
+        for (var i = _remoteGroup.Children.Count - 1; i >= 0; i--)
+        {
+            var node = _remoteGroup.Children[i];
+            if (!desired.Contains(node))
+            {
+                Unindex(node);
+                _remoteGroup.Children.RemoveAt(i);
+            }
+        }
+
+        for (var i = 0; i < desired.Count; i++)
+        {
+            if (i < _remoteGroup.Children.Count && ReferenceEquals(_remoteGroup.Children[i], desired[i]))
+            {
+                continue;
+            }
+
+            var at = _remoteGroup.Children.IndexOf(desired[i]);
+            if (at < 0)
+            {
+                _remoteGroup.Children.Insert(i, desired[i]);
+                _index[desired[i].FullPath] = desired[i];
+            }
+            else
+            {
+                _remoteGroup.Children.RemoveAt(at);
+                _remoteGroup.Children.Insert(i, desired[i]);
+            }
+        }
+
+        _remoteGroup.HasUnrealizedChildren = false;
     }
 
     /// <summary>
@@ -334,7 +416,8 @@ public sealed partial class SidebarViewModel : ObservableObject
 
         node.ChildrenLoaded = true;
 
-        if (!_fileSystem.DirectoryExists(node.FullPath))
+        // 远程位置不在本地磁盘上，DirectoryExists 对它恒为 false —— 不能拿它当“这个节点没东西”
+        if (!_fileSystem.IsRemotePath(node.FullPath) && !_fileSystem.DirectoryExists(node.FullPath))
         {
             node.HasUnrealizedChildren = false;
             return;
@@ -347,8 +430,10 @@ public sealed partial class SidebarViewModel : ObservableObject
                 .EnumerateSubDirectoriesAsync(node.FullPath, MaxChildrenPerLevel)
                 .ConfigureAwait(true);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            // 远程位置连不上 / 认证失败就展开成空，但要在日志里留一笔（否则只能干瞪眼）
+            Log.Write($"展开侧边栏节点失败：{node.FullPath} —— {ex.Message}");
             node.HasUnrealizedChildren = false;
             return;
         }
@@ -439,6 +524,7 @@ public sealed partial class SidebarViewModel : ObservableObject
         if (_favoritesGroup is not null) { yield return _favoritesGroup; }
         if (_homeGroup is not null) { yield return _homeGroup; }
         if (_cloudGroup is not null) { yield return _cloudGroup; }
+        if (_remoteGroup is not null) { yield return _remoteGroup; }
         if (_computerGroup is not null) { yield return _computerGroup; }
     }
 
@@ -449,11 +535,12 @@ public sealed partial class SidebarViewModel : ObservableObject
     /// </summary>
     private void RefreshRoots()
     {
-        var desired = new List<SidebarNodeViewModel>(4);
+        var desired = new List<SidebarNodeViewModel>(5);
         // 「收藏夹」放最上面（与 AllGroups 的顺序保持一致）
         if (_showFavorites && _favoritesGroup is not null) { desired.Add(_favoritesGroup); }
         if (_showHome && _homeGroup is not null) { desired.Add(_homeGroup); }
         if (_showCloud && _cloudGroup is not null) { desired.Add(_cloudGroup); }
+        if (_showRemote && _remoteGroup is not null) { desired.Add(_remoteGroup); }
         if (_showComputer && _computerGroup is not null) { desired.Add(_computerGroup); }
 
         foreach (var node in Roots.ToList())
@@ -573,6 +660,21 @@ public sealed partial class SidebarViewModel : ObservableObject
             group.Children.Add(node);
             _index[folder.Path] = node;
         }
+
+        return group;
+    }
+
+    private SidebarNodeViewModel BuildRemoteGroup()
+    {
+        // 分组本身没有路径（不可导航）；子项由 ApplyRemoteLocations 填充
+        // （不能在这个方法里调它：那时 _remoteGroup 还没赋值）
+        var group = new SidebarNodeViewModel(
+            "远程",
+            string.Empty,
+            FileTypeHelper.NetworkGlyph,
+            SidebarNodeKind.RemoteGroup);
+        group.ChildrenLoaded = true;
+        group.HasUnrealizedChildren = false;
 
         return group;
     }

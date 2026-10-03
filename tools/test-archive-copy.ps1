@@ -355,15 +355,27 @@ function Invoke-MenuItem {
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
         [System.Windows.Automation.ControlType]::MenuItem)
 
+    # 展开后偶尔一个菜单项都读不到（菜单项可用状态要在弹出时现查剪贴板，UIA 树也偶发迟一拍）
+    # → 收起来再展开一次，别把这个当成产品问题（实测每十来次会碰上一次）。
     $item = $null
-    for ($i = 0; $i -lt 24 -and $null -eq $item; $i++) {
-        Start-Sleep -Milliseconds 250
-        $item = @($Session.Desktop.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond) |
-            Where-Object {
-                $_.Current.ProcessId -eq $Session.Proc.Id -and $_.Current.Name -eq $ItemName -and
-                -not $_.Current.IsOffscreen -and $_.Current.BoundingRectangle.Width -gt 0
-            } | Select-Object -First 1)[0]
+    for ($attempt = 0; $attempt -lt 2 -and $null -eq $item; $attempt++) {
+        if ($attempt -gt 0) {
+            Start-Sleep -Milliseconds 800
+            try { $menuBarItem.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Collapse() } catch { }
+            Start-Sleep -Milliseconds 300
+            $menuBarItem.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+        }
+
+        for ($i = 0; $i -lt 24 -and $null -eq $item; $i++) {
+            Start-Sleep -Milliseconds 250
+            $item = @($Session.Desktop.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond) |
+                Where-Object {
+                    $_.Current.ProcessId -eq $Session.Proc.Id -and $_.Current.Name -eq $ItemName -and
+                    -not $_.Current.IsOffscreen -and $_.Current.BoundingRectangle.Width -gt 0
+                } | Select-Object -First 1)[0]
+        }
     }
+
     if ($null -eq $item) { throw "「$MenuName」菜单里找不到「$ItemName」" }
 
     $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()

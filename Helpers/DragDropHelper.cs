@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 
 namespace Exdir.Helpers;
 
@@ -29,6 +30,20 @@ public static class DragDropHelper
     /// 拖放数据本身只能同步判断格式，读不了内容，所以由拖拽源在开始拖的时候把这个结论一起写上。
     /// </summary>
     public const string FoldersOnlyProperty = "exdir/folders-only";
+
+    /// <summary>
+    /// “从压缩包里 / 从远程位置拖出来的条目”专用的标记格式（值是临时副本的根目录，一行一个）。
+    /// <para>
+    /// 这两类条目都没有本地真实路径（包内是虚拟路径，远程条目在服务器上），所以拖拽源先把它们
+    /// 解出来 / 下下来到 <c>archive-cache\drag\&lt;guid&gt;</c> 或 <c>remote-cache\drag\&lt;guid&gt;</c>，
+    /// 再把得到的**真实文件**放进 <see cref="StandardDataFormats.StorageItems" />
+    /// （这样资源管理器 / 桌面也能收）。
+    /// 这个标记用来让内部落点区分两类拖拽：工具条固定目录区与侧边栏收藏夹据此拒绝
+    /// （不能把缓存里的临时目录固定 / 收藏起来），文件列表据此一律按“复制”处理
+    /// （源是只读的，交出去的也只是临时副本）。
+    /// </para>
+    /// </summary>
+    public const string ArchiveDragFormat = "exdir/archive-drag";
 
     /// <summary>把一批路径写进拖放数据包。</summary>
     /// <param name="data">拖放数据包。</param>
@@ -58,12 +73,34 @@ public static class DragDropHelper
     }
 
     /// <summary>
+    /// 给“从压缩包里 / 从远程位置拖出来的条目”写数据包：只有
+    /// <see cref="StandardDataFormats.StorageItems" />（解出来 / 下下来的真实文件 / 目录）+
+    /// <see cref="ArchiveDragFormat" /> 标记。
+    /// 刻意不写 <see cref="PathsFormat" />：那是“内部拖拽（默认移动）”的判据，
+    /// 而这里交给壳的是临时副本，语义上永远是“复制出来”（见 <see cref="ArchiveDragFormat" />）。
+    /// </summary>
+    public static void SetArchiveDrag(DataPackage data, IEnumerable<IStorageItem> items, IEnumerable<string> stagingRoots)
+    {
+        data.SetStorageItems(items);
+        data.SetData(ArchiveDragFormat, string.Join('\n', stagingRoots));
+        data.Properties[FoldersOnlyProperty] = false;
+        data.RequestedOperation = DataPackageOperation.Copy;
+    }
+
+    /// <summary>
     /// 这个数据包“可能”含文件夹吗？用于 <c>DragOver</c>：那里只能同步判断，不能真去读数据。
     /// 外部来源（资源管理器等）只有 <see cref="StandardDataFormats.StorageItems"/>，读不到内容也先接受，
     /// 真正是不是目录留到 <see cref="GetPathsAsync"/> 之后再筛。
     /// </summary>
     public static bool MayContainFolder(DataPackageView view)
     {
+        // 从压缩包里 / 从远程位置拖出来的临时副本不是用户的目录：固定到工具条 / 收藏到侧边栏只会在缓存目录里
+        // 留一个迟早会被清掉的路径（真正固定得住的是压缩包本身 / 远程位置，而不是里面的条目）
+        if (view.Contains(ArchiveDragFormat))
+        {
+            return false;
+        }
+
         if (view.Contains(StandardDataFormats.StorageItems))
         {
             return true;

@@ -23,6 +23,7 @@ public sealed partial class PanelViewModel : ObservableObject
     private readonly IArchiveService _archive;
     private readonly IArchiveClipboardService _archiveClipboard;
     private readonly ICompressionService _compression;
+    private readonly IRemoteFileService _remote;
     private readonly IKnownFolderService _knownFolders;
     private readonly IDialogService _dialogs;
 
@@ -41,6 +42,7 @@ public sealed partial class PanelViewModel : ObservableObject
         IArchiveService archive,
         IArchiveClipboardService archiveClipboard,
         ICompressionService compression,
+        IRemoteFileService remote,
         IKnownFolderService knownFolders,
         IDialogService dialogs)
     {
@@ -55,6 +57,7 @@ public sealed partial class PanelViewModel : ObservableObject
         _archive = archive;
         _archiveClipboard = archiveClipboard;
         _compression = compression;
+        _remote = remote;
         _knownFolders = knownFolders;
         _dialogs = dialogs;
     }
@@ -117,7 +120,7 @@ public sealed partial class PanelViewModel : ObservableObject
     public FolderTabViewModel CreateTab()
     {
         var tab = new FolderTabViewModel(
-            _fileSystem, _shell, _settings, _icons, _contextMenu, _clipboard, _fileOperations, _archive, _archiveClipboard, _compression, _knownFolders, _dialogs);
+            _fileSystem, _shell, _settings, _icons, _contextMenu, _clipboard, _fileOperations, _archive, _archiveClipboard, _compression, _remote, _knownFolders, _dialogs);
         tab.PropertyChanged += OnTabPropertyChanged;
         Tabs.Add(tab);
         ActiveTab = tab;
