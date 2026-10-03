@@ -20,11 +20,14 @@
   <ItemGroup>
     <Compile Include="..\..\Services\IArchiveService.cs" />
     <Compile Include="..\..\Services\ArchiveService.cs" />
+    <Compile Include="..\..\Services\ICompressionService.cs" />
+    <Compile Include="..\..\Services\CompressionService.cs" />
     <Compile Include="..\..\Services\Native\SevenZipInterop.cs" />
     <Compile Include="..\..\Models\ArchivePath.cs" />
     <Compile Include="..\..\Models\FileSystemEntry.cs" />
     <Compile Include="..\..\Models\CloudSyncState.cs" />
     <Compile Include="..\..\Helpers\ArchiveFormats.cs" />
+    <Compile Include="..\..\Helpers\CompressTargets.cs" />
     <Compile Include="..\..\Helpers\FileTypeHelper.cs" />
     <Compile Include="..\..\Diagnostics\Log.cs" />
     <None Include="..\..\native\x64\7z.dll" Link="7z.dll" CopyToOutputDirectory="PreserveNewest" />

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -9,7 +10,7 @@ namespace Exdir.Services.Native;
 /// <summary>
 /// 随程序分发的 7z.dll（官方 7-Zip 的原生引擎，见 <c>native/README.md</c>）的最小**只读**互操作层。
 ///
-/// 为什么自己写而不引 NuGet 包装包：exdir 只需要「打开 → 列举条目 → 取单个条目」，
+/// 为什么自己写而不引 NuGet 包装包：exdir 只需要「打开 → 列举条目 → 解出条目（单个或一批）」，
 /// 用到的接口只有 <c>IInArchive</c> 与打开/解压两个回调，自己写一层就没有额外的托管依赖要跟版本，
 /// 也不影响裁剪（7z.dll 本来就是原生文件，见 <c>exdir.csproj</c>）。
 ///
@@ -832,21 +833,24 @@ public sealed partial class ManagedOpenCallback : IArchiveOpenCallback, IProgres
     }
 }
 
-/// <summary>解压阶段的回调：只为请求的那一个条目开输出流，并回答密码问题。</summary>
+/// <summary>解压阶段的回调：只为请求的那几个条目开输出流，并回答密码问题。</summary>
 [ComVisible(true)]
 public sealed partial class ManagedExtractCallback : IArchiveExtractCallback, IProgress, ICryptoGetTextPassword, ICryptoGetTextPassword2, IDisposable
 {
-    private readonly uint _index;
-    private readonly string _outputPath;
+    /// <summary>7-Zip 条目号 → 落盘路径；不在这张表里的条目（含目录）直接跳过。</summary>
+    private readonly IReadOnlyDictionary<uint, string> _outputs;
+
     private readonly string? _password;
     private readonly CancellationToken _cancellationToken;
 
     private ManagedOutStream? _stream;
 
-    public ManagedExtractCallback(uint index, string outputPath, string? password, CancellationToken cancellationToken)
+    public ManagedExtractCallback(
+        IReadOnlyDictionary<uint, string> outputs,
+        string? password,
+        CancellationToken cancellationToken)
     {
-        _index = index;
-        _outputPath = outputPath;
+        _outputs = outputs;
         _password = password;
         _cancellationToken = cancellationToken;
     }
@@ -865,8 +869,9 @@ public sealed partial class ManagedExtractCallback : IArchiveExtractCallback, IP
     {
         outStream = null;
 
-        if (index != _index || askExtractMode != SevenZipInterop.ExtractModeExtract)
+        if (askExtractMode != SevenZipInterop.ExtractModeExtract || !_outputs.TryGetValue(index, out var outputPath))
         {
+            // 目录条目由调用方自己建（ManagedOutStream 也会补父目录），这里连流都不用开
             return 0;
         }
 
@@ -875,9 +880,14 @@ public sealed partial class ManagedExtractCallback : IArchiveExtractCallback, IP
             return SevenZipInterop.EAbort;
         }
 
+        // 7-Zip 是一个条目一个条目串行处理的：上一份的输出流在这里就可以关掉，
+        // 免得一次解几百个文件时把几百个文件句柄攒到解完才放
+        _stream?.Dispose();
+        _stream = null;
+
         try
         {
-            _stream = new ManagedOutStream(_outputPath, _cancellationToken);
+            _stream = new ManagedOutStream(outputPath, _cancellationToken);
             outStream = _stream;
             return 0;
         }
@@ -1012,13 +1022,39 @@ internal sealed partial class SevenZipArchive : IDisposable
         string? password,
         CancellationToken cancellationToken,
         out string failure)
+        => ExtractFiles(
+            new Dictionary<uint, string> { [index] = outputPath },
+            password,
+            cancellationToken,
+            out failure);
+
+    /// <summary>
+    /// 一次解出多个条目（7-Zip 条目号 → 落盘路径；父目录自动创建，同名覆盖）。
+    /// 比逐个调 <see cref="ExtractToFile" /> 好：固实压缩包（7z / rar）里逐条解会把同一个数据块重解 N 遍。
+    /// 失败返回 false，<paramref name="failure" /> 写明原因。
+    /// </summary>
+    public bool ExtractFiles(
+        IReadOnlyDictionary<uint, string> outputs,
+        string? password,
+        CancellationToken cancellationToken,
+        out string failure)
     {
         failure = string.Empty;
-        var callback = new ManagedExtractCallback(index, outputPath, password, cancellationToken);
+
+        if (outputs.Count == 0)
+        {
+            return true;
+        }
+
+        // 条目号按升序交给 7-Zip（固实包里顺序读最省事）
+        var indices = outputs.Keys.ToArray();
+        Array.Sort(indices);
+
+        var callback = new ManagedExtractCallback(outputs, password, cancellationToken);
 
         try
         {
-            var hr = _archive.Extract(new[] { index }, 1, SevenZipInterop.ExtractModeExtract, callback);
+            var hr = _archive.Extract(indices, (uint)indices.Length, SevenZipInterop.ExtractModeExtract, callback);
 
             if (hr != 0)
             {

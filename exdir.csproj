@@ -109,6 +109,13 @@
   <ItemGroup>
     <TrimmerRootAssembly Include="System.IO.Pipes" />
     <TrimmerRootAssembly Include="System.Text.Encoding.Extensions" />
+    <!--
+      右键「压缩」用的 System.IO.Compression（ZipArchive）：和上面两个同理 ——
+      ILLink 只按“有没有用到的类型”决定要不要把这个程序集留在 deps.json 里，
+      自包含应用是按 deps.json 建 TPA 列表的，被删掉就 JIT 到那行时抛 FileNotFoundException
+     （只能是“压缩”时才发现，普通回归跑不出来，见 AGENTS.md 第 6 节第 71 条）。
+    -->
+    <TrimmerRootAssembly Include="System.IO.Compression" />
   </ItemGroup>
 
   <!-- 非打包部署下资源文件需要显式复制到输出目录 -->

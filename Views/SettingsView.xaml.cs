@@ -1,3 +1,4 @@
+using Exdir.Helpers;
 using Exdir.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -35,6 +36,12 @@ public sealed partial class SettingsView : UserControl
         get => (SettingsViewModel?)GetValue(ViewModelProperty);
         set => SetValue(ViewModelProperty, value);
     }
+
+    /// <summary>
+    /// 承载本控件的窗口（同样由 <see cref="SettingsWindow" /> 赋值）。
+    /// 弹文件夹选择器时要拿它的 HWND 当属主，否则非打包进程里的外壳对话框起不来。
+    /// </summary>
+    public Window? HostWindow { get; set; }
 
     private static void OnViewModelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
@@ -74,6 +81,28 @@ public sealed partial class SettingsView : UserControl
         if (ViewModel is { } viewModel)
         {
             RowHeightValue.Text = $"{viewModel.RowHeight:0}";
+        }
+    }
+
+    /// <summary>
+    /// 「压缩输出目录」旁边那个「浏览…」：弹外壳的文件夹选择器，选完直接写回绑定属性
+    ///（写回会触发 <see cref="SettingsViewModel.Changed" /> → 即时落盘）。
+    /// 用户取消选择时什么也不做，文本框里的值保持不变。
+    /// </summary>
+    private void BrowseCompressionOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } viewModel || HostWindow is null)
+        {
+            return;
+        }
+
+        var picked = FolderPicker.PickFolder(
+            WinRT.Interop.WindowNative.GetWindowHandle(HostWindow),
+            viewModel.CompressionOutputDirectory);
+
+        if (!string.IsNullOrWhiteSpace(picked))
+        {
+            viewModel.CompressionOutputDirectory = picked;
         }
     }
 }

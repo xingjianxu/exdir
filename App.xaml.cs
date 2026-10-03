@@ -106,6 +106,12 @@ public partial class App : Application
 
         // 压缩包只读浏览（原生 7z.dll，见 Services/Native/SevenZipInterop.cs）
         services.AddSingleton<IArchiveService, ArchiveService>();
+
+        // 打包成 zip（右键「压缩」；走 BCL 的 System.IO.Compression，与上面那条只读的路互不干扰）
+        services.AddSingleton<ICompressionService, CompressionService>();
+
+        // 包内条目没有真实路径，写不进系统剪贴板，所以“包内复制”另记在内存里（粘贴时才解出来）
+        services.AddSingleton<IArchiveClipboardService, ArchiveClipboardService>();
         services.AddSingleton<IDialogService, DialogService>();
 
         // ViewModel

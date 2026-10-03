@@ -33,6 +33,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IShellContextMenuService _contextMenu;
     private readonly IFileOperationService _fileOperations;
     private readonly IArchiveService _archive;
+    private readonly IArchiveClipboardService _archiveClipboard;
+    private readonly ICompressionService _compression;
     private readonly IDialogService _dialogs;
 
     private PanelViewModel _activePane = null!;
@@ -52,6 +54,8 @@ public sealed partial class MainViewModel : ObservableObject
         IClipboardService clipboard,
         IFileOperationService fileOperations,
         IArchiveService archive,
+        IArchiveClipboardService archiveClipboard,
+        ICompressionService compression,
         IDialogService dialogs)
     {
         _settings = settings;
@@ -63,10 +67,16 @@ public sealed partial class MainViewModel : ObservableObject
         _contextMenu = contextMenu;
         _fileOperations = fileOperations;
         _archive = archive;
+        _archiveClipboard = archiveClipboard;
+        _compression = compression;
         _dialogs = dialogs;
 
-        // 复制 / 移动完成后要让受影响的目录重新枚举（可能是另一个窗格、另一个标签页）
+        // 复制 / 移动完成后要让受影响的目录重新枚举（可能是另一个窗格、另一个标签页）；
+        // 解压到目录也一样（目标目录与其父目录可能正开在某个标签页里），
+        // 右键「压缩」生成的 zip 落到哪个目录，那个目录也可能正开着
         _fileOperations.Completed += OnFileOperationCompleted;
+        _archive.Extracted += OnArchiveExtracted;
+        _compression.ArchiveCreated += OnArchiveCreated;
 
         Sidebar = new SidebarViewModel(fileSystem, knownFolders, driveService, networkLocations);
         Sidebar.NavigateRequested += OnSidebarNavigateRequested;
@@ -76,8 +86,8 @@ public sealed partial class MainViewModel : ObservableObject
         // 侧边栏的「收藏夹」分组是工具条固定目录的镜像：增删、拖拽排序都立刻同步过去
         PinnedFolders.CollectionChanged += (_, _) => Sidebar.SyncFavorites(PinnedFolders);
 
-        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, dialogs);
-        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, dialogs);
+        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, knownFolders, dialogs);
+        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, knownFolders, dialogs);
 
         PrimaryPane.Navigated += OnPaneNavigated;
         SecondaryPane.Navigated += OnPaneNavigated;
@@ -827,6 +837,7 @@ public sealed partial class MainViewModel : ObservableObject
         settings.FoldersFirst = edited.FoldersFirst;
         settings.ColumnAutoFit = edited.ColumnAutoFit;
         settings.RowHeight = ColumnLayout.NormalizeRowHeight(edited.RowHeight);
+        settings.CompressionOutputDirectory = edited.CompressionOutputDirectory?.Trim() ?? string.Empty;
         settings.SquareTabCorners = edited.SquareTabCorners;
         settings.Theme = ThemeHelper.Normalize(ThemeHelper.FromIndex(edited.ThemeIndex));
 
@@ -902,6 +913,7 @@ public sealed partial class MainViewModel : ObservableObject
             $"设置已应用：隐藏文件={edited.ShowHiddenFiles} 扩展名={edited.ShowExtensions} "
             + $"文件夹优先={edited.FoldersFirst} 动画={edited.EnableListAnimations} 列宽自适应={edited.ColumnAutoFit} "
             + $"行高={settings.RowHeight:0} 标签页={(settings.SquareTabCorners ? "直角" : "圆角")} "
+            + $"压缩输出目录={(string.IsNullOrEmpty(settings.CompressionOutputDirectory) ? "（下载）" : settings.CompressionOutputDirectory)} "
             + $"主题={ThemeHelper.ToDisplayName(settings.Theme)} "
             + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane} "
             + $"侧边栏分组（主目录/收藏夹/云存储/此电脑）="
@@ -1164,6 +1176,57 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private void OnSidebarUnpinRequested(object? sender, string path) => UnpinFolderByPath(path);
+
+    /// <summary>
+    /// 一次“解压到目录”完成后，把正开在**解压到的目录**与**它的父目录**里的标签页重新枚举一遍
+    /// （父目录多了一个新子目录，同样已过时）。与复制 / 移动完成后的处理同一套做法：按路径找标签页，
+    /// 不限于发起解压的那一个。
+    /// </summary>
+    private void OnArchiveExtracted(object? sender, string destinationDirectory)
+    {
+        var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { Normalize(destinationDirectory) };
+
+        if (_fileSystem.GetParentDirectory(destinationDirectory) is { } parent)
+        {
+            affected.Add(Normalize(parent));
+        }
+
+        foreach (var pane in new[] { PrimaryPane, SecondaryPane })
+        {
+            foreach (var tab in pane.Tabs.ToList())
+            {
+                if (affected.Contains(Normalize(tab.CurrentPath)))
+                {
+                    _ = tab.RefreshAsync();
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 一次「压缩」写完一个 zip 之后，把正开着**压缩包所在目录**的标签页重新枚举一遍
+    ///（新包默认落在「下载」文件夹，那里往往正好开着）。与解压 / 复制完成后的处理同一套做法。
+    /// </summary>
+    private void OnArchiveCreated(object? sender, string zipPath)
+    {
+        if (Path.GetDirectoryName(zipPath) is not { Length: > 0 } directory)
+        {
+            return;
+        }
+
+        var normalized = Normalize(directory);
+
+        foreach (var pane in new[] { PrimaryPane, SecondaryPane })
+        {
+            foreach (var tab in pane.Tabs.ToList())
+            {
+                if (string.Equals(Normalize(tab.CurrentPath), normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    _ = tab.RefreshAsync();
+                }
+            }
+        }
+    }
 
     /// <summary>
     /// 一次复制 / 移动 / 删除完成后，把“源所在目录”与“目标目录”那几个标签页重新枚举一遍。

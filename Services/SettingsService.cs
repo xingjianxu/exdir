@@ -186,6 +186,11 @@ public sealed class SettingsService : ISettingsService
         // v7 新增主题（Theme = 跟随系统 / 浅色 / 深色）：
         // 旧设置里没有这个字段，反序列化会保留属性初始值 System（= 现在的行为），同样不需要迁移。
 
+        // v8 新增开机自启（StartWithWindows），默认关；同样靠属性初始值，不需要迁移。
+
+        // v9 新增右键「压缩」的输出目录（CompressionOutputDirectory），默认空 = 用「下载」文件夹；
+        // 旧设置里没有这个字段，反序列化会保留初始值空串，同样不需要迁移。
+
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }
 

@@ -40,6 +40,7 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _dualPane;
     private bool _startWithWindows;
     private double _rowHeight;
+    private string _compressionOutputDirectory;
     private bool _useBuiltInContextMenu;
     private int _themeIndex;
     private bool _sidebarShowHome;
@@ -103,6 +104,9 @@ public sealed class SettingsViewModel : ObservableObject
 
         // 行高：config.json 可能被手改过，夹进可用区间再填给滑条
         _rowHeight = ColumnLayout.NormalizeRowHeight(settings.RowHeight);
+
+        // 压缩输出目录：空 = 用「下载」文件夹
+        _compressionOutputDirectory = settings.CompressionOutputDirectory ?? string.Empty;
     }
 
     /// <summary>
@@ -298,6 +302,17 @@ public sealed class SettingsViewModel : ObservableObject
     public double RowHeightMaximum => ColumnLayout.MaxRowHeight;
 
     public double RowHeightStep => ColumnLayout.RowHeightStep;
+
+    /// <summary>
+    /// 右键「压缩」生成的 zip 保存到哪个目录；空 = 用户的「下载」文件夹。
+    /// 界面上是一个可直接编辑的路径框（旁边有「浏览…」按钮，由视图负责弹文件夹选择器 ——
+    /// 这里只管收值，改动还是走同一个 <see cref="Changed" /> 即时落盘）。
+    /// </summary>
+    public string CompressionOutputDirectory
+    {
+        get => _compressionOutputDirectory;
+        set => SetAndNotify(ref _compressionOutputDirectory, value ?? string.Empty);
+    }
 
     // ------------------------------------------------------------------ 外观
 

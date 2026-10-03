@@ -9,7 +9,7 @@ namespace Exdir.ViewModels;
 
 /// <summary>
 /// 文件列表中的一行。
-/// 除了展开状态，其余信息在切换目录/排序时整体重建；目录行可以就地展开，
+/// 除了展开状态，其余信息在切换目录/排序时整体重建；目录行与压缩包文件行都可以就地展开，
 /// 子节点由 <see cref="FolderTabViewModel"/> 懒加载后用 <see cref="SetChildren"/> 灌进来。
 /// </summary>
 public sealed class FileItemViewModel : ObservableObject
@@ -55,6 +55,19 @@ public sealed class FileItemViewModel : ObservableObject
     public string FullPath => Entry.FullPath;
 
     public bool IsDirectory => Entry.IsDirectory;
+
+    /// <summary>
+    /// 这一行是一个可浏览的压缩包文件（<c>.zip</c> / <c>.7z</c> / <c>.tar.gz</c> …）：
+    /// 双击进包，同时也像目录一样在**当前列表里就地展开**（行首有展开箭头）。
+    /// 注意它仍是一个真实文件（<see cref="IsDirectory" /> 为 false）：删除 / 重命名 / 拖拽都对它有效。
+    /// </summary>
+    public bool IsArchive => Entry.IsArchive;
+
+    /// <summary>这一行位于压缩包内部（虚拟路径，磁盘上不存在）：写操作 / 拖拽一律拒绝。</summary>
+    public bool IsInArchive => Entry.IsInArchive;
+
+    /// <summary>能像目录一样展开出一个子层：目录，或可浏览的压缩包文件。</summary>
+    public bool IsExpandable => IsDirectory || IsArchive;
 
     public bool IsHidden => Entry.IsHidden;
 
@@ -125,8 +138,8 @@ public sealed class FileItemViewModel : ObservableObject
     /// <summary>已加载的子项（未加载时为空集合）。</summary>
     public IReadOnlyList<FileItemViewModel> Children => _children;
 
-    /// <summary>是否显示展开箭头：目录，且（未加载过，或加载后确实有子项）。</summary>
-    public bool CanExpand => IsDirectory && !(_childrenLoaded && _children.Count == 0);
+    /// <summary>是否显示展开箭头：能展开的容器，且（未加载过，或加载后确实有子项）。</summary>
+    public bool CanExpand => IsExpandable && !(_childrenLoaded && _children.Count == 0);
 
     public bool IsExpanded
     {

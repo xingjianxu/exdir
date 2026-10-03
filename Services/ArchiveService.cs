@@ -227,9 +227,12 @@ public sealed class ArchiveService : IArchiveService
         CreationTime = node.LastWrite,
         TypeName = FileTypeHelper.GetTypeName(node.Name, node.IsDirectory),
 
-        // 压缩包条目没有 Windows 的隐藏属性，也不参与云同步状态
+        // 压缩包条目没有 Windows 的隐藏属性，也不参与云同步状态；
+        // 它们是虚拟路径（磁盘上不存在）：写操作要拒绝。包内的嵌套压缩包也一样 ——
+        // ArchivePath.TryParse 只认最外层那个包，内层包没法单独打开，所以 IsArchive 保持 false
         IsHidden = false,
         SyncState = CloudSyncState.None,
+        IsInArchive = true,
     };
 
     // ------------------------------------------------------------------ 解出单个文件（双击打开用）
@@ -289,6 +292,263 @@ public sealed class ArchiveService : IArchiveService
         return target;
     }
 
+    // ------------------------------------------------------------------ 解出整包（「解压到下载文件夹」用）
+
+    public event EventHandler<string>? Extracted;
+
+    public async Task<int> ExtractAllAsync(
+        string archiveFile,
+        string destinationDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        var index = await GetIndexAsync(archiveFile, cancellationToken).ConfigureAwait(true);
+
+        // 包根的直接子项就是这次要解的全部内容 —— 隐式目录也在 Children 里，所以空目录能保住
+        var roots = index.Children.TryGetValue(string.Empty, out var top)
+            ? top.Select(static node => node.InnerPath).ToList()
+            : new List<string>();
+
+        if (roots.Count == 0)
+        {
+            throw new ArchiveOpenException($"压缩包里没有可解压的内容：{Path.GetFileName(archiveFile)}");
+        }
+
+        var fileCount = await Task.Run(
+            () =>
+            {
+                Directory.CreateDirectory(destinationDirectory);
+                ExtractRoots(index, roots, destinationDirectory, nestPerRoot: false, cancellationToken, out var count);
+                return count;
+            },
+            cancellationToken).ConfigureAwait(true);
+
+        Log.Write($"解压：{Path.GetFileName(archiveFile)} → {destinationDirectory}（{fileCount} 个文件）");
+        Extracted?.Invoke(this, destinationDirectory);
+
+        return fileCount;
+    }
+
+    // ------------------------------------------------------------------ 解出一批条目（“包内复制 → 真实目录粘贴”用）
+
+    public async Task<ArchiveExtraction> ExtractForCopyAsync(
+        string archiveFile,
+        IReadOnlyList<string> innerPaths,
+        CancellationToken cancellationToken = default)
+    {
+        var index = await GetIndexAsync(archiveFile, cancellationToken).ConfigureAwait(true);
+        var roots = SelectRoots(index, innerPaths);
+
+        if (roots.Count == 0)
+        {
+            throw new ArchiveOpenException($"压缩包里没有可复制的条目：{Path.GetFileName(archiveFile)}");
+        }
+
+        var staging = Path.Combine(TempRoot, "copy", Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            Directory.CreateDirectory(staging);
+
+            var sources = ExtractRoots(index, roots, staging, nestPerRoot: true, cancellationToken, out _);
+
+            if (sources.Count == 0)
+            {
+                throw new ArchiveOpenException($"压缩包里没有可复制的条目：{Path.GetFileName(archiveFile)}");
+            }
+
+            Log.Write($"压缩包复制：{Path.GetFileName(archiveFile)} 解出 {sources.Count} 项到临时目录");
+            return new ArchiveExtraction(sources, staging);
+        }
+        catch
+        {
+            // 半成品临时副本没有用处，别留给 CleanupTemp
+            ReleaseStaging(staging);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 把选中的包内路径整理成“互不覆盖的顶层项”：规范化、去重、去掉已被另一个选中目录覆盖的子项。
+    /// 按路径深度升序处理，所以选中 <c>sub</c> 时它下面的 <c>sub\a.txt</c> 会被丢掉（解 <c>sub</c> 就都有了）。
+    /// </summary>
+    private static List<string> SelectRoots(ArchiveIndex index, IReadOnlyList<string> innerPaths)
+    {
+        var candidates = new List<string>();
+
+        foreach (var raw in innerPaths ?? Array.Empty<string>())
+        {
+            var normalized = ArchivePath.NormalizeInner(raw);
+            if (normalized is not null && normalized.Length > 0 && !candidates.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            {
+                candidates.Add(normalized);
+            }
+        }
+
+        var result = new List<string>(candidates.Count);
+
+        foreach (var path in candidates.OrderBy(p => p.Length))
+        {
+            // 根层条目已经在索引里才认（选中的行本来就来自枚举，这里只是防御陈旧选中项）
+            if (!index.ByPath.ContainsKey(path))
+            {
+                continue;
+            }
+
+            if (result.Any(root => IsSameOrUnder(path, root)))
+            {
+                continue;
+            }
+
+            result.Add(path);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 把每个顶层项（及其子树）解到 <paramref name="destination" /> 下面，返回可以直接交给外壳（或交给用户）的
+    /// **顶层真实路径**；<paramref name="fileCount" /> 是真正写出的文件数（目录不算）。
+    /// <paramref name="nestPerRoot" /> 为 true 时每个顶层项再占一个 <c>&lt;序号&gt;\</c> 子目录
+    /// （“包内复制”的中转目录：不同父目录下的同名条目在临时目录里不会互相覆盖，而交出去的路径名字仍是包内那个名字）；
+    /// 为 false 时直接铺在 <paramref name="destination" /> 下（“解压到下载文件夹”）。
+    /// </summary>
+    private List<string> ExtractRoots(
+        ArchiveIndex index,
+        List<string> roots,
+        string destination,
+        bool nestPerRoot,
+        CancellationToken cancellationToken,
+        out int fileCount)
+    {
+        var slotOfRoot = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var slot = 0; slot < roots.Count; slot++)
+        {
+            slotOfRoot[roots[slot]] = slot;
+        }
+
+        // 7-Zip 条目号 → 落盘路径；目录不进这张表（自己建，空目录也能保住）
+        var outputs = new Dictionary<uint, string>();
+
+        foreach (var node in index.ByPath.Values)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var slot = FindSlot(slotOfRoot, node.InnerPath);
+            if (slot < 0)
+            {
+                continue;
+            }
+
+            // 包内路径可能带 Windows 下非法的文件名字符（zip 条目名不受限）
+            var root = nestPerRoot ? Path.Combine(destination, slot.ToString()) : destination;
+            var target = Path.Combine(root, ArchivePath.ToFileSystemPath(node.InnerPath));
+
+            if (node.IsDirectory)
+            {
+                Directory.CreateDirectory(target);
+                continue;
+            }
+
+            if (node.ArchiveIndex is uint itemIndex)
+            {
+                outputs[itemIndex] = target;
+            }
+        }
+
+        fileCount = outputs.Count;
+
+        if (outputs.Count > 0)
+        {
+            var password = GetPassword(index.ArchiveFile);
+            var archive = SevenZipInterop.TryOpen(
+                index.SourceFile,
+                index.SourceClassId,
+                password,
+                cancellationToken,
+                out var openFailure);
+
+            if (archive is null)
+            {
+                ThrowOpenFailure(index.ArchiveFile, openFailure);
+            }
+
+            using (archive)
+            {
+                var extractFailure = string.Empty;
+                if (!archive.ExtractFiles(outputs, password, cancellationToken, out extractFailure))
+                {
+                    ThrowOpenFailure(index.ArchiveFile, extractFailure);
+                }
+            }
+        }
+
+        var sources = new List<string>(roots.Count);
+
+        // 解完才看得见这些文件（上面建的是 7z 条目号 → 落盘路径的表）
+        foreach (var root in roots)
+        {
+            var rootDirectory = nestPerRoot ? Path.Combine(destination, slotOfRoot[root].ToString()) : destination;
+            var source = Path.Combine(rootDirectory, ArchivePath.ToFileSystemPath(root));
+
+            if (!File.Exists(source) && !Directory.Exists(source))
+            {
+                Log.Write($"压缩包复制：条目 {root} 在 7z.dll 里没有对应数据，跳过");
+                continue;
+            }
+
+            sources.Add(source);
+        }
+
+        return sources;
+    }
+
+    /// <summary>条目属于哪个顶层项（自己或某个祖先在 <paramref name="roots" /> 里）；一个都不属于时返回 -1。</summary>
+    private static int FindSlot(Dictionary<string, int> roots, string innerPath)
+    {
+        var candidate = innerPath;
+
+        while (true)
+        {
+            if (roots.TryGetValue(candidate, out var slot))
+            {
+                return slot;
+            }
+
+            var separator = candidate.LastIndexOf(Path.DirectorySeparatorChar);
+            if (separator < 0)
+            {
+                return -1;
+            }
+
+            candidate = candidate[..separator];
+        }
+    }
+
+    /// <summary><paramref name="path" /> 是不是 <paramref name="root" /> 本身或它下面的条目。</summary>
+    private static bool IsSameOrUnder(string path, string root)
+        => path.Length >= root.Length
+           && path.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+           && (path.Length == root.Length || path[root.Length] == Path.DirectorySeparatorChar);
+
+    public void ReleaseStaging(string stagingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(stagingDirectory))
+        {
+            return;
+        }
+
+        // 只删我们自己造的那一类目录：传进来的路径被拼错（或被人改成父目录）时不至于删掉别人的东西
+        var root = Path.Combine(TempRoot, "copy") + Path.DirectorySeparatorChar;
+        if (!stagingDirectory.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        TryDeleteDirectory(stagingDirectory);
+    }
+
+    /// <summary>把 7z.dll 报出来的失败转成异常：提到密码的就是“需要密码”，其余是打不开。</summary>
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
     private static void ThrowOpenFailure(string archiveFile, string? failure)
     {
         if (!string.IsNullOrEmpty(failure) && failure.Contains("密码", StringComparison.Ordinal))
@@ -482,8 +742,18 @@ public sealed class ArchiveService : IArchiveService
 
         var password = GetPassword(archiveFile);
         string? lastFailure = null;
+        var passwordFailure = false;
 
-        // .rar 这类扩展名同时挂在两个处理器上（Rar / Rar5），一个打不开就试下一个
+        // 同一个扩展名可能挂着好几个处理器（<c>.iso</c> 就是：Iso 管 ISO9660 / Joliet，Udf 管 UDF）。
+        // 一张盘上常常两套文件系统都有，而内容可能**不一样**：Windows 刻出来的 UDF 盘上，
+        // ISO9660 那半只有一张写着「本盘使用 UDF」的 README.TXT，真正的内容全在 UDF 里 ——
+        // 只看第一个能打开的处理器，用户就只会看到一个 README.TXT。
+        // 于是：能打开的处理器都过一遍，条目多的那个说了算；并列时保留先试到的（7z.dll 格式表顺序），
+        // 免得 ISO9660 / Joliet 与 UDF 内容一样时白白多读一遍属性。
+        ArchiveIndex? best = null;
+        SevenZipHandler? bestHandler = null;
+        var bestItemCount = 0u;
+
         foreach (var handler in handlers)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -495,7 +765,8 @@ public sealed class ArchiveService : IArchiveService
             {
                 if (LooksLikePasswordFailure(openFailure))
                 {
-                    throw new ArchivePasswordRequiredException(archiveFile);
+                    // 先别抛：另一个处理器可能不用密码就能打开（.rar 就挂着 Rar / Rar5 两个）
+                    passwordFailure = true;
                 }
 
                 lastFailure = openFailure;
@@ -504,6 +775,13 @@ public sealed class ArchiveService : IArchiveService
 
             using (archive)
             {
+                // 条目数不比手上这份多（且手上这份有能列出来的条目）就没必要读属性了 ——
+                // 大 ISO 上这一下能省掉一整轮 GetProperty
+                if (best is not null && best.ByPath.Count > 0 && archive.ItemCount <= bestItemCount)
+                {
+                    continue;
+                }
+
                 var byPath = ReadNodes(archive, archiveFile, cancellationToken);
 
                 var chained = TryChainTar(archive, archiveFile, extension, byPath, password, length, lastWriteUtc, cancellationToken);
@@ -512,9 +790,13 @@ public sealed class ArchiveService : IArchiveService
                     return chained;
                 }
 
-                Log.Write($"压缩包：{Path.GetFileName(archiveFile)} 共 {byPath.Count} 项（{handler.Name}）");
+                // 条目数只是“值不值得读”的粗筛，真正认的是读出来能列的行数
+                if (best is not null && byPath.Count <= best.ByPath.Count)
+                {
+                    continue;
+                }
 
-                return new ArchiveIndex
+                best = new ArchiveIndex
                 {
                     ArchiveFile = archiveFile,
                     Length = length,
@@ -524,7 +806,21 @@ public sealed class ArchiveService : IArchiveService
                     ByPath = byPath,
                     Children = BuildChildren(byPath),
                 };
+
+                bestHandler = handler;
+                bestItemCount = archive.ItemCount;
             }
+        }
+
+        if (best is not null)
+        {
+            Log.Write($"压缩包：{Path.GetFileName(archiveFile)} 共 {best.ByPath.Count} 项（{bestHandler!.Name}）");
+            return best;
+        }
+
+        if (passwordFailure)
+        {
+            throw new ArchivePasswordRequiredException(archiveFile);
         }
 
         throw new ArchiveOpenException(string.IsNullOrEmpty(lastFailure)
@@ -761,7 +1057,8 @@ public sealed class ArchiveService : IArchiveService
 
     /// <summary>
     /// 临时目录：<c>%LOCALAPPDATA%\exdir\archive-cache</c>（日志所在目录旁边）。
-    /// 里面放两类东西：链式解开的中间 tar、双击打开时解出来的单个文件。
+    /// 里面放三类东西：链式解开的中间 tar、双击打开时解出来的单个文件、
+    /// “包内复制 → 真实目录粘贴”中转用的临时副本（<c>copy</c>）。
     /// </summary>
     private string TempRoot
     {
@@ -787,6 +1084,8 @@ public sealed class ArchiveService : IArchiveService
     /// 清临时目录。策略故意保守：
     /// <list type="bullet">
     /// <item><c>tar</c> 子目录（链式解开 <c>.tar.gz</c> 落地的中间 tar）每次都直接删 —— 那个文件只有 exdir 在用；</item>
+    /// <item><c>copy</c> 子目录（“包内复制 → 真实目录粘贴”中转用的临时副本）也每次都直接删 ——
+    ///       它只服务于一次粘贴，正常路径上粘完就 <see cref="ReleaseStaging" /> 了，还留在这里说明上次没跑完；</item>
     /// <item><c>open</c> 子目录里“给默认程序打开”而解出来的文件只删**一天前**的：
     ///       用户很可能正拿记事本 / 播放器开着它，删早了会让别人的保存失败。</item>
     /// </list>
@@ -806,6 +1105,7 @@ public sealed class ArchiveService : IArchiveService
         }
 
         TryDeleteDirectory(Path.Combine(TempRoot, "tar"));
+        TryDeleteDirectory(Path.Combine(TempRoot, "copy"));
         SweepOldOpenFiles(Path.Combine(TempRoot, "open"));
     }
 

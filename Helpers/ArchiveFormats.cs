@@ -8,8 +8,8 @@ namespace Exdir.Helpers;
 /// <summary>
 /// 「双击压缩包 = 进入压缩包」认哪些扩展名，以及压缩包名字里那点约定。
 ///
-/// 扩展名清单是**故意收窄**的（用户确认过的“核心压缩格式”）：只把这些当压缩包，
-/// 其余（<c>.docx</c> / <c>.jar</c> / <c>.iso</c> / <c>.cab</c> …）仍旧交给默认程序。
+/// 扩展名清单是**故意收窄**的：只把这些当压缩包，
+/// 其余（<c>.docx</c> / <c>.jar</c> / <c>.cab</c> …）仍旧交给默认程序。
 /// 想加一种就在这里加一行 —— 判断入口只有 <see cref="IsCoreExtension" /> 一处。
 /// </summary>
 internal static class ArchiveFormats
@@ -21,6 +21,8 @@ internal static class ArchiveFormats
         "zip", "zipx", "7z", "rar",
         // Linux 常见（tar + 各种压缩）
         "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zst", "tzst", "lzma", "tlz", "lz",
+        // 光盘映像（只读浏览：7z.dll 的 Iso / Udf 两个处理器；Joliet/UDF 的包给出中文名也一样列）
+        "iso",
         // 其它常见
         "cpio", "ar", "deb",
     };

@@ -30,7 +30,10 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private readonly IClipboardService _clipboard;
     private readonly IFileOperationService _fileOperations;
     private readonly IArchiveService _archive;
+    private readonly IArchiveClipboardService _archiveClipboard;
+    private readonly ICompressionService _compression;
     private readonly IDialogService _dialogs;
+    private readonly IKnownFolderService _knownFolders;
 
     private readonly List<string> _backStack = new();
     private readonly List<string> _forwardStack = new();
@@ -62,6 +65,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private bool _showExtensions = true;
     private bool _enableListAnimations = true;
     private CornerRadius _tabCornerRadius;
+    private string? _statusMessage;
+    private string? _statusTitle;
+    private string? _statusTargetPath;
+    private CancellationTokenSource? _extractCts;
+    private CancellationTokenSource? _compressCts;
 
     public FolderTabViewModel(
         IFileSystemService fileSystem,
@@ -72,6 +80,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         IClipboardService clipboard,
         IFileOperationService fileOperations,
         IArchiveService archive,
+        IArchiveClipboardService archiveClipboard,
+        ICompressionService compression,
+        IKnownFolderService knownFolders,
         IDialogService dialogs)
     {
         _fileSystem = fileSystem;
@@ -82,6 +93,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         _clipboard = clipboard;
         _fileOperations = fileOperations;
         _archive = archive;
+        _archiveClipboard = archiveClipboard;
+        _compression = compression;
+        _knownFolders = knownFolders;
         _dialogs = dialogs;
 
         _foldersFirst = settings.Current.FoldersFirst;
@@ -138,8 +152,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     /// <summary>
     /// 当前目录是不是压缩包（压缩包根或包内目录）：是的话文件列表进入**只读**模式 ——
-    /// 粘贴 / 删除 / 新建 / 剪切 / 复制 / 拖放 / 终端 / 属性 / “在资源管理器中显示”全部禁用，
+    /// 粘贴 / 删除 / 新建 / 剪切 / 拖放 / 终端 / 属性 / “在资源管理器中显示”全部禁用，
     /// 包内文件双击改成“解到临时目录再用默认程序打开”（见 AGENTS.md 第 4 节）。
+    /// 唯一的例外是「复制」：包内条目可以复制到真实目录里粘贴（见 <see cref="CopyArchiveSelection" />）。
+    /// 注意：在真实目录里**就地展开**出来的那几行（压缩包文件行展开后）不算这个标记，
+    /// 它们由 <see cref="FileItemViewModel.IsInArchive" /> 单独标记，守卫见 <see cref="RefuseSelectionInArchive" />。
     /// </summary>
     public bool IsInsideArchive => _fileSystem.IsInsideArchive(_currentPath);
 
@@ -248,6 +265,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
                 CutSelectionCommand.NotifyCanExecuteChanged();
                 DeleteSelectionCommand.NotifyCanExecuteChanged();
                 DeleteSelectionPermanentlyCommand.NotifyCanExecuteChanged();
+                OpenWithSevenZipCommand.NotifyCanExecuteChanged();
+                ExtractToDownloadsCommand.NotifyCanExecuteChanged();
+                CompressSelectionCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -273,6 +293,59 @@ public sealed partial class FolderTabViewModel : ObservableObject
     }
 
     public bool HasError => !string.IsNullOrEmpty(_errorMessage);
+
+    /// <summary>
+    /// 一次操作成功后的提示（目前只有「解压到下载文件夹」）：文件列表顶部的绿色 InfoBar 显示它，
+    /// 旁边带一个「打开目录」按钮（<see cref="OpenStatusTarget" />）。导航会把它清掉。
+    /// </summary>
+    public string? StatusMessage
+    {
+        get => _statusMessage;
+        private set
+        {
+            if (SetProperty(ref _statusMessage, value))
+            {
+                OnPropertyChanged(nameof(HasStatus));
+            }
+        }
+    }
+
+    public bool HasStatus => !string.IsNullOrEmpty(_statusMessage);
+
+    /// <summary>
+    /// 提示条的标题（「解压完成」/「压缩完成」）：由 <see cref="SetStatus" /> 按具体操作设置。
+    /// 标题是视图里 <c>InfoBar.Title</c> 的绑定源，所以放 VM 上而不是在 XAML 里写死。
+    /// </summary>
+    public string? StatusTitle
+    {
+        get => _statusTitle;
+        private set => SetProperty(ref _statusTitle, value);
+    }
+
+    /// <summary>InfoBar 上「打开目录」要打开的目录（这次解压到的地方 / 压缩包所在目录）。</summary>
+    public void OpenStatusTarget()
+    {
+        if (!string.IsNullOrEmpty(_statusTargetPath))
+        {
+            _shell.RevealInFileExplorer(_statusTargetPath);
+        }
+    }
+
+    /// <summary>用户关掉提示条 / 导航到别处时清掉它（下一次 SetStatus 才能重新弹出来）。</summary>
+    public void ClearStatus()
+    {
+        StatusMessage = null;
+        StatusTitle = null;
+        _statusTargetPath = null;
+    }
+
+    private void SetStatus(string title, string message, string targetPath)
+    {
+        ErrorMessage = null;
+        _statusTargetPath = targetPath;
+        StatusTitle = title;
+        StatusMessage = message;
+    }
 
     public bool IsEmpty => _items.Count == 0;
 
@@ -369,6 +442,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
         IsLoading = true;
         ErrorMessage = null;
+        ClearStatus();
 
         string? normalized = null;
         IReadOnlyList<FileSystemEntry> entries = Array.Empty<FileSystemEntry>();
@@ -487,6 +561,15 @@ public sealed partial class FolderTabViewModel : ObservableObject
             _archive.Invalidate(archiveFile);
         }
 
+        // 在当前目录里就地展开的压缩包同样要丢缓存（那种情况下 ArchiveFile 为 null）
+        foreach (var path in _expandedPaths.ToList())
+        {
+            if (_archive.IsArchiveFile(path))
+            {
+                _archive.Invalidate(path);
+            }
+        }
+
         await NavigateAsync(_currentPath, pushHistory: false, preserveSelection: true).ConfigureAwait(true);
     }
 
@@ -525,7 +608,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         return true;
     }
 
-    /// <summary>当前操作是不是发生在压缩包里；是的话显示只读提示并返回 true。</summary>
+    /// <summary>当前目录是不是在压缩包里（压缩包根或包内目录）；是的话显示只读提示并返回 true。</summary>
     private bool RefuseInArchive()
     {
         if (!IsInsideArchive)
@@ -533,8 +616,366 @@ public sealed partial class FolderTabViewModel : ObservableObject
             return false;
         }
 
+        Log.Write("压缩包只读：当前目录在压缩包内，拒绝写操作");
         ErrorMessage = ArchiveReadOnlyMessage;
         return true;
+    }
+
+    /// <summary>
+    /// 选中项里有没有压缩包内部的条目（虚拟路径）。
+    /// 在真实目录里就地展开压缩包时，标签页本身不在包内（<see cref="IsInsideArchive" /> 为 false），
+    /// 但展开出来的那几行是虚拟的 —— 写操作不能只看当前目录。
+    /// </summary>
+    private bool SelectionContainsArchiveEntries()
+        => _selection.Any(static item => item.IsInArchive);
+
+    /// <summary>作用于“选中项”的写操作守卫（剪切 / 删除 / 属性 / 在资源管理器中显示）。</summary>
+    private bool RefuseSelectionInArchive()
+    {
+        if (!SelectionContainsArchiveEntries())
+        {
+            return false;
+        }
+
+        Log.Write("压缩包只读：选中项里有包内条目，拒绝写操作");
+        ErrorMessage = ArchiveReadOnlyMessage;
+        return true;
+    }
+
+    // ------------------------------------------------------------------ 压缩包右键：用 7-Zip 打开 / 解压到「下载」
+
+    /// <summary>
+    /// 选中的是不是**真实**压缩包文件（包内条目、目录都不算）：只有它们才能交给外部 7-Zip，也只有它们能解压。
+    /// 内置右键菜单据此决定要不要加这两个入口。
+    /// </summary>
+    public bool CanUseArchiveCommands
+        => _selection.Count > 0 && _selection.All(static item => item.IsArchive);
+
+    /// <summary>系统上有没有 7-Zip 的界面程序（没装就让菜单项置灰，见 <see cref="SevenZipLocator" />）。</summary>
+    public bool HasSevenZip => SevenZipLocator.IsAvailable;
+
+    /// <summary>
+    /// 「使用 7-Zip 打开」可不可点：选中的都是真实压缩包，且本机真的装了 7-Zip。
+    /// 写成 <c>CanExecute</c> 而不是只靠菜单项的 <c>IsEnabled</c>：命令自己的状态与置灰结果必须一致。
+    /// </summary>
+    private bool CanOpenWithSevenZip => CanUseArchiveCommands && HasSevenZip;
+
+    /// <summary>「使用 7-Zip 打开」：把选中的压缩包交给系统的 7zFM.exe（exdir 自己只带 7z.dll，没有界面）。</summary>
+    [RelayCommand(CanExecute = nameof(CanOpenWithSevenZip))]
+    private void OpenWithSevenZip()
+    {
+        var archives = ArchiveSelectionPaths();
+        if (archives.Count == 0)
+        {
+            return;
+        }
+
+        if (SevenZipLocator.LauncherPath is not { } sevenZip)
+        {
+            // 菜单项本来就是置灰的，这里是防守：真正没装 7-Zip 时不静默失败
+            ErrorMessage = "没找到 7-Zip（7zFM.exe），无法用它打开压缩包";
+            return;
+        }
+
+        if (_shell.OpenWithProgram(sevenZip, archives))
+        {
+            Log.Write($"使用 7-Zip 打开：{string.Join(" / ", archives)} → {sevenZip}");
+        }
+        else
+        {
+            ErrorMessage = "无法启动 7-Zip（7zFM.exe）";
+        }
+    }
+
+    /// <summary>
+    /// 「解压到下载文件夹」：每个选中的压缩包解到 <c>Downloads\&lt;包名&gt;\</c>
+    /// （同名目录已存在时自动加 <c>(2)(3)…</c>，不往已有的目录里混）。
+    /// 解压在后台线程做，期间显示转圈；成功后用绿色 InfoBar 报一声（带「打开目录」）。
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanUseArchiveCommands))]
+    private async Task ExtractToDownloadsAsync()
+    {
+        var archives = ArchiveSelectionPaths();
+        if (archives.Count == 0)
+        {
+            return;
+        }
+
+        // 同一时刻只跑一次解压：再点一次会把上一次取消掉（半成品目录会被清掉）
+        _extractCts?.Cancel();
+        _extractCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _extractCts = cts;
+
+        IsLoading = true;
+        ErrorMessage = null;
+
+        var downloads = string.Empty;
+        var targets = new List<string>();
+        var files = 0;
+
+        try
+        {
+            downloads = ResolveDownloadsDirectory();
+
+            foreach (var archive in archives)
+            {
+                var target = UniqueDirectory(Path.Combine(downloads, Path.GetFileNameWithoutExtension(archive)));
+                Directory.CreateDirectory(target);
+
+                var (ok, count) = await ExtractArchiveToAsync(archive, target, cts.Token).ConfigureAwait(true);
+
+                if (!ok)
+                {
+                    // 失败 / 取消：这个目录是我们刚建的，里面只有半成品，直接删掉（不然下载目录里会多一堆垃圾）
+                    TryDeleteDirectory(target);
+                    return;
+                }
+
+                targets.Add(target);
+                files += count;
+            }
+        }
+        catch (Exception ex)
+        {
+            // 找「下载」目录 / 建子目录这些同步步骤也会失败（磁盘满、没有权限…）
+            ErrorMessage = $"解压失败：{ex.Message}";
+            Log.Exception("解压到下载文件夹", ex);
+            return;
+        }
+        finally
+        {
+            IsLoading = false;
+
+            if (ReferenceEquals(_extractCts, cts))
+            {
+                _extractCts = null;
+            }
+
+            cts.Dispose();
+        }
+
+        if (targets.Count == 1)
+        {
+            SetStatus("解压完成", $"已解压 {files} 个文件到 {targets[0]}", targets[0]);
+        }
+        else
+        {
+            SetStatus("解压完成", $"已解压 {archives.Count} 个压缩包（共 {files} 个文件）到下载文件夹", downloads);
+        }
+    }
+
+    /// <summary>选中的真实压缩包文件路径（包内条目、目录一律跳掉）。</summary>
+    private List<string> ArchiveSelectionPaths()
+        => _selection.Where(static item => item.IsArchive).Select(static item => item.FullPath).ToList();
+
+    /// <summary>解一个包，加密包会问密码（最多几次，见 <see cref="TryAskPasswordAsync" />）；失败时已经写好提示。</summary>
+    private async Task<(bool Ok, int Files)> ExtractArchiveToAsync(
+        string archiveFile,
+        string targetDirectory,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var count = await _archive.ExtractAllAsync(archiveFile, targetDirectory, cancellationToken).ConfigureAwait(true);
+                return (true, count);
+            }
+            catch (OperationCanceledException)
+            {
+                Log.Write($"解压已取消：{archiveFile}");
+                return (false, 0);
+            }
+            catch (ArchivePasswordRequiredException ex)
+            {
+                if (!await TryAskPasswordAsync(ex, attempt).ConfigureAwait(true))
+                {
+                    return (false, 0);
+                }
+            }
+            catch (Exception ex)
+            {
+                ErrorMessage = $"解压失败：{ex.Message}";
+                Log.Exception($"解压（{archiveFile}）", ex);
+                return (false, 0);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 目标目录 = 「下载」文件夹，每个包在里面再建一个与包同名的子目录。
+    /// 路径取自 <see cref="IKnownFolderService" />（「下载」可能被用户重定向过，只有那一处算这个路径）。
+    /// </summary>
+    private string ResolveDownloadsDirectory()
+    {
+        var downloads = _knownFolders.GetUserFolders()
+            .FirstOrDefault(static folder => folder.Key == UserFolderKey.Downloads)?.Path;
+
+        // GetUserFolders 把“目录不存在”的项滤掉了（「下载」被删掉时就会这样）→ 退回 %USERPROFILE%\Downloads 并建出来
+        if (string.IsNullOrWhiteSpace(downloads))
+        {
+            downloads = Path.Combine(_knownFolders.UserProfile, "Downloads");
+        }
+
+        Directory.CreateDirectory(downloads);
+        return downloads;
+    }
+
+    /// <summary>同名目录 / 文件已经存在时依次加 <c>(2)(3)…</c>（与「新建文件夹」同一套做法）。</summary>
+    private static string UniqueDirectory(string candidate)
+    {
+        if (!Directory.Exists(candidate) && !File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        for (var index = 2; ; index++)
+        {
+            var next = $"{candidate} ({index})";
+
+            if (!Directory.Exists(next) && !File.Exists(next))
+            {
+                return next;
+            }
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception)
+        {
+            // 半成品目录删不掉不影响功能（用户自己删掉就是）
+        }
+    }
+
+    // ------------------------------------------------------------------ 右键「压缩」：把选中项打成一个 zip
+
+    /// <summary>
+    /// 选中的是不是“真实”条目（压缩包内部展开出来的虚拟行不行：它们没有真实路径）。
+    /// 内置右键菜单里的「压缩」据此决定可不可点（命令的 CanExecute 同源）。
+    /// 目录与文件都可以压缩。
+    /// </summary>
+    public bool CanCompressSelection => _selection.Count > 0 && _selection.All(static item => !item.IsInArchive);
+
+    /// <summary>
+    /// 内置右键菜单「压缩」：把选中的文件 / 目录（目录含整棵子树）打成一个 zip，
+    /// 写到设置里的「压缩输出目录」（留空 = 「下载」文件夹），
+    /// 然后把生成的 zip **复制到剪贴板**，并弹一条带「打开目录」的绿色提示条。
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanCompressSelection))]
+    private async Task CompressSelectionAsync()
+    {
+        // 防守：命令的 CanExecute 已经挡过，但右键菜单与键盘入口不保证同时只走一条
+        if (RefuseInArchive() || RefuseSelectionInArchive())
+        {
+            return;
+        }
+
+        var sources = _selection
+            .Where(static item => !item.IsInArchive)
+            .Select(static item => item.FullPath)
+            .ToList();
+
+        if (sources.Count == 0)
+        {
+            return;
+        }
+
+        // 同一时刻只跑一次：再点一次会把上一次取消掉（写了一半的 zip 由服务自己删掉）
+        _compressCts?.Cancel();
+        _compressCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _compressCts = cts;
+
+        IsLoading = true;
+        ErrorMessage = null;
+
+        string zipPath;
+        string outputDirectory;
+
+        try
+        {
+            outputDirectory = ResolveCompressionDirectory();
+            zipPath = await _compression
+                .CompressAsync(sources, outputDirectory, CompressTargets.BaseName(sources, _currentPath), cts.Token)
+                .ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Write("压缩已取消");
+            return;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"压缩失败：{ex.Message}";
+            Log.Exception("压缩", ex);
+            return;
+        }
+        finally
+        {
+            IsLoading = false;
+
+            if (ReferenceEquals(_compressCts, cts))
+            {
+                _compressCts = null;
+            }
+
+            cts.Dispose();
+        }
+
+        // 剪贴板只能有一份内容：把刚生成的 zip 放进去，顺手清掉内存里的包内条目
+        //（粘贴时先看系统剪贴板，所以这一步之后粘出来的一定是这个 zip）
+        _archiveClipboard.Clear();
+
+        var copiedToClipboard = _clipboard.SetFiles(new[] { zipPath }, move: false);
+
+        if (copiedToClipboard)
+        {
+            Log.Write($"压缩产物已复制到剪贴板：{zipPath}");
+        }
+        else
+        {
+            // 剪贴板被别的程序占着时不值得让整次压缩报错：包已经好了，但提示里要说清楚没复制上
+            Log.Write($"压缩产物复制到剪贴板失败：{zipPath}");
+        }
+
+        SetStatus(
+            "压缩完成",
+            copiedToClipboard
+                ? $"已压缩 {sources.Count} 项到 {Path.GetFileName(zipPath)}（已复制到剪贴板）"
+                : $"已压缩 {sources.Count} 项到 {Path.GetFileName(zipPath)}（复制到剪贴板失败，可以直接拖这个包）",
+            Path.GetDirectoryName(zipPath) ?? string.Empty);
+    }
+
+    /// <summary>
+    /// 压缩包放到哪里：优先用设置里的「压缩输出目录」，留空则用「下载」文件夹
+    ///（规则在 <see cref="CompressTargets.ResolveOutputDirectory" />，好在那一条不依赖界面就能测）。
+    /// 目录不存在会自动建出来；配置的路径不可用时给一句明确的提示，不静默落到别的目录。
+    /// </summary>
+    private string ResolveCompressionDirectory()
+    {
+        var directory = CompressTargets.ResolveOutputDirectory(
+            _settings.Current.CompressionOutputDirectory,
+            ResolveDownloadsDirectory());
+
+        try
+        {
+            Directory.CreateDirectory(directory);
+            return directory;
+        }
+        catch (Exception ex)
+        {
+            Log.Exception($"压缩输出目录（{directory}）", ex);
+            throw new IOException($"压缩输出目录不可用：{directory}", ex);
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanGoBack))]
@@ -666,7 +1107,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         try
         {
             var bitmap = await _icons
-                .GetIconAsync(item.FullPath, item.IsDirectory, isVirtualDirectory: IsInsideArchive)
+                .GetIconAsync(item.FullPath, item.IsDirectory, isVirtualDirectory: IsInsideArchive || item.IsInArchive)
                 .ConfigureAwait(true);
             if (bitmap is not null)
             {
@@ -712,14 +1153,15 @@ public sealed partial class FolderTabViewModel : ObservableObject
         }
 
         // 压缩包：双击就**进去**（以目录形式浏览），不再交给外部程序
-        if (_archive.IsArchiveFile(item.FullPath))
+        if (item.IsArchive || _archive.IsArchiveFile(item.FullPath))
         {
             _ = NavigateAsync(item.FullPath);
             return;
         }
 
-        // 包内的文件：先解到临时目录，再用默认程序打开（资源管理器的做法）
-        if (IsInsideArchive)
+        // 包内的文件（含在真实目录里就地展开出来的那几行）：先解到临时目录，再用默认程序打开
+        // （资源管理器的做法）
+        if (item.IsInArchive || IsInsideArchive)
         {
             _ = OpenArchiveEntryAsync(item);
             return;
@@ -767,8 +1209,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     public void OpenSelectionWithDefaultApp()
     {
-        // 包内条目没有真实路径，交给外壳也打不开；这条路径目前没有调用方，防御一下
-        if (RefuseInArchive())
+        // 包内条目没有真实路径，交给外壳也打不开
+        if (RefuseSelectionInArchive())
         {
             return;
         }
@@ -790,19 +1232,38 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     // ------------------------------------------------------------------ 复制 / 剪切 / 粘贴
 
-    /// <summary>剪贴板上现在有没有文件（内置菜单据此决定「粘贴」能不能点）。</summary>
-    public bool HasFileClipboard => _clipboard.HasFiles();
+    /// <summary>剪贴板上现在有没有文件（内置菜单据此决定「粘贴」能不能点）。
+    /// 包内条目记在内存里（<see cref="IArchiveClipboardService" />），也算“有文件”。</summary>
+    public bool HasFileClipboard => _clipboard.HasFiles() || _archiveClipboard.HasEntries;
 
-    /// <summary>Ctrl+C / 内置菜单「复制」：把选中项放进剪贴板（后续「粘贴」时拉起复制）。</summary>
+    /// <summary>
+    /// Ctrl+C / 内置菜单「复制」。
+    /// 真实目录里的条目走系统剪贴板（与资源管理器互通）；**压缩包里的条目没有真实路径**，
+    /// 只能把“压缩包 + 包内路径”记在内存里（<see cref="IArchiveClipboardService" />），
+    /// 到真实目录里粘贴时再解出来（见 <see cref="PasteAsync" />）。
+    /// </summary>
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CopySelection()
     {
-        if (RefuseInArchive())
+        // 压缩包内部的条目（含在真实目录里就地展开出来的那几行）没有真实路径：
+        // 只能把“压缩包 + 包内路径”记进内存，到真实目录粘贴时再解出来
+        if (SelectionContainsArchiveEntries())
         {
+            // 真实文件与包内条目混选没法用一份剪贴板表达（系统剪贴板只认真实路径）
+            if (_selection.Count != _selection.Count(static item => item.IsInArchive))
+            {
+                ErrorMessage = "不能同时复制压缩包内外的条目";
+                return;
+            }
+
+            CopyArchiveSelection();
             return;
         }
 
         var paths = _selection.Select(i => i.FullPath).ToList();
+
+        // 剪贴板只能有一份内容：复制真实文件就把内存里的包内条目清掉
+        _archiveClipboard.Clear();
 
         if (_clipboard.SetFiles(paths, move: false))
         {
@@ -810,16 +1271,66 @@ public sealed partial class FolderTabViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// 把选中的包内条目记进内存剪贴板（当成“复制”，粘贴时才解出来）。
+    /// 压缩包从选中项自己解析出来（不再看当前目录）：在真实目录里就地展开压缩包时，
+    /// 当前目录并不是那个包。
+    /// </summary>
+    private void CopyArchiveSelection()
+    {
+        string? archiveFile = null;
+        var inner = new List<string>();
+
+        foreach (var item in _selection)
+        {
+            if (!_fileSystem.TryParseArchivePath(item.FullPath, out var location)
+                || location.InnerPath.Length == 0)
+            {
+                continue;
+            }
+
+            if (archiveFile is null)
+            {
+                archiveFile = location.ArchiveFile;
+            }
+            else if (!string.Equals(archiveFile, location.ArchiveFile, StringComparison.OrdinalIgnoreCase))
+            {
+                // 内存剪贴板一次只记得住一个压缩包（就地展开了好几个时只能分开复制）
+                ErrorMessage = "一次只能复制同一个压缩包里的条目";
+                return;
+            }
+
+            if (!inner.Contains(location.InnerPath, StringComparer.OrdinalIgnoreCase))
+            {
+                inner.Add(location.InnerPath);
+            }
+        }
+
+        if (archiveFile is null || inner.Count == 0)
+        {
+            return;
+        }
+
+        // 系统剪贴板上的内容与这份互斥：留着的话粘贴会拿到两份（而且旧的那份更早）
+        _clipboard.Clear();
+        _archiveClipboard.Set(archiveFile, inner);
+
+        Log.Write($"复制压缩包内条目：{inner.Count} 项（{Path.GetFileName(archiveFile)}）");
+    }
+
     /// <summary>Ctrl+X / 内置菜单「剪切」：把选中项放进剪贴板，粘贴时是移动。</summary>
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void CutSelection()
     {
-        if (RefuseInArchive())
+        if (RefuseSelectionInArchive())
         {
             return;
         }
 
         var paths = _selection.Select(i => i.FullPath).ToList();
+
+        // 同 CopySelection：剪贴板上只能留一份内容
+        _archiveClipboard.Clear();
 
         if (_clipboard.SetFiles(paths, move: true))
         {
@@ -827,20 +1338,16 @@ public sealed partial class FolderTabViewModel : ObservableObject
         }
     }
 
-    /// <summary>Ctrl+V / 内置菜单「粘贴」：把剪贴板上的文件复制 / 移动进当前目录。</summary>
+    /// <summary>
+    /// Ctrl+V / 内置菜单「粘贴」：把剪贴板上的东西弄进当前目录。
+    /// 优先看系统剪贴板 —— 包内复制会清空它，所以它非空就一定比内存里的包内条目更新；
+    /// 系统剪贴板空着而内存里有包内条目时，就解包再复制进来。
+    /// </summary>
     [RelayCommand]
     private async Task PasteAsync()
     {
         if (RefuseInArchive())
         {
-            return;
-        }
-
-        var snapshot = _clipboard.GetFiles();
-
-        if (snapshot is null || snapshot.Paths.Count == 0)
-        {
-            ErrorMessage = "剪贴板上没有文件";
             return;
         }
 
@@ -850,16 +1357,96 @@ public sealed partial class FolderTabViewModel : ObservableObject
             return;
         }
 
-        // 复制到同一个目录时交给外壳处理（它会问是否覆盖 / 生成“(2)”副本），
-        // 只有拖放才需要把“已经在目标目录里”的项跳过（拖过去本来就没变化）
-        var isMove = snapshot.IsMove;
-        var ok = await TransferAsync(snapshot.Paths, _currentPath, isMove, skipItemsAlreadyInTarget: false)
-            .ConfigureAwait(true);
+        var snapshot = _clipboard.GetFiles();
 
-        // 剪切只生效一次：成功后清掉剪贴板（与资源管理器一致）
-        if (ok && isMove)
+        if (snapshot is not null && snapshot.Paths.Count > 0)
         {
-            _clipboard.Clear();
+            // 复制到同一个目录时交给外壳处理（它会问是否覆盖 / 生成“(2)”副本），
+            // 只有拖放才需要把“已经在目标目录里”的项跳过（拖过去本来就没变化）
+            var isMove = snapshot.IsMove;
+            var ok = await TransferAsync(snapshot.Paths, _currentPath, isMove, skipItemsAlreadyInTarget: false)
+                .ConfigureAwait(true);
+
+            // 剪切只生效一次：成功后清掉剪贴板（与资源管理器一致）
+            if (ok && isMove)
+            {
+                _clipboard.Clear();
+            }
+
+            return;
+        }
+
+        if (_archiveClipboard.Get() is { } archive)
+        {
+            await PasteArchiveEntriesAsync(archive).ConfigureAwait(true);
+            return;
+        }
+
+        ErrorMessage = "剪贴板上没有文件";
+    }
+
+    /// <summary>
+    /// 包内条目粘到真实目录：先把选中条目（含目录的整棵子树）解到临时目录，
+    /// 再交给外壳的 <c>SHFileOperation</c> 复制进来 —— 进度对话框、同名冲突询问与普通复制完全一致。
+    /// </summary>
+    private async Task PasteArchiveEntriesAsync(ArchiveClipboardContent content)
+    {
+        var target = _fileSystem.NormalizeDirectoryPath(_currentPath);
+        if (target is null)
+        {
+            ErrorMessage = $"目标目录不存在：{_currentPath}";
+            return;
+        }
+
+        for (var attempt = 0; ; attempt++)
+        {
+            ArchiveExtraction extraction;
+
+            try
+            {
+                extraction = await _archive
+                    .ExtractForCopyAsync(content.ArchiveFile, content.InnerPaths)
+                    .ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (ArchivePasswordRequiredException ex)
+            {
+                if (!await TryAskPasswordAsync(ex, attempt).ConfigureAwait(true))
+                {
+                    return;
+                }
+
+                continue;
+            }
+            catch (Exception ex)
+            {
+                ErrorMessage = ex.Message;
+                Log.Exception($"解出压缩包内条目（{content.ArchiveFile}）", ex);
+                return;
+            }
+
+            Log.Write($"粘贴压缩包内条目：{extraction.Paths.Count} 项 → {target}");
+
+            try
+            {
+                // 复制（不是移动）：内存里的包内条目留着，可以反复粘（与“复制”的语义一致）
+                var result = await _fileOperations.CopyAsync(extraction.Paths, target).ConfigureAwait(true);
+
+                if (!result.Canceled && result.ErrorMessage is { } message)
+                {
+                    ErrorMessage = message;
+                }
+            }
+            finally
+            {
+                // 中转副本没用了（复制成功 / 取消 / 失败都一样），不要占着磁盘
+                _archive.ReleaseStaging(extraction.StagingDirectory);
+            }
+
+            return;
         }
     }
 
@@ -885,7 +1472,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     private async Task RunDeleteAsync(bool permanent)
     {
-        if (RefuseInArchive())
+        if (RefuseSelectionInArchive())
         {
             return;
         }
@@ -998,7 +1585,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void RevealInExplorer()
     {
-        if (RefuseInArchive())
+        if (RefuseSelectionInArchive())
         {
             return;
         }
@@ -1014,7 +1601,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void ShowProperties()
     {
-        if (RefuseInArchive())
+        if (RefuseSelectionInArchive())
         {
             return;
         }
@@ -1173,10 +1760,10 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     // ------------------------------------------------------------------ 树形展开
 
-    /// <summary>展开/折叠一行（点击行首箭头时调用）。</summary>
+    /// <summary>展开/折叠一行（点击行首箭头时调用）。目录与压缩包文件都能展开。</summary>
     public async Task ToggleExpandAsync(FileItemViewModel node)
     {
-        if (!node.IsDirectory)
+        if (!node.IsExpandable)
         {
             return;
         }
@@ -1258,7 +1845,10 @@ public sealed partial class FolderTabViewModel : ObservableObject
         return count;
     }
 
-    /// <summary>按需加载某个目录行的直接子项；返回是否加载成功（已加载也算成功）。</summary>
+    /// <summary>
+    /// 按需加载某个可展开行的直接子项；返回是否加载成功（已加载也算成功）。
+    /// 目录走真实文件系统，压缩包行走 <see cref="IArchiveService" />（加密包会先问密码）。
+    /// </summary>
     private async Task<bool> EnsureChildrenAsync(FileItemViewModel node)
     {
         if (node.ChildrenLoaded)
@@ -1268,21 +1858,38 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
         var cts = _loadCts;
         IReadOnlyList<FileSystemEntry> entries;
-        try
+
+        // 压缩包的密码是“边解析边可能才发现要”的，所以枚举包在重试循环里
+        for (var attempt = 0; ; attempt++)
         {
-            entries = await _fileSystem.EnumerateDirectoryAsync(
-                node.FullPath,
-                _settings.Current.ShowHiddenFiles,
-                cts?.Token ?? default).ConfigureAwait(true);
-        }
-        catch (OperationCanceledException)
-        {
-            return false;
-        }
-        catch (Exception)
-        {
-            // 读不到就保持“未加载”，箭头留着让用户重试
-            return false;
+            try
+            {
+                entries = await _fileSystem.EnumerateDirectoryAsync(
+                    node.FullPath,
+                    _settings.Current.ShowHiddenFiles,
+                    cts?.Token ?? default).ConfigureAwait(true);
+
+                break;
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            catch (ArchivePasswordRequiredException ex)
+            {
+                if (!await TryAskPasswordAsync(ex, attempt).ConfigureAwait(true))
+                {
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                // 真实目录不会走到这里（枚举内部吞掉异常返回部分结果），所以这是压缩包打不开：
+                // 把原因显示出来，并保持“未加载”状态，箭头留着让用户重试
+                ErrorMessage = ex.Message;
+                Log.Exception($"展开 {node.FullPath}", ex);
+                return false;
+            }
         }
 
         if (cts is { IsCancellationRequested: true })
@@ -1313,7 +1920,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         foreach (var path in _expandedPaths.OrderBy(static p => p.Length).ToList())
         {
             var node = FindNode(_rootNodes, path);
-            if (node is null || !node.IsDirectory)
+            if (node is null || !node.IsExpandable)
             {
                 stale.Add(path);
                 continue;
@@ -1344,7 +1951,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     {
         foreach (var node in nodes)
         {
-            if (!node.IsDirectory)
+            if (!node.IsExpandable)
             {
                 continue;
             }

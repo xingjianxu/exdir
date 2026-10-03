@@ -43,6 +43,9 @@ public sealed partial class SettingsWindow : Window
         ViewModel = owner.CreateSettingsEditor();
         View.ViewModel = ViewModel;
 
+        // 「浏览…」弹文件夹选择器时要拿本窗口的 HWND 当属主（正文是 UserControl，拿不到宿主窗口）
+        View.HostWindow = this;
+
         // 即时生效：任何一项改动都由这里写回并落盘
         ViewModel.Changed += (_, _) => owner.ApplySettings(ViewModel);
 

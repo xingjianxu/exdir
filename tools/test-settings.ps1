@@ -24,16 +24,22 @@
 #      （拨一下就固定成显式的浅 / 深，设置窗口里的下拉框跟着同步）。
 #  10. 「启动」页的「开机时自动启动 exdir」：初值一致；拨开就立即落盘 **并且真的在 HKCU 的
 #      Run 项里写下 `"<exe>" --preload`**，拨回来就把该项删掉（用完后还原注册表原状）。
+#  11. 「文件列表」页的「压缩输出目录」：初值与 config.json 一致；这是一个可直接编辑的文本框
+#      （旁边有「浏览…」），填进去的路径立即落盘，清空就回到默认的「下载」文件夹。
+#  12. 「压缩输出目录」旁边的「浏览…」真的拉起系统的文件夹选择器（外壳的 #32770「选择文件夹」），
+#      关掉它不会改配置（= 取消选择）。
 #
 # 说明：开关类配置项是社区工具包 SettingsCard 里的 ToggleSwitch（Windows 11 设置的那种卡片行），
 #       UIA 里的类型是 Button（不是 CheckBox），所以要靠 TogglePattern 认它；
 #       「行高」是 Slider，靠 RangeValuePattern 读写；「主题」是 ComboBox，靠
-#       ExpandCollapse + SelectionItem 选、Selection 读（它没有 TogglePattern，不干扰上面那套计数）。
+#       ExpandCollapse + SelectionItem 选、Selection 读（它没有 TogglePattern，不干扰上面那套计数）；
+#       「压缩输出目录」是 TextBox，靠 ValuePattern 读写（同样不参与开关计数）。
 #       非当前分类的页是 Collapsed 的，UIA 树里根本没有 ——
 #       “某分类下能读到哪几个项”本身就是“切分类有效”的验证。
 #
 # 全程用 UIA 模式（Invoke / Toggle / SelectionItem / RangeValue / Window.Close）驱动，
 # 不模拟鼠标：设置窗口是普通窗口，不需要前台焦点，脚本在任何会话里都能跑。
+# （唯一例外是用例 12 的文件夹选择器：模态对话框开着时 UIA 调用会超时，只能走 Win32 枚举 + WM_CLOSE。）
 # 跑完会还原 config.json 的原始内容。
 
 param(
@@ -46,12 +52,46 @@ Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class Native {
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     public const int DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4;
     public const uint WM_CLOSE = 0x0010;
+
+    // 「浏览…」弹出的外壳文件夹选择器是一个模态对话框，开着的时候宿主 UI 线程被堵住，
+    // 桌面上任何 UIA 调用（连 FindAll）都会超时 —— 只能用 Win32 枚举窗口找它。
+    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder sb, int n);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int n);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+    /// <summary>按“进程 + 窗口标题”找一个顶层窗口（找不到返回 0）；标题传 null 表示只要是这个进程的就行。</summary>
+    public static IntPtr FindTopLevelWindow(uint processId, string title) {
+        IntPtr found = IntPtr.Zero;
+        EnumWindows((h, l) => {
+            uint pid;
+            GetWindowThreadProcessId(h, out pid);
+            if (pid != processId) { return true; }
+            if (title != null) {
+                var text = new StringBuilder(256);
+                GetWindowText(h, text, 256);
+                if (text.ToString() != title) { return true; }
+            }
+            found = h;
+            return false;
+        }, IntPtr.Zero);
+        return found;
+    }
+
+    /// <summary>顶层窗口的类名（#32770 = 对话框），找不到返回空串。</summary>
+    public static string ClassNameOf(IntPtr hWnd) {
+        var cls = new StringBuilder(256);
+        GetClassName(hWnd, cls, 256);
+        return cls.ToString();
+    }
 }
 '@
 
@@ -237,6 +277,25 @@ function Get-SliderValue {
 function Set-SliderValue {
     param($Element, [double]$Value)
     $Element.GetCurrentPattern([System.Windows.Automation.RangeValuePattern]::Pattern).SetValue($Value)
+    Start-Sleep -Milliseconds 900
+}
+
+# ------------------------------------------------------------------ 压缩输出目录（文本框）
+
+# 文本框在 UIA 里是 Edit 类型；卡片标题那行 TextBlock 也叫「压缩输出目录」，所以必须按 ControlType 过滤。
+function Find-OutputBox {
+    param($Settings)
+    return Find-VisibleFirst -From $Settings.Window -Name '压缩输出目录' -ControlType ([System.Windows.Automation.ControlType]::Edit)
+}
+
+function Get-TextBoxValue {
+    param($Element)
+    return $Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+}
+
+function Set-TextBoxValue {
+    param($Element, [string]$Value)
+    $Element.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Value)
     Start-Sleep -Milliseconds 900
 }
 
@@ -547,6 +606,8 @@ Set-Setting 'ShowExtensions' $true
 Set-Setting 'IsDualPane' $false
 # 行高也要先归位：用例 6 要断言“滑块初值 = config.json”，历史值（或被手改过）会让它不可控
 Set-Setting 'RowHeight' 28
+# 压缩输出目录默认为空（= 用「下载」文件夹）：用例 11 要断言“填了就落盘、清空就回去”
+Set-Setting 'CompressionOutputDirectory' ''
 # 标签页默认是直角：用例 8 要断言“拨一下就变圆角”，历史值同样会让它不可控
 Set-Setting 'SquareTabCorners' $true
 # 主题默认是「跟随系统」：用例 9 要断言“初值 = 跟随系统”，历史值同样会让它不可控
@@ -622,6 +683,19 @@ if ($null -ne $slider) {
     Write-Host ("  行高滑块 = {0}（config.json = {1}）" -f $sliderValue, $rowHeightSetting)
     Assert ($sliderValue -eq $rowHeightSetting) '行高滑块的初值与 config.json 一致'
 }
+
+# 另一个非开关类的项：「压缩输出目录」（可直接编辑的文本框 + 「浏览…」按钮）
+$outputBox = Find-OutputBox -Settings $settings
+Assert ($null -ne $outputBox) '「文件列表」页里有「压缩输出目录」文本框'
+if ($null -ne $outputBox) {
+    $boxValue = Get-TextBoxValue -Element $outputBox
+    $configured = [string](Get-Setting 'CompressionOutputDirectory')
+    Write-Host ("  压缩输出目录 = '{0}'（config.json = '{1}'）" -f $boxValue, $configured)
+    Assert ($boxValue -eq $configured) '「压缩输出目录」的初值与 config.json 一致'
+}
+
+$browseButton = Find-VisibleFirst -From $settings.Window -Name '浏览压缩输出目录' -ControlType ([System.Windows.Automation.ControlType]::Button)
+Assert ($null -ne $browseButton) '「压缩输出目录」旁边有「浏览…」按钮'
 
 # ================================================================== 用例 2：即时生效（没有保存按钮）
 
@@ -898,6 +972,74 @@ Assert ($null -eq (Get-AutostartCommand)) '关掉后注册表里的自启项被�
 Assert (Test-LogContains -Pattern '自动启动：已取消' -Tail 200) '日志记下了「自动启动：已取消」'
 
 Close-Settings -Settings $settings
+Stop-Session -Session $session
+
+# ================================================================== 用例 11：压缩输出目录（文本框）
+
+Write-Host '--- 用例 11：「压缩输出目录」文本框改一下就立即落盘 ---'
+# 留空 = 用「下载」文件夹：用例 1 已经先归位成空串，所以这里直接开始
+$session = Start-Session
+$settings = Open-Settings -Session $session
+Select-Category -Settings $settings -Name '文件列表'
+
+$outputDir = Join-Path $env:TEMP 'exdir-settings-compress-out'
+$outputBox = Find-OutputBox -Settings $settings
+Assert ($null -ne $outputBox) '「文件列表」页里找得到「压缩输出目录」文本框'
+if ($null -ne $outputBox) {
+    Set-TextBoxValue -Element $outputBox -Value $outputDir
+    Assert ((Get-Setting 'CompressionOutputDirectory') -eq $outputDir) '填了路径就立即落盘（CompressionOutputDirectory）'
+    Assert ((Get-TextBoxValue -Element $outputBox) -eq $outputDir) '文本框里显示的就是刚填的路径'
+
+    # 切到别的分类后它读不到（右侧一次只显示一页）
+    Select-Category -Settings $settings -Name '外观'
+    Assert ($null -eq (Find-OutputBox -Settings $settings)) '切到「外观」页后读不到「压缩输出目录」文本框'
+
+    Select-Category -Settings $settings -Name '文件列表'
+    Set-TextBoxValue -Element (Find-OutputBox -Settings $settings) -Value ''
+    Assert ((Get-Setting 'CompressionOutputDirectory') -eq '') '清空后又立即落盘（回到默认的「下载」文件夹）'
+}
+
+Close-Settings -Settings $settings
+Stop-Session -Session $session
+
+# ================================================================== 用例 12：「浏览…」弹出文件夹选择器
+
+Write-Host '--- 用例 12：「压缩输出目录」旁边的「浏览…」真的拉起系统文件夹选择器 ---'
+$session = Start-Session
+$settings = Open-Settings -Session $session
+Select-Category -Settings $settings -Name '文件列表'
+
+$browse = Find-VisibleFirst -From $settings.Window -Name '浏览压缩输出目录' -ControlType ([System.Windows.Automation.ControlType]::Button)
+Assert ($null -ne $browse) '「压缩输出目录」旁边找得到「浏览…」按钮'
+
+if ($null -ne $browse) {
+    # 选择器是模态对话框：点一下会把 UI 线程堵住，UIA 的 Invoke 等不到回应就超时 —— 这正是预期
+    try { $browse.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() } catch { }
+
+    # 注意：对话框开着的时候不能用 UIA（连桌面的 FindAll 都会超时），只能 Win32 枚举
+    $dialog = [IntPtr]::Zero
+    for ($i = 0; $i -lt 40 -and $dialog -eq [IntPtr]::Zero; $i++) {
+        Start-Sleep -Milliseconds 250
+        $dialog = [Native]::FindTopLevelWindow([uint32]$session.Proc.Id, '选择文件夹')
+    }
+
+    Assert ($dialog -ne [IntPtr]::Zero) '点「浏览…」弹出了系统的文件夹选择器（标题「选择文件夹」）'
+
+    if ($dialog -ne [IntPtr]::Zero) {
+        Write-Host ("  选择器窗口类名 = {0}" -f [Native]::ClassNameOf($dialog))
+        [void][Native]::PostMessage($dialog, [Native]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero)
+
+        for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Milliseconds 250
+            if ([Native]::FindTopLevelWindow([uint32]$session.Proc.Id, '选择文件夹') -eq [IntPtr]::Zero) { break }
+        }
+
+        Assert ([Native]::FindTopLevelWindow([uint32]$session.Proc.Id, '选择文件夹') -eq [IntPtr]::Zero) '关掉选择器后它就没了'
+        Assert ([string](Get-Setting 'CompressionOutputDirectory') -eq '') '取消选择不会改配置（文本框里的值保持原样）'
+    }
+}
+
+# 选择器是模态的，关掉后主进程才继续；收尾直接杀（避免再用 UIA 碰已经被 Invoke 超时扰过的连接）
 Stop-Session -Session $session
 
 # ------------------------------------------------------------------ 还原设置文件与注册表

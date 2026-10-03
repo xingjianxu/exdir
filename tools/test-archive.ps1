@@ -10,7 +10,10 @@
 #   3. 点面包屑里压缩包那一段 → 回包根
 #   4. 包内目录行点行首箭头 → 就地展开（列表里多出子项）
 #   5. 包内仍然能排序；行首有图标
-#   6. 只读守卫：包内右键菜单里没有剪切/复制/粘贴/删除/属性/“在资源管理器中显示”，
+#  13. 真实目录里点压缩包文件行的行首箭头 → 就地展开（不进包）：列表多出包内条目、
+#      导航条上没有「只读」徽标、再点一次能折叠回去、双击包内条目仍能解到临时目录
+#   （注：压缩包行与目录行同款箭头，见 AGENTS.md 第 4 节“压缩包只读浏览”）
+#   6. 只读守卫：包内右键菜单里没有剪切/粘贴/删除/属性/“在资源管理器中显示”（「复制」保留，见用例 12），
 #      空白处菜单里没有粘贴/新建文件夹/在此处打开终端；Ctrl+V 只弹只读提示、磁盘无变化；
 #      包内拖拽根本不启动（日志里没有「拖拽开始」）
 #   7. 双击包内文件 → 解到临时目录（日志有「打开压缩包内文件：」，临时文件真的在）
@@ -18,6 +21,8 @@
 #   9. 会话能恢复到包内目录
 #  10. 命令行 exdir <压缩包> → 新标签页进入压缩包
 #  11. .7z（装了 7-Zip 时；没装就 SKIP）
+#  12. 包内右键「复制」→ 回真实目录 Ctrl+V：单个文件、以及“文件 + 目录”多选都真的落到磁盘上，
+#      目录按整棵子树取出来，中转的临时副本用完就删
 #
 # 需要交互桌面（真鼠标双击 / 右键）。跑完还原 config.json 与临时目录。
 
@@ -91,6 +96,7 @@ if (Test-Path $workDir) { Remove-Item $workDir -Recurse -Force }
 $staging = Join-Path $workDir 'staging'
 New-Item -ItemType Directory -Force -Path "$staging\sub\deep", "$staging\空目录" | Out-Null
 [System.IO.File]::WriteAllText("$staging\hello.txt", 'hello 世界')
+[System.IO.File]::WriteAllText("$staging\中文名称.txt", '中文')
 [System.IO.File]::WriteAllText("$staging\sub\inner.txt", 'inner')
 [System.IO.File]::WriteAllText("$staging\sub\deep\deep.txt", 'deep')
 
@@ -504,8 +510,9 @@ Invoke-RightClick -Session $session -X ([int]($fileRect.X + $fileRect.Width / 3)
 $items = Get-MenuItemNames -Session $session
 Write-Host ("  包内文件菜单: {0}" -f ($items -join ' | '))
 Assert ($items -contains '打开') '包内文件菜单里有「打开」'
+Assert ($items -contains '复制') '包内文件菜单里有「复制」（包内条目可以复制到真实目录粘贴）'
 Assert ($items -contains '复制路径') '包内文件菜单里有「复制路径」'
-foreach ($absent in '剪切', '复制', '粘贴', '删除', '属性', '在资源管理器中显示') {
+foreach ($absent in '剪切', '粘贴', '删除', '属性', '在资源管理器中显示') {
     Assert ($items -notcontains $absent) ("包内文件菜单里没有「{0}」" -f $absent)
 }
 Save-Shot -Session $session -Name 'context-menu-file'
@@ -628,6 +635,152 @@ if ($hasSevenZip) {
     }
 } else {
     Write-Host 'SKIP 没找到 7z.exe（装个 7-Zip 再跑这一条）'
+}
+
+# ------------------------------------------------------------------ 用例 12：包内「复制」→ 真实目录粘贴
+
+Write-Host '--- 用例 12：包内复制 → 真实目录粘贴 ---'
+
+# 不管上一个用例停在哪一层，先退回真实目录
+for ($i = 0; $i -lt 5; $i++) {
+    $names = Get-RowNames -Session $session
+    if (($names -join ',') -eq ((Sort-Rows $folderRows) -join ',')) { break }
+    Send-Keys -Session $session -Keys @('%{UP}')
+    Start-Sleep -Milliseconds 800
+}
+Assert ((Get-RowNames -Session $session) -join ',' -eq ((Sort-Rows $folderRows) -join ',')) '复制用例开始前回到了真实目录'
+
+# 进包，右键 hello.txt → 「复制」（只记在内存里，包内条目没有真实路径）
+$zipRow = Get-RowByName -Session $session -Name 'sample.zip'
+$zipRect = $zipRow.Current.BoundingRectangle
+Invoke-DoubleClick -Session $session -X ([int]($zipRect.X + $zipRect.Width / 2)) -Y ([int]($zipRect.Y + $zipRect.Height / 2))
+[void](Wait-RowNames -Session $session -Expected $zipRootRows)
+
+$fileRow = Get-RowByName -Session $session -Name 'hello.txt'
+$fileRect = $fileRow.Current.BoundingRectangle
+Invoke-RightClick -Session $session -X ([int]($fileRect.X + $fileRect.Width / 3)) -Y ([int]($fileRect.Y + $fileRect.Height / 2))
+
+$copyItem = Find-MenuItems -Session $session | Where-Object { $_.Current.Name -eq '复制' } | Select-Object -First 1
+Assert ($null -ne $copyItem) '包内文件菜单里有「复制」'
+if ($null -ne $copyItem) {
+    $copyItem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 800
+}
+Dismiss-Menu -Session $session
+Assert (@(Get-LogTail | Where-Object { $_ -match '复制压缩包内条目：1 项' }).Count -ge 1) '日志里有「复制压缩包内条目：1 项」（只记内存，不碰磁盘）'
+Assert (-not (Test-Path (Join-Path $workDir 'hello.txt'))) '刚“复制”时磁盘上什么都不会多出来'
+
+# 回真实目录 Ctrl+V：解到临时目录后由外壳复制进来
+Send-Keys -Session $session -Keys @('%{UP}')
+[void](Wait-RowNames -Session $session -Expected $folderRows)
+Send-Keys -Session $session -Keys @('^v')
+Start-Sleep -Seconds 4
+
+Assert (Test-Path (Join-Path $workDir 'hello.txt')) '真实目录里粘出了包内的 hello.txt'
+if (Test-Path (Join-Path $workDir 'hello.txt')) {
+    Assert ((Get-Content (Join-Path $workDir 'hello.txt') -Raw) -match 'hello') '粘出来的内容与包内文件一致'
+    Remove-Item (Join-Path $workDir 'hello.txt') -Force
+}
+Assert (@(Get-LogTail | Where-Object { $_ -match '粘贴压缩包内条目：1 项' }).Count -ge 1) '日志里有「粘贴压缩包内条目：1 项」'
+Assert (@(Get-LogTail | Where-Object { $_ -match '压缩包复制：sample\.zip 解出 1 项' }).Count -ge 1) '日志里有「压缩包复制：sample.zip 解出 1 项」'
+$copyCache = Join-Path $env:LOCALAPPDATA 'exdir\archive-cache\copy'
+$leftover = if (Test-Path $copyCache) { @(Get-ChildItem $copyCache -Force).Count } else { 0 }
+Assert ($leftover -eq 0) '粘完之后中转副本目录里没有残留'
+
+# 多选（文件 + 目录）一次复制：目录要按整棵子树取出来
+$zipRow = Get-RowByName -Session $session -Name 'sample.zip'
+$zipRect = $zipRow.Current.BoundingRectangle
+Invoke-DoubleClick -Session $session -X ([int]($zipRect.X + $zipRect.Width / 2)) -Y ([int]($zipRect.Y + $zipRect.Height / 2))
+[void](Wait-RowNames -Session $session -Expected $zipRootRows)
+
+$fileRow = Get-RowByName -Session $session -Name 'hello.txt'
+$subRow = Get-RowByName -Session $session -Name 'sub'
+$fileRow.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).AddToSelection()
+$subRow.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).AddToSelection()
+Start-Sleep -Milliseconds 500
+
+# 右键点在已选中的行上不会换掉选择，菜单作用于这两项
+$fileRect = $fileRow.Current.BoundingRectangle
+Invoke-RightClick -Session $session -X ([int]($fileRect.X + $fileRect.Width / 3)) -Y ([int]($fileRect.Y + $fileRect.Height / 2))
+$copyItem = Find-MenuItems -Session $session | Where-Object { $_.Current.Name -eq '复制' } | Select-Object -First 1
+if ($null -ne $copyItem) {
+    $copyItem.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    Start-Sleep -Milliseconds 800
+}
+Dismiss-Menu -Session $session
+Assert (@(Get-LogTail | Where-Object { $_ -match '复制压缩包内条目：2 项' }).Count -ge 1) '多选时日志记的是「复制压缩包内条目：2 项」'
+
+Send-Keys -Session $session -Keys @('%{UP}')
+[void](Wait-RowNames -Session $session -Expected $folderRows)
+Send-Keys -Session $session -Keys @('^v')
+Start-Sleep -Seconds 5
+
+Assert (Test-Path (Join-Path $workDir 'hello.txt')) '多选粘贴：文件到位'
+Assert (Test-Path (Join-Path $workDir 'sub\inner.txt')) '多选粘贴：目录整棵子树到位'
+if (Test-Path (Join-Path $workDir 'sub\inner.txt')) {
+    Assert ((Get-Content (Join-Path $workDir 'sub\inner.txt') -Raw) -match 'inner') '子树里的内容正确'
+}
+Assert (Test-Path (Join-Path $workDir 'sub\deep\deep.txt')) '子树里的深层文件也在'
+Assert (@(Get-LogTail | Where-Object { $_ -match '粘贴压缩包内条目：2 项' }).Count -ge 1) '多选粘贴的日志也记下了'
+
+# 清掉粘出来的东西，别影响 finally 里的整目录清理与日志判断
+Remove-Item (Join-Path $workDir 'hello.txt') -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $workDir 'sub') -Recurse -Force -ErrorAction SilentlyContinue
+
+# ------------------------------------------------------------------ 用例 13：真实目录里就地展开压缩包
+
+Write-Host '--- 用例 13：真实目录里点压缩包行的箭头 → 就地展开（不进包） ---'
+[void](Wait-RowNames -Session $session -Expected $folderRows)
+
+# 行内那个 18px 展开箭头：UIA 名字是「展开或折叠」，按“落在这行的矩形里”筛出来
+function Get-RowExpander {
+    param($Session, $Row)
+    if ($null -eq $Row) { return $null }
+    $rowRect = $Row.Current.BoundingRectangle
+    return @(Find-Elements -From $Session.Root -Name '展开或折叠' | Where-Object {
+            $b = $_.Current.BoundingRectangle
+            (-not $_.Current.IsOffscreen) -and $b.Width -gt 0 -and $b.Height -gt 0 -and
+            $b.Top -ge $rowRect.Top -and $b.Bottom -le $rowRect.Bottom -and
+            $b.Left -ge $rowRect.Left -and $b.Right -le $rowRect.Right
+        } | Select-Object -First 1)[0]
+}
+
+$zipRow = Get-RowByName -Session $session -Name 'sample.zip'
+$expander = Get-RowExpander -Session $session -Row $zipRow
+Assert ($null -ne $expander) '压缩包文件行里有展开箭头（与目录行同款）'
+
+if ($null -ne $expander) {
+    $a = $expander.Current.BoundingRectangle
+    Invoke-Click -Session $session -X ([int]($a.Left + $a.Width / 2)) -Y ([int]($a.Top + $a.Height / 2))
+
+    $names = Wait-RowNames -Session $session -Expected ($folderRows + $zipRootRows)
+    Write-Host ("  就地展开后的行: {0}" -f ($names -join ', '))
+    Assert (($names -join ',') -eq ((Sort-Rows ($folderRows + $zipRootRows)) -join ',')) `
+        '压缩包就地展开后列表里多出 hello.txt / sub / 中文名称.txt（压缩包行还在）'
+    Assert ((Get-CrumbNames -Session $session) -notcontains 'sample.zip') '就地展开不会进包（面包屑里没有压缩包那一段）'
+    Assert ((Get-ReadOnlyBadgeCount -Session $session) -eq 0) '就地展开不进包（导航条上没有「只读」徽标）'
+    Save-Shot -Session $session -Name 'zip-inline-expanded'
+
+    # 包内的文件仍能双击打开（解到临时目录），而且不会导航走
+    $innerRow = Get-RowByName -Session $session -Name 'hello.txt'
+    $innerRect = $innerRow.Current.BoundingRectangle
+    Invoke-DoubleClick -Session $session -X ([int]($innerRect.X + $innerRect.Width / 2)) -Y ([int]($innerRect.Y + $innerRect.Height / 2))
+    Start-Sleep -Seconds 2
+    Assert (@(Get-LogTail | Where-Object { $_ -match '打开压缩包内文件：(.*) :: (.*) → (.*)$' }).Count -ge 1) `
+        '就地展开出来的包内文件双击能解到临时目录打开'
+    Assert ((Get-CrumbNames -Session $session) -notcontains 'sample.zip') '双击包内文件后仍在真实目录（没导航走）'
+
+    # 再点一次箭头折叠：行集合回到展开前
+    $zipRow = Get-RowByName -Session $session -Name 'sample.zip'
+    $expander = Get-RowExpander -Session $session -Row $zipRow
+    Assert ($null -ne $expander) '折叠前还能找到压缩包行的箭头'
+    if ($null -ne $expander) {
+        $a = $expander.Current.BoundingRectangle
+        Invoke-Click -Session $session -X ([int]($a.Left + $a.Width / 2)) -Y ([int]($a.Top + $a.Height / 2))
+        $names = Wait-RowNames -Session $session -Expected $folderRows
+        Write-Host ("  折叠后的行: {0}" -f ($names -join ', '))
+        Assert (($names -join ',') -eq ((Sort-Rows $folderRows) -join ',')) '再点一次箭头把包内行全部折回去'
+    }
 }
 
 Stop-Session -Session $session

@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
+using Exdir.Diagnostics;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace Exdir.Services;
@@ -34,6 +36,28 @@ public sealed class ShellService : IShellService
         foreach (var path in paths)
         {
             OpenWithDefaultApp(path);
+        }
+    }
+
+    public bool OpenWithProgram(string programPath, IReadOnlyList<string> paths)
+    {
+        if (string.IsNullOrWhiteSpace(programPath) || paths.Count == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            // 每个路径都带引号：压缩包路径里完全可以有空格（Windows 的命令行解析自己处理带引号的参数）
+            var arguments = string.Join(' ', paths.Select(path => $"\"{path}\""));
+
+            Process.Start(new ProcessStartInfo(programPath, arguments) { UseShellExecute = false });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"启动外部程序失败：{programPath}（{ex.Message}）");
+            return false;
         }
     }
 

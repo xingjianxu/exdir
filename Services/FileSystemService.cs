@@ -324,7 +324,7 @@ public sealed class FileSystemService : IFileSystemService
     /// <summary>读同步状态的时间预算（毫秒），超出后剩余条目不再读。</summary>
     private const int CloudSyncStateBudgetMs = 1500;
 
-    private static FileSystemEntry CreateEntry(EnumerationItem item, CloudSyncState syncState)
+    private FileSystemEntry CreateEntry(EnumerationItem item, CloudSyncState syncState)
     {
         var info = item.Info;
         var isDirectory = item.IsDirectory;
@@ -358,6 +358,10 @@ public sealed class FileSystemService : IFileSystemService
             TypeName = FileTypeHelper.GetTypeName(info.FullName, isDirectory),
             IsHidden = (item.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0,
             SyncState = syncState,
+
+            // 压缩包文件在列表里也像目录一样可以就地展开；IsArchiveFile 先看扩展名，
+            // 非压缩扩展名在这里只是一次字典查询，不会多出文件系统访问
+            IsArchive = !isDirectory && _archive.IsArchiveFile(info.FullName),
         };
     }
 

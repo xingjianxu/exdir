@@ -432,6 +432,22 @@
   - 涉及：新增 `Services/IArchiveService.cs(.cs)`；`ViewModels/ContextMenuBuilder.cs`。
   - 验收：压缩 1 GB 目录有进度可取消；zip64 大文件可用。
   - 预估：~400 行，3 个文件。
+  - [x] **S15a 右键「压缩」：选中项打成一个 zip → 输出目录 → 自动复制到剪贴板**（2026-10，6 个新文件 + 12 个改动）
+    - 内容：内置右键菜单在**文件行 / 目录行**上多一项「压缩」（任意真实条目，压缩包内部展开出来的虚拟行没有
+      这一项）；把选中项（目录含整棵子树、空目录也保住）打成一个 zip，落到设置里的「压缩输出目录」（留空 = 用户的
+      「下载」文件夹），然后把生成的 zip **复制到剪贴板**，并弹一条带「打开目录」的绿色 InfoBar（标题「压缩完成」）。
+      包名：单选用条目名（文件去扩展名、目录保留全名）、多选用当前目录名，重名先加 `(2)(3)…`。
+    - 做法：新增 `Services/ICompressionService.cs(.cs)`（BCL 的 `System.IO.Compression.ZipArchive`，与「只读浏览
+      别人压缩包」那条 7z.dll 的路**互不干扰**）、`Helpers/CompressTargets.cs`（包名 / 输出目录两条纯规则，
+      服务级可测）、`Helpers/FolderPicker.cs`（外壳 `IFileOpenDialog` + `FOS_PICKFOLDERS`）；
+      `AppSettings.CompressionOutputDirectory`（结构版本 8→9）+ 设置「文件列表 → 压缩输出目录」（文本框 + 「浏览…」）；
+      `FolderTabViewModel.CompressSelectionCommand`；`ICompressionService.ArchiveCreated` → `MainViewModel` 按路径刷新标签页；
+      `FolderTabViewModel.StatusTitle`（InfoBar 标题从写死的「解压完成」改成按操作给）。
+    - 验收：`tools\archive-smoke`（服务级：打包内容 / 空目录 / 同名 (2) / 非法字符 / 失败不留半成品 / 包名与输出目录
+      规则；裁剪版 `--no-iso` 0 失败）；`tools\test-settings.ps1` 用例 11 / 12（文本框即时落盘 + 「浏览…」真的弹出
+      `#32770`「选择文件夹」，Debug 与裁剪后的 dist 各跑一遍 0 失败）；`tools\test-compress.ps1`（真鼠标右键，
+      需交互桌面 —— 本机无桌面，未执行，留存备用）。
+    - 未做：压缩进度对话框 / 取消按钮（现在只有文件列表转圈）、zip64 大文件专项验证、压缩级别选项。
 
 - [ ] **S16 哈希与属性**
   - 目标：SHA256/MD5 计算（后台、可取消、多文件队列）、只读属性对话框、占用空间统计。
@@ -693,8 +709,87 @@
     确认真实目录没被改坏。
 
 - [ ] **S32 压缩包的更多能力**（后续）
-  - 用户已选“仅只读浏览”，以下都还没做，按需再排：包内右键「解压到当前文件夹 / 解压到 <同名> 文件夹」（带进度对话框）、
-    包内条目 Ctrl+C 后在真实目录 Ctrl+V 解出来、把包内条目拖到资源管理器、包内新建/删除/重命名条目（只 zip/7z）。
+  - [x] **S31c 支持 `.iso`（光盘映像）像其它压缩包一样浏览**（2026-09，改 1 个源文件 + 3 个测试/文档）
+    - 需求：把 `.iso` 也当压缩包双击进目录浏览（自然连带“复制到外部目录”与“双击文件解出来打开”）。
+    - 涉及：`Helpers/ArchiveFormats.cs`（`Core` 加 `iso`）；`tools/archive-smoke/Program.cs`（ISO 用例 +
+      IMAPI2FS 现造测试映像）、`tools/test-archive-copy.ps1`（用例 6：进包 → 复制 → 粘到真实目录）、`AGENTS.md`。
+    - 做法：只加扩展名 —— 7z.dll 格式表里 Iso 与 Udf 两个处理器都声明了 `iso`，
+      `BuildIndex` 本来就按格式表顺序逐个试（一个打不开就试下一个），所以纯 ISO9660 与 UDF 的映像都能进
+      （2026-10 起改成「都试一遍、条目多的说了算」，见 S31d：两套文件系统的内容可以不一样）。
+    - 验收：`tools/archive-smoke` 与 `tools/test-archive-copy.ps1` 在 Debug / 裁剪过的 dist 上都 0 失败；
+      另拿真实的 9.8 GB Bazzite Live ISO（xorriso 造的 ISO9660 + UDF + El Torito）人工验过列表与取出
+      （`[BOOT]` 那种隐式目录也对）。
+  - [x] **S31d UDF 混合盘：ISO9660 那半只有说明文件时列出 UDF 的内容**（2026-10，改 1 个源文件 + 1 个测试 + 文档）
+    - 问题：`7z.dll` 的 Iso 与 Udf 两个处理器都声明 `iso`，而一张盘上**两套文件系统的内容可以不一样** ——
+      Windows 刻出来的 UDF 盘上，ISO9660 那半只有一张写着 “This disc contains a "UDF" file system…” 的
+      README.TXT，真正的内容全在 UDF 里；`BuildIndex` 只认第一个能打开的处理器（Iso 在前）→ 用户看到的整张盘
+      就只有一个 README.TXT（`7z l` 反而显示 UDF 内容）。
+    - 涉及：`Services/ArchiveService.cs`（`BuildIndex`）；`tools/archive-smoke/Program.cs`（UDF-only 映像、
+      手写 ISO9660 造的「UDF 说明盘」）；`AGENTS.md`（第 4 节 `.iso` 那条 + 第 87 条）。
+    - 做法：能打开的处理器都过一遍，**条目多的那个说了算** —— `ItemCount` 当粗筛（不比手上这份多就直接跳过，
+      省掉大 ISO 上一整轮 `GetProperty`），真认的是 `ReadNodes` 出来的行数；并列保留格式表顺序。
+      密码失败也改成「所有处理器都打不开才报」（`.rar` 的 Rar / Rar5 会互相干扰）。
+    - 验收：`tools/archive-smoke` 0 失败（UDF-only 的列表/取出，UDF 说明盘的列表/取出/复制都对）；
+      本机两个真实 ISO（NixOS 3.3 GB、Bazzite 10 GB，都是 ISO9660 + Joliet）行为不变；
+      「UDF 说明盘」测试映像由 `TryCreateNoticeIso` 现造（IMAPI2FS 造不出这种盘，见第 86/87 条）。
+  - [x] **S32b 压缩包文件在文件列表里像目录一样就地展开**（2026-10，改 5 个源文件 / 改 2 个脚本 + 文档，~260 行）
+    - 需求：不用双击进包，列表里的压缩包也能像目录那样点行首箭头**在当前列表里就地展开**，看包内内容。
+    - 涉及：`Models/FileSystemEntry.cs`（新增 `IsArchive` / `IsInArchive`）、`Services/FileSystemService.cs`
+      （枚举时用 `_archive.IsArchiveFile()` 标出可浏览压缩包）、`Services/ArchiveService.cs`（包内条目 `IsInArchive = true`）、
+      `ViewModels/FileItemViewModel.cs`（`IsExpandable = IsDirectory || IsArchive`，`CanExpand` 从它算）、
+      `ViewModels/FolderTabViewModel.cs`（展开/折叠、打开、只读守卫按行判断、`CopyArchiveSelection` 按选中项解析压缩包、
+      图标、F5 失效展开的包缓存、`EnsureChildrenAsync` 就地弹密码框）、`Views/DetailsView.xaml.cs`（拖拽 / 拖放落点 /
+      右键菜单 / 方向键都按行判断）；`tools/test-archive-copy.ps1`（新增用例 7～9）、`tools/test-archive.ps1`
+      （补回缺失的 `中文名称.txt` 测试数据 —— 两个预期行清单一直包含它却从未真正断言成功；另加用例 13）、`AGENTS.md`。
+    - 做法：展开的唯一判据是 `FileItemViewModel.IsExpandable`（目录，或可浏览的压缩包文件）；子项仍走
+      `FileSystemService.EnumerateDirectoryAsync`（包内交给 `ArchiveService.ListAsync`），所以加密包照样就地弹密码框、
+      F5 会先把就地展开的那个包 `Invalidate` 掉。只读守卫从“当前目录在包内”拆成“目录级 + **选中项级**”两套
+      （`RefuseInArchive` / `RefuseSelectionInArchive`），否则在真实目录里就地展开时「删除 / 拖拽 / 属性」拿到的是
+      虚拟路径；拖放落点压在包内目录行上时**整个不接受**，不再退回“当前目录”。
+    - 验收：`tools/test-archive-copy.ps1` 9 个用例全绿（含用例 7～9：压缩包行有箭头、就地展开只多两行且不进包
+      （无「只读」徽标）、展开出来的行「复制」进内存剪贴板并清空系统剪贴板、「删除」被拦且磁盘无变化、
+      折叠后行集合与展开前完全一致）；同一脚本在 `dist\win-x64\exdir.exe`（裁剪过的自包含产物）上也全绿；
+      `tools/archive-smoke` 0 失败（新增两条：包内条目都带 `IsInArchive`、包内条目不算是独立的压缩包文件），
+      裁剪过的产物加 `--no-iso` 同样 0 失败 —— 那两段 SKIP 是冒烟代理自己用 `dynamic` COM 造 ISO 的问题，
+      与被测代码无关（见 AGENTS.md 第 89 条）。`tools/test-archive.ps1` 用例 13（真鼠标）本机无交互桌面，未跑；
+      顺手补回那个脚本里一直缺失的 `中文名称.txt` 测试数据（两个预期行清单一直包含它）。
+  - [x] **S32a 包内「复制」→ 外部目录粘贴**（2026-09，新增 3 个文件 / 改 9 个，~380 行）
+    - 需求：浏览包内文件时，能把包内单个或多个指定文件（含目录的整棵子树）复制、粘贴到外部目录。
+    - 涉及：新增 `Services/IArchiveClipboardService.cs` + `ArchiveClipboardService.cs`、`tools/test-archive-copy.ps1`；
+      改 `Services/IArchiveService.cs` / `ArchiveService.cs`（`ExtractForCopyAsync` / `ReleaseStaging` / `CleanupTemp`）、
+      `Services/Native/SevenZipInterop.cs`（`ExtractFiles`：一次 `Extract` 解多条目）、`App.xaml.cs`（DI）、
+      `ViewModels/MainViewModel.cs` / `PanelViewModel.cs` / `FolderTabViewModel.cs`、`Views/DetailsView.xaml.cs`、
+      `tools/archive-smoke/Program.cs`、`tools/test-archive.ps1`、`AGENTS.md`。
+    - 做法：包内复制只把「压缩包 + 包内相对路径」记在内存（不动磁盘，并清空系统剪贴板）；
+      到真实目录粘贴时才解到 `archive-cache\copy` 再交给外壳 `SHFileOperation` 复制，中转副本用完即删；
+      与系统剪贴板互斥、粘贴时系统剪贴板优先；每个选中项解到自己的序号子目录（跨目录同名条目不互相覆盖）。
+    - 验收：`tools/archive-smoke`（新增“无目录条目的 zip（Compress-Archive 那种）”、多选、空目录、
+      跨目录同名条目、加密包、清理等用例）0 失败；`tools/test-archive-copy.ps1`（5 用例 32 断言）
+      在 Debug 与**裁剪过的自包含产物**上全绿（全程 UIA，不需交互桌面）；真鼠标那条路在
+      `tools/test-archive.ps1` 用例 12（本机当时没有交互桌面，未能跑，已按同一套断言写好）。
+  - [x] **S32c 真实压缩包文件行的右键「使用 7-Zip 打开 / 解压到下载文件夹」**（2026-10，新增 2 个文件 / 改 8 个 + 文档）
+    - 需求：真实目录里的压缩包文件可以右键交给**系统装的 7-Zip** 打开，也可以一键解压（直接解到 `Downloads\<包名>\`，
+      不用先双击进包再复制出来）。
+    - 涉及：新增 `Helpers/SevenZipLocator.cs`（找系统的 `7zFM.exe`）、`tools/test-archive-extract.ps1`（真鼠标回归）；
+      改 `Services/IShellService.cs` / `ShellService.cs`（`OpenWithProgram`）、`Services/IArchiveService.cs` /
+      `ArchiveService.cs`（`ExtractAllAsync` + `Extracted` 事件，`ExtractRoots` 新增“直接铺到目标目录”一档）、
+      `ViewModels/FolderTabViewModel.cs`（两个命令 + `StatusMessage` / `OpenStatusTarget` / 目标目录与重名处理）、
+      `PanelViewModel.cs` / `MainViewModel.cs`（把 `IKnownFolderService` 传下去、订阅 `Extracted` 刷新相关标签页）、
+      `Views/DetailsView.xaml(.cs)`（菜单项 + 绿色 InfoBar 与「打开目录」）、`tools/archive-smoke/Program.cs`、
+      `AGENTS.md` / `README.md`。
+    - 做法：两个入口只对**真实**压缩包文件行出现（`FileItemViewModel.IsArchive`，可多选；包内只读条目与目录行没有）；
+      7-Zip 没装时那一项**置灰且标题写明原因**（`SevenZipLocator` 按注册表 `Path` → 常见安装目录 → `PATH` 找，
+      `Lazy` 缓存一次）；解压目标同名目录自动加 `(2)(3)…`，失败 / 取消把刚建出来的半成品目录删掉；完成后绿色 InfoBar
+      （带「打开目录」）+ `IArchiveService.Extracted` 事件让宿主刷新正开在目标目录 / 其父目录里的标签页。
+    - 验收：`tools/archive-smoke` 新增 15 条断言（整包解压 / 空目录与深层目录 / 中文条目名 / `.tar.gz` / 跨目录同名 /
+      目标目录不存在 / 空压缩包 / 加密包 / 取消不留目录 / `Extracted` 事件）在 Debug 与**裁剪过的产物**
+      （`.artifacts\smoke-trimmed` + `--no-iso`）上都 0 失败；`tools/test-archive-copy.ps1 -Exe dist\win-x64\exdir.exe`
+      9 个用例仍全绿（确认 `ExtractRoots` 的重构没改坏“包内复制 → 粘贴”那条路）；`SevenZipLocator` 另用一次性控制台
+      工程直接跑过（本机找到 scoop 的 `7zFM.exe`）；`tools/test-archive-extract.ps1`（真鼠标右键）**本机无交互桌面，
+      未跑**（与 S32b 那次同样的限制，脚本已按同一套断言写好）。
+  - [ ] 其余都还没做，按需再排：**包内条目**右键「解压到当前文件夹 / 解压到 <同名> 文件夹」（带进度对话框；
+    **真实压缩包文件行**已经有「解压到下载文件夹」了，见 S32c）、把包内条目拖到资源管理器、包内新建/删除/重命名条目
+    （只 zip/7z）。
 
 ---
 

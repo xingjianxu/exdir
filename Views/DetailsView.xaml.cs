@@ -393,15 +393,8 @@ public sealed partial class DetailsView : UserControl
     /// </summary>
     private void DetailsRoot_DragStarting(UIElement sender, DragStartingEventArgs args)
     {
-        // 压缩包里的条目没有真实路径，拖出去只会得到一个空数据包，直接从源头取消
-        if (ViewModel?.IsInsideArchive == true)
-        {
-            args.Cancel = true;
-            return;
-        }
-
-        _dragStarted = true;
-        _internalDropHandled = false;
+        // 取消的拖拽不能留下上一次的路径（否则拖拽收尾的兜底会拿旧路径做一次移动）
+        _draggingPaths.Clear();
 
         var items = EntryList.SelectedItems.OfType<FileItemViewModel>().ToList();
 
@@ -412,13 +405,17 @@ public sealed partial class DetailsView : UserControl
             items = new List<FileItemViewModel> { candidate };
         }
 
-        _draggingPaths = items.Select(item => item.FullPath).ToList();
-
-        if (items.Count == 0)
+        // 压缩包里的条目没有真实路径，拖出去只会得到一个空数据包，直接从源头取消。
+        // 这一条同时覆盖“当前目录就在包内”与“在真实目录里就地展开了压缩包”两种情况。
+        if (items.Count == 0 || items.Any(static item => item.IsInArchive))
         {
             args.Cancel = true;
             return;
         }
+
+        _dragStarted = true;
+        _internalDropHandled = false;
+        _draggingPaths = items.Select(item => item.FullPath).ToList();
 
         var foldersOnly = items.All(item => item.IsDirectory);
 
@@ -717,6 +714,13 @@ public sealed partial class DetailsView : UserControl
         }
 
         var row = RowAt(position);
+
+        // 包内目录行是虚拟路径：与 DragOver 保持一致，不做任何事（而不是退回到当前目录）
+        if (row?.IsInArchive == true)
+        {
+            return;
+        }
+
         var target = row is { IsDirectory: true } ? row.FullPath : viewModel.CurrentPath;
 
         if (string.IsNullOrEmpty(target))
@@ -896,9 +900,9 @@ public sealed partial class DetailsView : UserControl
             EntryList.SelectedItem = item;
         }
 
-        if (viewModel.UseBuiltInContextMenu || viewModel.IsInsideArchive)
+        if (viewModel.UseBuiltInContextMenu || viewModel.IsInsideArchive || item?.IsInArchive == true)
         {
-            ShowBuiltInContextMenu(viewModel, item is not null, position);
+            ShowBuiltInContextMenu(viewModel, item, position);
         }
         else
         {
@@ -938,8 +942,10 @@ public sealed partial class DetailsView : UserControl
     /// 不碰 COM、不问外壳，所以弹出几乎瞬时。
     /// 菜单项集合故意与系统菜单不同 —— 这里只有 exdir 自己实现的命令（见 AGENTS.md 第 4 节）。
     /// </summary>
-    private void ShowBuiltInContextMenu(FolderTabViewModel viewModel, bool onRow, Point position)
+    private void ShowBuiltInContextMenu(FolderTabViewModel viewModel, FileItemViewModel? item, Point position)
     {
+        var onRow = item is not null;
+
         // “此电脑”这种没有路径的标签页里没有可用的背景命令
         if (!onRow && string.IsNullOrEmpty(viewModel.CurrentPath))
         {
@@ -948,13 +954,19 @@ public sealed partial class DetailsView : UserControl
 
         var flyout = new MenuFlyout();
 
-        // 压缩包里是**只读**的：只留看得懂、做得了的那几项，写操作的入口根本不给
-        //（Ctrl+C/X/V/Delete 这些键盘入口由 ViewModel 里的守卫挡，见 FolderTabViewModel.RefuseInArchive）
-        if (viewModel.IsInsideArchive)
+        // 压缩包内部是**只读**的：只留看得懂、做得了的那几项，写操作的入口根本不给
+        //（Ctrl+X/V/Delete 这些键盘入口由 ViewModel 里的守卫挡，见 FolderTabViewModel.RefuseSelectionInArchive）
+        // 这里同时也盖住“在真实目录里就地展开了压缩包、右键点在包内行上”的情况。
+        if (viewModel.IsInsideArchive || item?.IsInArchive == true)
         {
             if (onRow)
             {
                 AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+
+                // 包内条目没有真实路径，"复制"只把“压缩包 + 包内路径”记在内存里，
+                // 到真实目录里粘贴时才解出来（见 AGENTS.md 第 4 节）
+                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
+
                 flyout.Items.Add(new MenuFlyoutSeparator());
                 AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
             }
@@ -966,7 +978,7 @@ public sealed partial class DetailsView : UserControl
                 AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand);
             }
 
-            Log.Write($"内置右键菜单：压缩包{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项（只读）");
+            Log.Write($"内置右键菜单：压缩包{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项（只读，可复制到外部目录）");
             flyout.ShowAt(DetailsRoot, new FlyoutShowOptions { Position = position });
             return;
         }
@@ -974,6 +986,24 @@ public sealed partial class DetailsView : UserControl
         if (onRow)
         {
             AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+
+            // 真实压缩包文件（可多选）多两个入口：交给系统的 7-Zip 打开 / 解压到「下载」文件夹。
+            // 没装 7-Zip 时那一项留着但置灰、标题里写明原因 —— 直接不显示会让人以为功能没做。
+            if (viewModel.CanUseArchiveCommands)
+            {
+                AddContextMenuItem(
+                    flyout,
+                    viewModel.HasSevenZip ? "使用 7-Zip 打开" : "使用 7-Zip 打开（未找到 7-Zip）",
+                    viewModel.OpenWithSevenZipCommand,
+                    isEnabled: viewModel.HasSevenZip);
+
+                AddContextMenuItem(flyout, "解压到下载文件夹", viewModel.ExtractToDownloadsCommand);
+            }
+
+            // 任意选中项都能打包成 zip（目录含整棵子树）：生成后落到设置里的输出目录
+            //（默认「下载」文件夹）并自动复制到剪贴板
+            AddContextMenuItem(flyout, "压缩", viewModel.CompressSelectionCommand);
+
             AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand);
             flyout.Items.Add(new MenuFlyoutSeparator());
 
@@ -1037,6 +1067,12 @@ public sealed partial class DetailsView : UserControl
         EntryList.SelectAll();
         EntryList.Focus(FocusState.Programmatic);
     }
+
+    /// <summary>关掉“操作结果”提示条时同步清掉 VM 里的状态，下次解压才能再弹出来。</summary>
+    private void StatusInfoBar_CloseButtonClick(InfoBar sender, object args) => ViewModel?.ClearStatus();
+
+    /// <summary>“操作结果”提示条上的「打开目录」：在资源管理器里打开这次解压到的目录。</summary>
+    private void StatusInfoBar_OpenDirectory(object sender, RoutedEventArgs args) => ViewModel?.OpenStatusTarget();
 
     // ------------------------------------------------------------------ 拖放（移动 / 复制到目录）
 
@@ -1187,7 +1223,21 @@ public sealed partial class DetailsView : UserControl
         }
 
         var point = DpiHelper.GetCursorPosition(DetailsRoot, MainWindowHandle);
-        var hit = double.IsNaN(point.X) ? null : RowAt(point);        row = hit is { IsDirectory: true } ? hit : null;
+        if (double.IsNaN(point.X))
+        {
+            return false;
+        }
+
+        var hit = RowAt(point);
+
+        // 压缩包内的目录行是虚拟路径，写不进去：光标落在它上面时整个拖放都不接受。
+        // 不能退回到“当前目录” —— 用户盯的是那个包内目录，退回去会搬错地方。
+        if (hit?.IsInArchive == true)
+        {
+            return false;
+        }
+
+        row = hit is { IsDirectory: true } ? hit : null;
         target = row?.FullPath ?? viewModel.CurrentPath;
 
         var control = (e.Modifiers & DragDropModifiers.Control) != 0;
@@ -1368,7 +1418,7 @@ public sealed partial class DetailsView : UserControl
 
         switch (e.Key)
         {
-            case VirtualKey.Right when item.IsDirectory && !item.IsExpanded:
+            case VirtualKey.Right when item.IsExpandable && !item.IsExpanded:
                 _ = viewModel.ToggleExpandAsync(item);
                 e.Handled = true;
                 break;

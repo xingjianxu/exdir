@@ -6,7 +6,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%USERPROFILE%\.config\exdir\config.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 8;
+    public const int CurrentSchemaVersion = 9;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -113,6 +113,15 @@ public sealed class AppSettings
 
     /// <summary>列宽是否整体自适应窗格宽度（用户拖动过列宽后为 false）。</summary>
     public bool ColumnAutoFit { get; set; } = true;
+
+    // ---------- 压缩 ----------
+
+    /// <summary>
+    /// 右键「压缩」生成的 zip 保存到哪个目录（设置窗口「文件列表 → 压缩输出目录」）。
+    /// 空（默认）= 用户的「下载」文件夹（按 <see cref="Exdir.Services.IKnownFolderService" /> 解析，用户重定向过也一样）；
+    /// 非空时该目录不存在会自动建出来。
+    /// </summary>
+    public string CompressionOutputDirectory { get; set; } = string.Empty;
 
     // ---------- 会话 ----------
     /// <summary>左（主）窗格打开的标签页路径。</summary>

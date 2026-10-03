@@ -376,14 +376,30 @@
             IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
 
-        <!-- ===================== 错误提示 ===================== -->
-        <InfoBar
-            Grid.Row="2"
-            IsClosable="True"
-            IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
-            Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-            Severity="Warning"
-            Title="无法打开" />
+        <!-- ===================== 错误提示 / 操作结果 =====================
+             两条 InfoBar 竖着放（同时出现时不重叠）：上面是错误，下面是“做完了”的绿色提示。
+             状态栏不在这个控件里：它是全窗口一条（文件列表区底部），见 Views/StatusBarView -->
+        <StackPanel Grid.Row="2">
+            <InfoBar
+                IsClosable="True"
+                IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
+                Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                Severity="Warning"
+                Title="无法打开" />
+
+            <InfoBar
+                AutomationProperties.Name="操作结果"
+                CloseButtonClick="StatusInfoBar_CloseButtonClick"
+                IsClosable="True"
+                IsOpen="{x:Bind ViewModel.HasStatus, Mode=OneWay}"
+                Message="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                Severity="Success"
+                Title="{x:Bind ViewModel.StatusTitle, Mode=OneWay}">
+                <InfoBar.ActionButton>
+                    <Button AutomationProperties.Name="打开目录" Click="StatusInfoBar_OpenDirectory" Content="打开目录" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+        </StackPanel>
 
         <!-- 状态栏不在这个控件里：它是全窗口一条（文件列表区底部），见 Views/StatusBarView -->
     </Grid>

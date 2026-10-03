@@ -87,6 +87,32 @@
                                 TextAlignment="Right" />
                         </StackPanel>
                     </controls:SettingsCard>
+
+                    <!-- 右键「压缩」生成的 zip 放哪里。可直接手填路径（粘贴也行），也可以用「浏览…」弹外壳的文件夹选择器；
+                         留空 = 用户的「下载」文件夹。UpdateSourceTrigger=PropertyChanged 让改动落在“每一次按键”上，
+                         不然失去焦点前不会落盘（见 AGENTS.md 第 6 节第 10 条）。 -->
+                    <controls:SettingsCard Description="右键「压缩」生成的 zip 保存到这个目录；留空则用「下载」文件夹" Header="压缩输出目录">
+                        <!-- 用 Grid（而不是横着的 StackPanel）：路径框固定宽度在窄窗口里会把「浏览…」顶出卡片外、
+                             按钮连点都点不到（卡片内容区在窗口较窄时会缩到 200 DIP 上下），
+                             改成 * + Auto 两列后路径框跟着缩、按钮永远占着自己的位置。 -->
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" MinWidth="140" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="CompressionOutputBox"
+                                Grid.Column="0"
+                                AutomationProperties.Name="压缩输出目录"
+                                PlaceholderText="留空 = 下载文件夹"
+                                Text="{x:Bind ViewModel.CompressionOutputDirectory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button
+                                Grid.Column="1"
+                                AutomationProperties.Name="浏览压缩输出目录"
+                                Click="BrowseCompressionOutput_Click"
+                                Content="浏览…" />
+                        </Grid>
+                    </controls:SettingsCard>
                 </StackPanel>
 
                 <!-- ============================ 外观 ============================ -->
