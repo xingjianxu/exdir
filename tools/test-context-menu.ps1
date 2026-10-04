@@ -438,6 +438,15 @@ try {
     Assert ((Find-MenuItems -Session $session -Name '属性').Count -eq 1) '「属性」不重复（verb:properties 去重）'
     Assert (@(Get-LogTail | Where-Object { $_ -match '内置右键菜单：文件 上下文 \d+ 项（含系统菜单项 \d+ 项）' }).Count -ge 1) '日志记下了合并进来的系统菜单项个数'
 
+    # 系统菜单项自带图标（MENUITEMINFO.hbmpItem）的像素副本：服务层抄到几个、有没有抄砸，都写在日志里。
+    # 本机 Windows 10 的“打开”一项总是带图标（文件类型图标），所以抄到的个数必然大于 0。
+    $iconLog = Get-LogTail -Lines 200 | Where-Object { $_ -match '系统右键菜单：图标抄到 \d+ 个' } | Select-Object -Last 1
+    Assert ($null -ne $iconLog) '日志里有“系统右键菜单：图标抄到 N 个”（系统菜单项的图标真的被抄出来了）'
+    if ($null -ne $iconLog) {
+        $iconCount = [int]([regex]::Match($iconLog, '图标抄到 (\d+) 个').Groups[1].Value)
+        Assert ($iconCount -gt 0) "抄到了 $iconCount 个系统菜单项图标（内置菜单里的系统项因此带图标）"
+    }
+
     # 子菜单里的项是“即将展开时才填”的（外壳的 WM_INITMENUPOPUP）：我们渲染前替外壳代发了它，
     # 所以展开「发送到」应该真的多出项来（空的子菜单在服务层就被丢掉了）
     $sendTo = Find-MenuItems -Session $session -Name '发送到' | Select-Object -First 1

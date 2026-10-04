@@ -147,6 +147,71 @@ internal static class ShellIconExtractor
         return fileInfo.hIcon;
     }
 
+    /// <summary>
+    /// 从一张裸 HBITMAP（系统菜单项的 <c>MENUITEMINFO.hbmpItem</c>）取像素。
+    ///
+    /// 与 <see cref="Extract"/>（从 HICON 取）分开：菜单项的图标是外壳直接建出来的 DIB，
+    /// 没有掩码位图那一套，所以只读颜色位图；没带 alpha 的就当作不透明。
+    /// 位图归外壳所有（HMENU 一销毁就作废），所以像素必须在 <c>ReadTree</c> 那一拍就拷出来。
+    /// </summary>
+    public static Result? FromMenuBitmap(IntPtr hbmp, out string failure)
+    {
+        failure = string.Empty;
+
+        if (hbmp == IntPtr.Zero)
+        {
+            failure = "位图句柄为空";
+            return null;
+        }
+
+        var bitmap = default(BITMAP);
+        if (GetObject(hbmp, Marshal.SizeOf<BITMAP>(), ref bitmap) == 0)
+        {
+            failure = $"GetObject 失败（{Marshal.GetLastWin32Error()}）";
+            return null;
+        }
+
+        var width = bitmap.bmWidth;
+        var height = bitmap.bmHeight;
+
+        // 与 HICON 那条路同一个上限：正常菜单图标就是 SM_CXSMICON，异常值直接放弃
+        if (width <= 0 || height <= 0 || width > 256 || height > 256)
+        {
+            failure = $"位图尺寸异常（{width}×{height}，{bitmap.bmBitsPixel}bpp）";
+            return null;
+        }
+
+        var dc = CreateCompatibleDC(IntPtr.Zero);
+        if (dc == IntPtr.Zero)
+        {
+            failure = "CreateCompatibleDC 失败";
+            return null;
+        }
+
+        try
+        {
+            var pixels = ReadColor(dc, hbmp, width, height);
+            if (pixels is null)
+            {
+                failure = $"GetDIBits 失败（{width}×{height}，{bitmap.bmBitsPixel}bpp）";
+                return null;
+            }
+
+            // 菜单位图没有掩码可用：alpha 全 0 的老式位图宁可整块可见，也不要整块隐形
+            if (!HasAlpha(pixels))
+            {
+                SetOpaque(pixels);
+            }
+
+            Premultiply(pixels);
+            return new Result(width, height, pixels, ComputeHash(pixels, width, height));
+        }
+        finally
+        {
+            DeleteDC(dc);
+        }
+    }
+
     /// <summary>从文件自身的图标资源里取第一个图标（不是文件、没有图标资源都返回 0）。</summary>
     private static IntPtr ExtractFromResources(string path)
     {

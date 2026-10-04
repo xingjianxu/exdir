@@ -33,6 +33,28 @@ internal static class ShellContextMenuInterop
     public const uint MiimFType = 0x00000100;
     public const uint MiimState = 0x00000001;
 
+    /// <summary>MENUITEMINFO.fMask 里的“要 hbmpItem”位（系统菜单给菜单项配的图标就在这个位图里）。</summary>
+    public const uint MiimBitmap = 0x00000080;
+
+    /// <summary>
+    /// MENUITEMINFO.hbmpItem 的特殊值：外壳没给真实位图，让菜单宿主自己在 <c>WM_DRAWITEM</c> 里画
+    /// （<c>HBMMENU_CALLBACK</c>）。我们拿不到图标，只能让那一项不带图标。
+    /// ❗不能用“负数 = 特殊值”判它：GDI 句柄高位为 1 时在 64 位下就是负数，但那是真句柄（见
+    /// <see cref="IsSpecialMenuBitmap" />）。
+    /// </summary>
+    public static readonly IntPtr HbmMenuCallback = new(-1);
+
+    /// <summary>
+    /// MENUITEMINFO.hbmpItem 的特殊值：<c>HBMMENU_CALLBACK</c>（宿主自己画）与 <c>HBMMENU_*</c>
+    /// 那套固定小整数（<c>HBMMENU_SYSTEM</c> 等）。它们不是可读的位图句柄，当位图去解引用会踩坏东西。
+    ///
+    /// ❗**只有 -1 和 1..15 是特殊值**：GDI 句柄是 32 位的，高位被置 1 的那种（比如
+    /// <c>0xFFFFFFFFFA050297</c>）在 64 位下就是负数，但它是**真的位图句柄**（实测本机的
+    /// PowerRename / File Locksmith / 发送到 那几项都是这种）—— 把“负数”一律当成特殊值会静静丢掉一半图标。
+    /// </summary>
+    public static bool IsSpecialMenuBitmap(IntPtr hbmpItem)
+        => hbmpItem == HbmMenuCallback || (hbmpItem.ToInt64() > 0 && hbmpItem.ToInt64() < 16);
+
     /// <summary>MENUITEMINFO.fType 里的 owner-draw 位（外壳自己画文字与图标）。</summary>
     public const uint MftOwnerDraw = 0x00000100;
 

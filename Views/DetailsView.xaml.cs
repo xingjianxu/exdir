@@ -1111,19 +1111,19 @@ public sealed partial class DetailsView : UserControl
         {
             if (onRow)
             {
-                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
-                AddContextMenuItem(flyout, "打开所在文件夹", viewModel.OpenContainingFolderCommand);
-                AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand);
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand, MenuGlyphs.Open);
+                AddContextMenuItem(flyout, "打开所在文件夹", viewModel.OpenContainingFolderCommand, MenuGlyphs.OpenContainingFolder);
+                AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand, MenuGlyphs.RevealInExplorer);
 
                 flyout.Items.Add(new MenuFlyoutSeparator());
-                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
-                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
-                AddContextMenuItem(flyout, "属性", viewModel.ShowPropertiesCommand);
+                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, MenuGlyphs.Copy, "Ctrl+C");
+                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand, MenuGlyphs.CopyPath);
+                AddContextMenuItem(flyout, "属性", viewModel.ShowPropertiesCommand, MenuGlyphs.Properties);
             }
             else
             {
-                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
-                AddContextMenuAction(flyout, "全选", SelectAllRows);
+                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand, MenuGlyphs.Refresh);
+                AddContextMenuAction(flyout, "全选", MenuGlyphs.SelectAll, SelectAllRows);
             }
 
             Log.Write($"内置右键菜单：「最新访问」{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项");
@@ -1138,21 +1138,21 @@ public sealed partial class DetailsView : UserControl
         {
             if (onRow)
             {
-                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
-                AddContextMenuItem(flyout, "下载到…", viewModel.DownloadSelectionCommand);
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand, MenuGlyphs.Open);
+                AddContextMenuItem(flyout, "下载到…", viewModel.DownloadSelectionCommand, MenuGlyphs.Download);
 
                 flyout.Items.Add(new MenuFlyoutSeparator());
-                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
+                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, MenuGlyphs.Copy, "Ctrl+C");
 
                 flyout.Items.Add(new MenuFlyoutSeparator());
-                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
+                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand, MenuGlyphs.CopyPath);
             }
             else
             {
-                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
-                AddContextMenuAction(flyout, "全选", SelectAllRows);
+                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand, MenuGlyphs.Refresh);
+                AddContextMenuAction(flyout, "全选", MenuGlyphs.SelectAll, SelectAllRows);
                 flyout.Items.Add(new MenuFlyoutSeparator());
-                AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand);
+                AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand, MenuGlyphs.CopyPath);
             }
 
             Log.Write($"内置右键菜单：远程位置{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项（只读，可下载 / 复制到本地）");
@@ -1167,21 +1167,21 @@ public sealed partial class DetailsView : UserControl
         {
             if (onRow)
             {
-                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand, MenuGlyphs.Open);
 
                 // 包内条目没有真实路径，"复制"只把“压缩包 + 包内路径”记在内存里，
                 // 到真实目录里粘贴时才解出来（见 AGENTS.md 第 4 节）
-                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
+                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, MenuGlyphs.Copy, "Ctrl+C");
 
                 flyout.Items.Add(new MenuFlyoutSeparator());
-                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
+                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand, MenuGlyphs.CopyPath);
             }
             else
             {
-                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
-                AddContextMenuAction(flyout, "全选", SelectAllRows);
+                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand, MenuGlyphs.Refresh);
+                AddContextMenuAction(flyout, "全选", MenuGlyphs.SelectAll, SelectAllRows);
                 flyout.Items.Add(new MenuFlyoutSeparator());
-                AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand);
+                AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand, MenuGlyphs.CopyPath);
             }
 
             Log.Write($"内置右键菜单：压缩包{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项（只读，可复制到外部目录）");
@@ -1195,12 +1195,12 @@ public sealed partial class DetailsView : UserControl
             // 其余项（剪切 / 复制 / 删除 / 压缩 / 复制路径 / 属性）本来就是拿条目的完整路径干活，直接可用。
             if (viewModel.IsSearchMode)
             {
-                AddContextMenuItem(flyout, "打开所在文件夹", viewModel.OpenContainingFolderCommand);
-                AddContextMenuItem(flyout, "打开", viewModel.OpenWithDefaultAppCommand);
+                AddContextMenuItem(flyout, "打开所在文件夹", viewModel.OpenContainingFolderCommand, MenuGlyphs.OpenContainingFolder);
+                AddContextMenuItem(flyout, "打开", viewModel.OpenWithDefaultAppCommand, MenuGlyphs.Open);
             }
             else
             {
-                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand, MenuGlyphs.Open);
             }
 
             // 真实压缩包文件（可多选）多两个入口：交给系统的 7-Zip 打开 / 解压到「下载」文件夹。
@@ -1211,39 +1211,40 @@ public sealed partial class DetailsView : UserControl
                     flyout,
                     viewModel.HasSevenZip ? "使用 7-Zip 打开" : "使用 7-Zip 打开（未找到 7-Zip）",
                     viewModel.OpenWithSevenZipCommand,
+                    MenuGlyphs.OpenWith,
                     isEnabled: viewModel.HasSevenZip);
 
-                AddContextMenuItem(flyout, "解压到下载文件夹", viewModel.ExtractToDownloadsCommand);
+                AddContextMenuItem(flyout, "解压到下载文件夹", viewModel.ExtractToDownloadsCommand, MenuGlyphs.Download);
             }
 
             // 任意选中项都能打包成 zip（目录含整棵子树）：生成后落到设置里的输出目录
             //（默认「下载」文件夹）并自动复制到剪贴板
-            AddContextMenuItem(flyout, "压缩", viewModel.CompressSelectionCommand);
+            AddContextMenuItem(flyout, "压缩", viewModel.CompressSelectionCommand, MenuGlyphs.Compress);
 
-            AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand);
+            AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand, MenuGlyphs.RevealInExplorer);
             flyout.Items.Add(new MenuFlyoutSeparator());
 
             // 复制 / 剪切 / 粘贴：与 Ctrl+C / X / V 是同一条命令
-            AddContextMenuItem(flyout, "剪切", viewModel.CutSelectionCommand, "Ctrl+X");
-            AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
-            AddContextMenuItem(flyout, "粘贴", viewModel.PasteCommand, "Ctrl+V", viewModel.HasFileClipboard);
+            AddContextMenuItem(flyout, "剪切", viewModel.CutSelectionCommand, MenuGlyphs.Cut, "Ctrl+X");
+            AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, MenuGlyphs.Copy, "Ctrl+C");
+            AddContextMenuItem(flyout, "粘贴", viewModel.PasteCommand, MenuGlyphs.Paste, "Ctrl+V", viewModel.HasFileClipboard);
 
             // 删除进回收站（与资源管理器一致：Shift+Delete 才是永久删除，菜单里不单列一项）
-            AddContextMenuItem(flyout, "删除", viewModel.DeleteSelectionCommand, "Del");
+            AddContextMenuItem(flyout, "删除", viewModel.DeleteSelectionCommand, MenuGlyphs.Delete, "Del");
 
             flyout.Items.Add(new MenuFlyoutSeparator());
-            AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
-            AddContextMenuItem(flyout, "属性", viewModel.ShowPropertiesCommand);
+            AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand, MenuGlyphs.CopyPath);
+            AddContextMenuItem(flyout, "属性", viewModel.ShowPropertiesCommand, MenuGlyphs.Properties);
         }
         else
         {
-            AddContextMenuItem(flyout, "粘贴", viewModel.PasteCommand, "Ctrl+V", viewModel.HasFileClipboard);
-            AddContextMenuItem(flyout, "新建文件夹", viewModel.CreateNewFolderCommand);
-            AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
-            AddContextMenuAction(flyout, "全选", SelectAllRows);
+            AddContextMenuItem(flyout, "粘贴", viewModel.PasteCommand, MenuGlyphs.Paste, "Ctrl+V", viewModel.HasFileClipboard);
+            AddContextMenuItem(flyout, "新建文件夹", viewModel.CreateNewFolderCommand, MenuGlyphs.NewFolder);
+            AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand, MenuGlyphs.Refresh);
+            AddContextMenuAction(flyout, "全选", MenuGlyphs.SelectAll, SelectAllRows);
             flyout.Items.Add(new MenuFlyoutSeparator());
-            AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand);
-            AddContextMenuItem(flyout, "在此处打开终端", viewModel.OpenTerminalCommand);
+            AddContextMenuItem(flyout, "复制当前路径", viewModel.CopyCurrentPathCommand, MenuGlyphs.CopyPath);
+            AddContextMenuItem(flyout, "在此处打开终端", viewModel.OpenTerminalCommand, MenuGlyphs.Terminal);
         }
 
         // 合并一份系统菜单项（设置里打开才做）：平铺到末尾、按规范动词与内置项去重。
@@ -1373,9 +1374,11 @@ public sealed partial class DetailsView : UserControl
         {
             var subMenu = new MenuFlyoutSubItem { Text = entry.Text, IsEnabled = entry.IsEnabled };
 
-            if (entry.IsChecked)
+            // 勾（状态）比图标优先，没勾时才用外壳给的图标
+            var subIcon = entry.IsChecked ? CheckIcon() : ShellIcon(entry.Icon);
+            if (subIcon is not null)
             {
-                subMenu.Icon = CheckIcon();
+                subMenu.Icon = subIcon;
             }
 
             foreach (var child in entry.Children)
@@ -1393,9 +1396,10 @@ public sealed partial class DetailsView : UserControl
 
         var item = new MenuFlyoutItem { Text = entry.Text, IsEnabled = entry.IsEnabled };
 
-        if (entry.IsChecked)
+        var icon = entry.IsChecked ? CheckIcon() : ShellIcon(entry.Icon);
+        if (icon is not null)
         {
-            item.Icon = CheckIcon();
+            item.Icon = icon;
         }
 
         if (entry.IsDefault)
@@ -1423,17 +1427,33 @@ public sealed partial class DetailsView : UserControl
         return item;
     }
 
-    /// <summary>系统菜单里被勾上的项（「查看 → 大图标」这类）前面画一个勾。</summary>
-    private static FontIcon CheckIcon() => new() { Glyph = "\uE73E", FontSize = 12 };
+    /// <summary>系统菜单里被勾上的项（「查看 → 大图标」这类）前面画一个勾。
+    /// 勾比图标优先：勾是状态，图标是识别信息 —— 外壳自己的菜单也是这么取舍的。</summary>
+    private static IconElement CheckIcon() => new FontIcon { Glyph = "\uE73E", FontSize = 12 };
+
+    /// <summary>exdir 自己那些项的图标：Segoe Fluent Icons 字形（见 <see cref="MenuGlyphs" />）。</summary>
+    private static IconElement GlyphIcon(string glyph) => new FontIcon { Glyph = glyph, FontSize = 14 };
+
+    /// <summary>系统菜单项自带的位图图标（<c>MENUITEMINFO.hbmpItem</c> 的像素副本）。
+    /// 用 <c>ImageIcon</c> 而不是 <c>BitmapIcon</c>：后者默认把图标当蒙版刷成单色，彩色图标会变黑白。</summary>
+    private static IconElement? ShellIcon(IconBitmap? icon)
+        => icon is null ? null : new ImageIcon { Source = IconImageHelper.ToImageSource(icon) };
 
     private static void AddContextMenuItem(
         MenuFlyout flyout,
         string text,
         ICommand command,
+        string glyph,
         string? acceleratorText = null,
         bool isEnabled = true)
     {
-        var item = new MenuFlyoutItem { Text = text, Command = command, IsEnabled = isEnabled };
+        var item = new MenuFlyoutItem
+        {
+            Text = text,
+            Command = command,
+            IsEnabled = isEnabled,
+            Icon = GlyphIcon(glyph),
+        };
 
         if (acceleratorText is not null)
         {
@@ -1443,9 +1463,9 @@ public sealed partial class DetailsView : UserControl
         flyout.Items.Add(item);
     }
 
-    private static void AddContextMenuAction(MenuFlyout flyout, string text, Action action)
+    private static void AddContextMenuAction(MenuFlyout flyout, string text, string glyph, Action action)
     {
-        var item = new MenuFlyoutItem { Text = text };
+        var item = new MenuFlyoutItem { Text = text, Icon = GlyphIcon(glyph) };
         item.Click += (_, _) => action();
         flyout.Items.Add(item);
     }

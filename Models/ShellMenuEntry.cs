@@ -48,6 +48,13 @@ public sealed class ShellMenuEntry
     /// </summary>
     public bool IsOwnerDraw { get; set; }
 
+    /// <summary>
+    /// 系统给这一项配的图标（<c>MENUITEMINFO.hbmpItem</c> 的像素副本）；外壳没给就是 null。
+    /// 渲染时用它，让内置菜单里的系统菜单项与真菜单长得一样。
+    /// 像素在读取时就已经拷出来了（位图随 HMENU 一起失效，不能延后读）。
+    /// </summary>
+    public IconBitmap? Icon { get; set; }
+
     /// <summary>子菜单项（<c>发送到</c> / <c>7-Zip</c> / <c>新建</c>…）里的项；空表示叶子项。</summary>
     public List<ShellMenuEntry> Children { get; } = new();
 }

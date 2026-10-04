@@ -178,8 +178,26 @@ public sealed class ShellContextMenuService : IShellContextMenuService
 
         Log.Write(
             $"系统右键菜单：读出菜单项（{snapshot.Scope} 上下文 {snapshot.Items.Count} 项，"
-            + $"含子菜单共 {CountEntries(snapshot.Items)} 项，缓存 {_cache.Count} 份）");
+            + $"含子菜单共 {CountEntries(snapshot.Items)} 项，其中 {CountIcons(snapshot.Items)} 项带图标，缓存 {_cache.Count} 份）");
         return snapshot;
+    }
+
+    /// <summary>数一下项树里有几个带图标的项（包含各级子菜单）—— 日志里能看出“图标到底抄到没”。</summary>
+    private static int CountIcons(IReadOnlyList<ShellMenuEntry> entries)
+    {
+        var total = 0;
+
+        foreach (var entry in entries)
+        {
+            if (entry.Icon is not null)
+            {
+                total++;
+            }
+
+            total += CountIcons(entry.Children);
+        }
+
+        return total;
     }
 
     /// <summary>把项树里的所有项（含各级子菜单）数一遍 —— 日志里能看出子菜单是不是真的被填上了。</summary>
@@ -282,12 +300,20 @@ public sealed class ShellContextMenuService : IShellContextMenuService
         {
             var contextMenu = (IContextMenu)session.MenuObject;
             var discovered = new List<ShellMenuItem>();
-            var items = ReadTree(session.Menu, contextMenu, scope, string.Empty, discovered);
+            var icons = new IconStats();
+            var items = ReadTree(session.Menu, contextMenu, scope, string.Empty, discovered, icons);
 
             TrimSeparators(items);
 
             // 顺手把这次见到的项并进“清单”（设置页下次打开就能看到，不必再枚举一遍）
             Remember(discovered);
+
+            if (icons.WithIcon > 0 || icons.ShellDraw > 0 || icons.Failed > 0)
+            {
+                Log.Write(
+                    $"系统右键菜单：图标抄到 {icons.WithIcon} 个，外壳没给位图（HBMMENU_CALLBACK / 特殊值）{icons.ShellDraw} 个，"
+                    + $"读取失败 {icons.Failed} 个{(icons.FirstFailure is null ? string.Empty : "（" + icons.FirstFailure + "）")}");
+            }
 
             return new ShellMenuSnapshot(signature, scope, items)
             {
@@ -318,7 +344,8 @@ public sealed class ShellContextMenuService : IShellContextMenuService
         IContextMenu contextMenu,
         string scope,
         string menuPath,
-        List<ShellMenuItem> discovered)
+        List<ShellMenuItem> discovered,
+        IconStats icons)
     {
         var entries = new List<ShellMenuEntry>();
         var count = GetMenuItemCount(menu);
@@ -350,7 +377,7 @@ public sealed class ShellContextMenuService : IShellContextMenuService
                     ? menuPath
                     : string.IsNullOrEmpty(menuPath) ? text : menuPath + " › " + text;
 
-                children = ReadTree(info.hSubMenu, contextMenu, scope, childPath, discovered);
+                children = ReadTree(info.hSubMenu, contextMenu, scope, childPath, discovered, icons);
             }
 
             if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(verb))
@@ -394,6 +421,7 @@ public sealed class ShellContextMenuService : IShellContextMenuService
                 IsChecked = (info.fState & MfsChecked) != 0,
                 IsDefault = (info.fState & MfsDefault) != 0,
                 IsOwnerDraw = (info.fType & MftOwnerDraw) != 0,
+                Icon = ReadMenuIcon(info.hbmpItem, icons),
             };
 
             entry.Children.AddRange(children);
@@ -436,6 +464,53 @@ public sealed class ShellContextMenuService : IShellContextMenuService
         {
             Log.Exception("系统右键菜单：初始化子菜单", ex);
         }
+    }
+
+    /// <summary>
+    /// 把系统给这一项配的图标（<c>MENUITEMINFO.hbmpItem</c>）抄成像素。
+    ///
+    /// <b>必须在这里抄</b>：那个位图是外壳建出来挂在 HMENU 上的，HMENU 一销毁（快照被 LRU 淘汰时）就作废，
+    /// 而这份快照是要留着执行的 —— 延后到渲染时再去 GetDIBits 只能是随机失败。
+    /// 外壳没给图标（Windows 10 的剪切 / 复制 / 删除 / 属性这类标准动词就是）或让宿主自己画
+    /// （<c>HBMMENU_CALLBACK</c>，Windows 11 上有）时返回 null，那一项就不带图标。
+    /// </summary>
+    private static IconBitmap? ReadMenuIcon(IntPtr hbmpItem, IconStats icons)
+    {
+        if (hbmpItem == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        if (IsSpecialMenuBitmap(hbmpItem))
+        {
+            icons.ShellDraw++;
+            return null;
+        }
+
+        var result = ShellIconExtractor.FromMenuBitmap(hbmpItem, out var failure);
+        if (result is null)
+        {
+            icons.Failed++;
+            icons.FirstFailure ??= failure;
+            return null;
+        }
+
+        var value = result.Value;
+        icons.WithIcon++;
+        return new IconBitmap(value.Width, value.Height, value.Pixels, value.ContentHash);
+    }
+
+    /// <summary>一次快照里“图标抄到 / 抄不到”的计数（只给日志用）。</summary>
+    private sealed class IconStats
+    {
+        public int WithIcon;
+
+        /// <summary>外壳把图标留给宿主自己画（<c>HBMMENU_CALLBACK</c>）或用了其它 <c>HBMMENU_*</c> 特殊值，我们抄不到。</summary>
+        public int ShellDraw;
+
+        public int Failed;
+
+        public string? FirstFailure;
     }
 
     /// <summary>去掉开头 / 结尾 / 连续重复的分隔符（用户关掉几项之后就会出现）。</summary>
@@ -871,7 +946,7 @@ public sealed class ShellContextMenuService : IShellContextMenuService
         info = new MENUITEMINFO
         {
             cbSize = (uint)Marshal.SizeOf<MENUITEMINFO>(),
-            fMask = MiimId | MiimSubMenu | MiimFType | MiimState,
+            fMask = MiimId | MiimSubMenu | MiimFType | MiimState | MiimBitmap,
         };
 
         return GetMenuItemInfo(menu, (uint)index, true, ref info);
