@@ -23,7 +23,9 @@
 #      立即落盘并当场应用（exdir.log：主题已应用：…）；标题栏那个太阳 / 月亮开关改的是同一个设置
 #      （拨一下就固定成显式的浅 / 深，设置窗口里的下拉框跟着同步）。
 #  10. 「启动」页的「开机时自动启动 exdir」：初值一致；拨开就立即落盘 **并且真的在 HKCU 的
-#      Run 项里写下 `"<exe>" --preload`**，拨回来就把该项删掉（用完后还原注册表原状）。
+#      Run 项里写下 `"<exe>" --preload`**，拨回来就把该项删掉（用完后还原注册表原状）；
+#      同一页的「启动时自动检查更新」（联网后真查 GitHub 与自动替换的那条路由
+#      tools\test-update.ps1 验）在这里只验它读得到、拨一下立即落盘。
 #  11. 「文件列表」页的「压缩输出目录」：初值与 config.json 一致；这是一个可直接编辑的文本框
 #      （旁边有「浏览…」），填进去的路径立即落盘，清空就回到默认的「下载」文件夹。
 #  12. 「压缩输出目录」旁边的「浏览…」真的拉起系统的文件夹选择器（外壳的 #32770「选择文件夹」），
@@ -151,6 +153,7 @@ $KeyMap = [ordered]@{
     '显示「音乐」'           = 'sidebarHomeMusic'
     '显示「视频」'           = 'sidebarHomeVideos'
     '开机时自动启动 exdir'   = 'startWithWindows'
+    '启动时自动检查更新'     = 'checkUpdatesOnStartup'
     '使用内置的轻量右键菜单' = 'builtInContextMenu'
 }
 
@@ -162,7 +165,7 @@ $CategoryMap = [ordered]@{
     '文件列表' = @('hidden', 'extension', 'foldersFirst')
     '外观'     = @('squareTabCorners', 'animations')
     '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
-    '启动'     = @('startWithWindows')
+    '启动'     = @('startWithWindows', 'checkUpdatesOnStartup')
     '侧边栏'   = @('sidebarRecent', 'sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer', 'sidebarRemote',
                     'sidebarHomeDesktop', 'sidebarHomeDocuments', 'sidebarHomeDownloads',
                     'sidebarHomePictures', 'sidebarHomeMusic', 'sidebarHomeVideos')
@@ -988,6 +991,14 @@ Start-Sleep -Milliseconds 800
 Assert ((Get-Setting 'StartWithWindows') -eq $false) '再拨回来立即落盘（StartWithWindows=false）'
 Assert ($null -eq (Get-AutostartCommand)) '关掉后注册表里的自启项被删掉了'
 Assert (Test-LogContains -Pattern '自动启动：已取消' -Tail 200) '日志记下了「自动启动：已取消」'
+
+# 同一页上的「启动时自动检查更新」（默认开，只影响“启动时要不要联网查一次更新”，
+# 真正的联网、下载与替换由 tools\test-update.ps1 验）：这里只断言它读得到、拨一下立即落盘
+Assert ((Get-ToggleStateByKey -Settings $settings -Category '启动' -Key 'checkUpdatesOnStartup') -eq 'On') '默认启动时自动检查更新（config.json 属性初始值为 true）'
+Invoke-ToggleByKey -Settings $settings -Category '启动' -Key 'checkUpdatesOnStartup'
+Assert ((Get-Setting 'CheckUpdatesOnStartup') -eq $false) '拨一下「启动时自动检查更新」就立即落盘（CheckUpdatesOnStartup=false）'
+Invoke-ToggleByKey -Settings $settings -Category '启动' -Key 'checkUpdatesOnStartup'
+Assert ((Get-Setting 'CheckUpdatesOnStartup') -eq $true) '再拨回来也立即落盘（true）'
 
 Close-Settings -Settings $settings
 Stop-Session -Session $session

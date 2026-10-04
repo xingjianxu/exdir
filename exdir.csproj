@@ -19,6 +19,27 @@
 
   <!--
     ===========================================================================
+    版本号：在线更新的唯一事实来源
+    ===========================================================================
+    这里只写 **InformationalVersion 一个属性**（发新版本就只改这一行，然后在发布前提交）。
+
+    为什么不写成 <Version>：exdir 的版本号是日期型（0.0.<yyyyMMdd>），而 Windows 版本资源里
+    AssemblyVersion / FileVersion 的每一段只有 16 位（≤ 65534），20261001 这种值
+    直接编译报错（CS7034/CS7035）。<Version> 会被 SDK 拿来生成这两个属性，所以不设它 ——
+    程序的真正版本号一律用 InformationalVersion（一个自由字符串，没有位数限制）：
+      * 界面显示与“要不要更新”的比较走 Helpers/AppVersion.cs（它读的就是这个属性）；
+      * tools\publish.ps1 把它写进 dist 的 build-info.txt；
+      * tools\release.ps1 拿它校验“要发的 tag（v + 同值）与代码里的版本一致”。
+    AssemblyVersion / FileVersion 保持 SDK 默认的 1.0.0.0（它们不参与任何比较）。
+    SDK 会在这个值后面追加 "+<git 提交>"（IncludeSourceRevisionInInformationalVersion），
+    AppVersion.NormalizeTag 会把它切掉，不用管。
+  -->
+  <PropertyGroup>
+    <InformationalVersion>0.0.20261004</InformationalVersion>
+  </PropertyGroup>
+
+  <!--
+    ===========================================================================
     非打包（unpackaged）部署模式
     ===========================================================================
     WindowsPackageType=None         -> 不生成 MSIX，直接产出可双击运行的 exe

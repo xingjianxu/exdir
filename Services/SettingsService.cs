@@ -207,6 +207,9 @@ public sealed class SettingsService : ISettingsService
         // 旧设置里没有这个字段，反序列化会保留属性初始值 true，同样不需要迁移。
         // （「最新访问」列表本身存在另一个文件 recents.json，不归这里管。）
 
+        // v12 新增“启动时自动检查更新”（CheckUpdatesOnStartup），默认开；
+        // 旧设置里没有这个字段，反序列化会保留属性初始值 true，同样不需要迁移。
+
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }
 

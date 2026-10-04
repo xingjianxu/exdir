@@ -64,7 +64,8 @@ public sealed partial class MainViewModel : ObservableObject
         IRemoteFileService remote,
         IDialogService dialogs,
         IEverythingSearchService everythingSearch,
-        IRecentItemsService recents)
+        IRecentItemsService recents,
+        UpdateViewModel update)
     {
         _settings = settings;
         _driveService = driveService;
@@ -81,6 +82,7 @@ public sealed partial class MainViewModel : ObservableObject
         _dialogs = dialogs;
         _everythingSearch = everythingSearch;
         _recents = recents;
+        Update = update;
 
         // 复制 / 移动完成后要让受影响的目录重新枚举（可能是另一个窗格、另一个标签页）；
         // 解压到目录也一样（目标目录与其父目录可能正开在某个标签页里），
@@ -151,6 +153,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>文件列表区底部状态栏的数据源（全窗口一条，始终跟随活动窗格）。</summary>
     public StatusBarViewModel StatusBar { get; }
+
+    /// <summary>
+    /// 在线更新的状态与命令。整个应用共用一份：主窗口顶部那条提示条、
+    /// 「帮助 → 检查更新…」以及 <see cref="Views.UpdateWindow" /> 看到的都是它。
+    /// </summary>
+    public UpdateViewModel Update { get; }
 
     // ------------------------------------------------------------------ 布局状态
 
@@ -965,6 +973,10 @@ public sealed partial class MainViewModel : ObservableObject
             AutoStart.Apply(settings.StartWithWindows);
         }
 
+        // 在线更新：只把开关记下来。连网在 MainWindow 里（窗口显示之后才知道要不要弹提示条），
+        // 设置窗口不管联网；「帮助 → 检查更新…」永远能手动查，不受这个开关影响。
+        settings.CheckUpdatesOnStartup = edited.CheckUpdatesOnStartup;
+
         OnPropertyChanged(nameof(ShowHiddenFiles));
         OnPropertyChanged(nameof(ShowExtensions));
 
@@ -1030,6 +1042,7 @@ public sealed partial class MainViewModel : ObservableObject
             + $"{edited.SidebarHomeDesktop}/{edited.SidebarHomeDocuments}/{edited.SidebarHomeDownloads}/"
             + $"{edited.SidebarHomePictures}/{edited.SidebarHomeMusic}/{edited.SidebarHomeVideos} "
             + $"开机自启={edited.StartWithWindows} "
+            + $"自动检查更新={settings.CheckUpdatesOnStartup} "
             + $"右键菜单={(edited.UseBuiltInContextMenu ? "内置" : "系统")} "
             + $"内置菜单合并系统菜单项={settings.BuiltInMenuIncludeShellItems} "
             + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
@@ -1264,6 +1277,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>退出（由宿主窗口提供实际实现）。</summary>
     public event EventHandler? ExitRequested;
+
+    /// <summary>
+    /// 在线更新用：替换脚本（等本进程退出 → 覆盖安装目录 → 重启 exdir）已经起来了，
+    /// 现在真的退出。走的是与菜单「退出」完全相同的入口，只是发起者不是菜单。
+    /// </summary>
+    public void RequestExitForUpdate() => Exit();
 
     [RelayCommand]
     private void Exit() => ExitRequested?.Invoke(this, EventArgs.Empty);

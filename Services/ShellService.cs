@@ -31,6 +31,25 @@ public sealed class ShellService : IShellService
         }
     }
 
+    public bool OpenUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return false;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"打开网址失败：{url}，{ex.Message}");
+            return false;
+        }
+    }
+
     public void OpenAll(IEnumerable<string> paths)
     {
         foreach (var path in paths)

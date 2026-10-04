@@ -16,12 +16,18 @@
 | 设置卡片 | CommunityToolkit.WinUI.Controls.SettingsControls 8.2.251219（`SettingsCard`） |
 | 部署 | **非打包**：`WindowsPackageType=None` + `WindowsAppSDKSelfContained=true` + `SelfContained=true`，publish 裁剪 |
 | 平台 | x64（x86/ARM64 只声明、未验证） |
+| 版本 | `exdir.csproj` 的 `<InformationalVersion>`（日期型 `0.0.<yyyyMMdd>`，见第 111 条）；GitHub Release 的 tag = `v` + 它 |
 
 界面语言：**简体中文硬编码**（不引入 .resw）。
 
 **快速搜索**：基于本机 Everything 索引的搜索（`Ctrl+F`，或直接点导航条右侧那个搜索框），
 **默认范围 = 当前目录及其子目录**，旁边一个「整机」开关放到全部索引；结果替换当前标签页的列表。
 见下面「Everything 快速搜索」一节。
+
+**在线更新**：启动后在后台查一次 GitHub Release（设置「启动 → 启动时自动检查更新」可关），
+发现新版本只在窗口顶部弹一条提示条（**不会自己下载任何东西**）；「帮助 → 检查更新…」随时可手动检查。
+点「立即更新」才下载发布包、校验 SHA256，然后退出 exdir、由一个后台脚本替换安装目录并自动重启
+（见下面「在线更新（GitHub Release）」一节）。
 
 **尚未实现**（见 `plan.md`）：键盘导航其余部分（`Ctrl+Shift+A` 反选、回车打开、type-ahead；打开选中项可以用
 「文件 → 打开」菜单或双击）、重命名、重命名以外
@@ -60,6 +66,8 @@ dotnet run -c Debug --project tools\remote-smoke               # 远程位置服
 pwsh -NoProfile -File tools\test-remote.ps1                    # 远程位置界面回归（UIA，不需交互桌面；自己起测试服务器）
 dotnet run -c Debug --project tools\everything-smoke [-- --root <已索引目录>]   # Everything 搜索的服务级冒烟（需本机装并运行 Everything）
 pwsh -NoProfile -File tools\test-search.ps1                    # Everything 搜索界面回归（UIA；测试目录没被索引时才临时改 Everything 配置并还原）
+pwsh -NoProfile -File tools\test-update.ps1                    # 在线更新界面回归（UIA；自带本机 mock feed，不动真的安装目录）
+node tools\update-test-server\server.js --zip <zip> [--tag vX] # 上面那个脚本用的 mock feed（纯 node，冒充 GitHub 的 latest release）
 pwsh -NoProfile -File tools\test-recent.ps1                    # 「最新访问」回归（UIA，不需交互桌面；用独立 XDG 目录，不动用户的配置）
 pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-Clobber] [-Draft] [-Prerelease]
 ```
@@ -76,13 +84,13 @@ pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-C
 
 | 脚本 | 覆盖 | 桌面 |
 | --- | --- | --- |
-| `test-settings.ps1`（10 用例） | 分类齐全 / 每页只显示本分类的项 / 初值一致 / 拨一下立即落盘并生效 / 跨分类与关窗重开读回 / 只开一个窗口 / 「右键菜单」页系统菜单项默认全开且能逐项关掉（拨 `verb:properties` 落盘、重开仍关、拨回清空）、「在内置菜单里合并系统菜单项」默认关且拨一下立即落盘 / 「行高」滑块（初值、跨分类读不到、拖完列表行真的变高）/ 侧边栏分组（含「最新访问」）与「主目录」文件夹开关当场作用到树 / 「标签页使用直角」当场落盘应用 / 「主题」三态下拉框与标题栏太阳月亮开关同步 / 「启动」页开关真的写删 `HKCU\...\Run` 的 `"<exe>" --preload` | 不需 |
+| `test-settings.ps1`（10 用例） | 分类齐全 / 每页只显示本分类的项 / 初值一致 / 拨一下立即落盘并生效 / 跨分类与关窗重开读回 / 只开一个窗口 / 「右键菜单」页系统菜单项默认全开且能逐项关掉（拨 `verb:properties` 落盘、重开仍关、拨回清空）、「在内置菜单里合并系统菜单项」默认关且拨一下立即落盘 / 「行高」滑块（初值、跨分类读不到、拖完列表行真的变高）/ 侧边栏分组（含「最新访问」）与「主目录」文件夹开关当场作用到树 / 「标签页使用直角」当场落盘应用 / 「主题」三态下拉框与标题栏太阳月亮开关同步 / 「启动」页开关真的写删 `HKCU\...\Run` 的 `"<exe>" --preload`、同一页的「启动时自动检查更新」读得到且拨一下立即落盘 | 不需 |
 | `test-status-bar.ps1`（16 断言） | 只有一条 / 一行高 / 贴底 / 项数 / 选中摘要 + 合计大小 / 磁盘可用空间 / 跟随活动窗格。**用例 4 拿 `%TEMP%` 数量比对状态栏“N 项”，偶发差 1 项就 FAIL，属脚本时序问题，重跑即可** | 需 |
 | `test-recent.ps1`（8 用例） | 侧边栏「最新访问」只有一个入口（排最上面、没有平铺的子项、不带展开箭头）/ 点它**新开**一个专用标签页（原标签页还在、再点一次不重复开）/ 列表 = 最近访问过的**目录与文件**，按访问时间倒序（即使“文件夹排在文件前面”开着也不重排）/ 已不存在的路径不显示但记录还留着 / 目录行的箭头点一下会就地展开、文件行点了没反应 / 会话恢复期间的导航不记录 / 导航一次记到最前（`IsDirectory=true`）/ 旧格式（只有 `Folders`）自动迁移成 `Entries` 且顺序不变 / 上限 50 条挤掉最旧的 / 关掉 `SidebarShowRecent` 后入口不显示 / 打开文件也会记进列表（真桌面，否则 SKIP）/ 右键「清空最新访问」（真鼠标，无交互桌面时 SKIP）。用独立 `XDG_CONFIG_HOME` / `XDG_DATA_HOME`，不动用户的 config.json 与 recents.json | 用例 7/8 需 |
 | `test-shell-icons.ps1`（13 断言） | 每行都有图标 / 不同程序不同 / `.lnk` 带小箭头 / 同扩展名只提取一次 / 滚动后仍有图标 | 需 |
 | `measure-row-align.ps1` | 图标与文字是否垂直居中（截图 + UIA 量墨迹中心）。判断“图标该不该再微调”用它，别靠肉眼 | 需 |
 | `test-pin-drag.ps1`（6 用例） | 收藏夹子项与 config.json 一致 / 列表→固定目录 / 侧边栏→固定目录 / 拖拽排序 / 右键取消固定 / 拖到收藏夹。**shell 提权时自动用 explorer.exe 降权启动**（第 21 条） | 需 |
-| `test-context-menu.ps1`（6 用例） | 系统菜单（文件行 / 空白处各弹 `#32768`、菜单项记清单、关掉 `verb:properties` 后不再有「属性」）+ 内置菜单（按名字断言 `MenuItem`、`InvokePattern` 点「新建文件夹」验磁盘上真的建出目录）+ 内置菜单合并系统菜单项（打开设置后出现外壳的「发送到」、`打开`/`复制`/`属性` 各只有一份、展开「发送到」子菜单真的多出项、启动预热日志）。系统菜单自绘、UIA 读不到项 → “弹没弹”看 `#32768` 窗口、“有哪些项”看 `exdir.log` | 需 |
+| `test-context-menu.ps1`（6 用例） | 系统菜单（文件行 / 空白处各弹 `#32768`、菜单项记清单、关掉 `verb:properties` 后不再有「属性」）+ 内置菜单（按名字断言 `MenuItem`、`InvokePattern` 点「新建文件夹」验磁盘上真的建出目录）+ 内置菜单合并系统菜单项（打开设置后出现外壳的「发送到」、`打开`/`复制`/`属性` 各只有一份、展开「发送到」子菜单真的多出项、启动预热日志、日志里有 `系统右键菜单：图标抄到 N 个` 且 N>0）。系统菜单自绘、UIA 读不到项 → “弹没弹”看 `#32768` 窗口、“有哪些项”看 `exdir.log` | 需 |
 | `test-list-selection.ps1`（5 用例） | 单击行只选中它 / `Ctrl+A` 全选且状态栏同步 / 点空白处清空 / 行上的点击不算空白处 / 地址栏的 `Ctrl+A` 仍是文本框全选 | 需 |
 | `test-row-dblclick.ps1`（8 用例） | 6 个落点双击都进目录（行内边距 / 名称右侧空白 / 类型与大小列的空白…）/ 行首展开箭头只展开不进目录 / 列表下方空白处不导航 | 需 |
 | `test-column-resize.ps1`（8 用例） | 每个列边界都拖得动 / 列头与数据行仍对齐 / 双击复位 / 最右一列也拖得动 / 拖完落盘 / 列头排序仍可用 | 需 |
@@ -97,9 +105,9 @@ pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-C
 | `test-archive-extract.ps1`（4 用例） | 压缩包行的内置菜单里有「使用 7-Zip 打开」与「解压到下载文件夹」（没装 7-Zip 时那一项置灰且标题写明原因，与本机实际情况比对）/ 普通文件行没有这两项 / 点「解压到下载文件夹」→ `Downloads\<包名>\` 里真的出现包内文件与子目录、绿色「解压完成」InfoBar（带「打开目录」）、日志有「解压：…」/ 同一个包再解一次落到 `<包名> (2)`。收尾删掉解出来的目录并还原 config.json | 需 |
 | `test-compress.ps1`（4 用例） | 文件行 / 目录行的内置菜单里有「压缩」，空白处没有 / 点「压缩」→ 默认输出目录（「下载」文件夹）出现 `<名字>.zip`、包内条目与源一致、**剪贴板里就是这个 zip**（`CF_HDROP` + DropEffect=1）、绿色「压缩完成」InfoBar（带「打开目录」）、日志有「压缩：…」「压缩产物已复制到剪贴板：…」/ 多选时包名 = 当前文件夹名、再压一次落到 `… (2).zip` / 设置里的「压缩输出目录」指向别处后压缩落到那里。收尾删掉生成的 zip 并还原 config.json。等待条件用「zip 能真的打开」/「剪贴板里已出现它」（第 94 条）| 需 |
 | `test-search.ps1`（11 用例 61 断言） | 搜索框存在且可用且初值空 / 输入关键字 → 结果替换列表（状态栏「N 项」= 命中数、行真的出现、**日志里的查询串恰好是 `path:"<当前目录>\" <关键字>`**）/ 结果行右侧标出相对搜索根的目录（直接子项不标）/ 「显示隐藏文件」开着关着当场作用到搜索结果 / 「整机」开关把范围放到整个索引（前缀相同的兄弟目录与外部目录的文件都进来、日志里没有 `path:`）/ 点「×」清空 → 回原目录 / 搜索中导航 → 自动退出搜索模式 / 选中结果 → 「文件 → 打开」→ 跳到它所在目录并选中它 / 打开压缩包那个标签页的搜索框是禁用的 / `EXDIR_EVERYTHING_DLL` 指向不存在的路径 → 提示「未检测到 Everything」且**不动列表** / **当前目录不在 Everything 索引里 → 查询串仍是当前目录、提示条说明“索引里没有这个目录”并给出装 Everything 服务的办法（反面：索引覆盖到的目录不误报）**。**测试目录没被索引时本脚本才会临时把它加进 Everything 的「文件夹索引」并重启 Everything（已按卷索引的机器上完全不碰它的配置），跑完恢复 `Everything.ini` 与进程**；本机没装 Everything 时整个脚本 SKIP | 不需 |
+| `test-update.ps1`（8 用例 30 断言） | 启动时后台检查发现新版本 → 顶部提示条（带远端版本号）/ 提示条上的「立即更新」→ 更新窗口（当前与最新版本、发行说明）/ 下载完成 → 「重启并完成更新」按钮 / 点它后 exdir 退出、替换脚本 robocopy 覆盖安装目录并自动重启（断言安装目录里真的多出更新包里的标记文件、`apply.log` 里有 robocopy 与重启记录）/ 反面：feed 版本 = 当前版本 → 界面不动且日志说明不比当前新 / 反面：SHA256 不符 → 报「校验失败」且不装 / 关掉「启动时自动检查更新」→ 启动根本不联网、「帮助 → 检查更新…」仍能手动查到 / 手动检查没有新版本 → 回执对话框。**全程 UIA + 本机 mock feed（`tools\update-test-server` 冒充 GitHub），安装目录是 `dist` 的临时副本**（动不到开发机上那份 exdir） | 不需 |
 
 真鼠标那条路（右键菜单里的「复制」）在 `test-archive.ps1` 用例 12。
-
 远程位置（SFTP / FTP）的回归脚本：`tools\test-remote.ps1`（9 用例，全程 UIA、不需交互桌面；自己起
 `tools\remote-test-server` 并写一份测试用 `config.json`，跑完清理）。用例：侧边栏「远程」分组有配置的三个位置 /
 点 FTP 位置列出服务器目录（状态栏项数）/ 点 SFTP 位置（密码登录）一样能列 / 行内箭头就地展开远程子目录 /
@@ -166,12 +174,13 @@ exdir/
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
 ├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / AppTheme / QuickCommand / CloudSyncState /
 │                             ShellMenuItem / ShellMenuEntry / IconBitmap / ArchivePath / RemoteLocation / RemotePath / RecentItems /
-│                             枚举（含 SettingsCategory / RemoteProtocol / RemoteAuthMethod）
+│                             UpdateInfo（在线更新发现的版本）/ 枚举（含 SettingsCategory / RemoteProtocol / RemoteAuthMethod）
 ├─ Services/                  接口 + 实现成对；Native/ 放 Win32 互操作
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态；远程 / 压缩包路径分派
 │   ├─ IDriveService / IKnownFolderService / INetworkLocationService / ICloudSyncService / IShellIconService
 │   ├─ IArchiveService / IArchiveClipboardService / ICompressionService / IDialogService / ISettingsService / IRecentItemsService
 │   │                         （RecentItemsService：「最新访问」记录的读写，落盘 recents.json）
+│   ├─ IUpdateService / UpdateService（在线更新：查 GitHub Release / 下载校验 / 退出后替换重启）
 │   ├─ IRemoteFileService / IRemoteLocationSource（远程位置：列目录 + 下载到本地，只读）
 │   ├─ IEverythingSearchService  跨进程查本机 Everything 索引（只读；见 AGENTS.md 第 4 节「Everything 快速搜索」）
 │   ├─ IShellService / IClipboardService / IFileOperationService / IShellContextMenuService / IDeviceChangeService
@@ -184,10 +193,10 @@ exdir/
 │                             SidebarViewModel（懒加载 + 收藏夹镜像 + ApplyGroupVisibility / ApplyHomeFolders /
 │                             ApplyRemoteLocations / 差量 RefreshDrives）/ FileItemViewModel / PinnedFolderViewModel /
 │                             StatusBarViewModel / SettingsCategoryViewModel / ShellMenuItemViewModel /
-│                             SettingsViewModel / RemoteLocationItemViewModel
+│                             SettingsViewModel / RemoteLocationItemViewModel / UpdateViewModel（在线更新状态与命令）
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
 │                             （DetailsView 还管文件列表的拖放与右键菜单）/ StatusBarView / SearchBarView /
-│                             SettingsWindow / SettingsView
+│                             SettingsWindow / SettingsView / UpdateWindow / UpdateView
 │                             （+ SettingsView.Remote.cs：远程位置编辑对话框）
 ├─ Controls/                  PaneSplitter.cs（自研分隔条，WinUI 没有 GridSplitter）；ColumnResizeHandle.cs
 ├─ Helpers/                   ColumnLayout / ThemeHelper / CloudSyncStateHelper / DpiHelper / FileTypeHelper /
@@ -195,7 +204,8 @@ exdir/
 │                             SingleInstance / ArchiveFormats / CompressTargets / FolderPicker /
 │                             SecretProtector（DPAPI 凭据）/ RemoteCache（远程中转目录）/ SevenZipLocator（找 7zFM.exe）/
 │                             EverythingLocator（找 Everything64.dll）/ EverythingQuery（拼 Everything 查询串）/
-│                             RecentView（「最新访问」虚拟路径 exdir://recent）
+│                             RecentView（「最新访问」虚拟路径 exdir://recent）/ AppVersion（版本号，唯一源是 csproj）/
+│                             UpdateApplier（在线更新：等进程退出后替换安装目录并重启的脚本）
 ├─ Converters/CommonConverters.cs / Diagnostics/Log.cs（可多进程同时追加，第 72 条）
 ├─ icon.svg                   程序图标唯一源文件（改它再跑 tools\make-icon.ps1）
 ├─ Assets/                    图标（exdir.ico + 各尺寸徽标 PNG，都由 make-icon.ps1 生成）
@@ -203,7 +213,8 @@ exdir/
 └─ tools/                     capture / inspect-ui / shot-settings / test-*.ps1 / measure-row-align / publish /
                               release / make-icon，以及 archive-smoke（不需交互桌面的服务级冒烟工程）、
                               remote-smoke（远程位置的服务级冒烟）、everything-smoke（Everything 搜索的服务级冒烟）、
-                              remote-test-server（本机 FTP + SFTP 测试服务器）
+                              remote-test-server（本机 FTP + SFTP 测试服务器）、
+                              update-test-server（在线更新回归用的 mock feed：冒充 GitHub 的 latest release）
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -428,6 +439,13 @@ exdir/
     `属性` 走 `IShellService.ShowProperties`（`Verb = "properties"`，不建 `IContextMenu`）；`新建文件夹` 由
     `CreateNewFolderAsync` 自建（重名依次 `(2)(3)…`）并选中；其余复用标签页命令与视图 `SelectAll`。风格在**每次右键
     时现读** `UseBuiltInContextMenu` → 改设置立即生效。
+  * **内置菜单每项都带图标**（2026-10）：exdir 自己那些项用 Segoe Fluent Icons 字形
+    （`Helpers/MenuGlyphs` + `FontIcon`）；**合并进来的系统菜单项用系统自己给的图标** —— 外壳把图标放在
+    `MENUITEMINFO.hbmpItem` 里，`ShellContextMenuService.ReadTree` 在读取菜单项那一拍就用
+    `ShellIconExtractor.FromMenuBitmap` 把像素抄成 `ShellMenuEntry.Icon`（`IconBitmap`），渲染时由
+    `IconImageHelper` 变成 `ImageIcon`（**不要用 `BitmapIcon`**：它默认把位图当蒙版刷成单色）。勾选态优先于图标
+    （勾是状态、图标是识别信息）。外壳没给图标的项（Windows 10 的剪切 / 复制 / 删除 / 属性这些标准动词就是，
+    Explorer 自己的菜单也不带）保持无图标。三个约束与坑见第 110 条。
   * **内置菜单里合并系统菜单项**（`AppSettings.BuiltInMenuIncludeShellItems`，**默认关**，2026-10）：打开后内置菜单
     末尾接一个分隔符，后面平铺外壳给**这一批选中项**的菜单项（`发送到` / `7-Zip` / `新建` 这类子菜单原样保留），
     **按规范动词与内置项去重**（行菜单：`open` / `cut` / `copy` / `paste` / `delete` / `properties` /
@@ -478,6 +496,41 @@ exdir/
 * 列表变化（新记录 / 清空）会触发 `IRecentItemsService.Changed` → 开着的「最新访问」标签页
   `ReloadRecentViewAsync()` 重读一遍（只换行集合，不动历史与当前路径，不会自激）。
 * 回归 `tools\test-recent.ps1`（8 用例，UIA，用例 7/8 需真桌面）；第 107 条。
+
+### 在线更新（GitHub Release，2026-10）
+
+菜单「帮助 → 检查更新…」随时可以查一次 GitHub 上的最新 Release；**默认还会在启动几秒后在后台查一次**
+（设置「启动 → 启动时自动检查更新」，默认开）。发现新版本**只**在窗口顶部弹一条 `InfoBar`
+（`MainWindow` 的行 2，`ViewModel.Update.IsUpdateAvailable` 控制），**不会自己下载或替换任何文件**。
+
+* **三步互相独立**（`Services/IUpdateService` + `UpdateService`）：`CheckAsync`（只读网络，20 秒超时）、
+  `DownloadAsync`（只写 `%LOCALAPPDATA%\exdir\update\<tag>\`，不动安装目录）、`ApplyAndRestart`（退出后替换）。
+  界面上分别对应「帮助 → 检查更新…」/ 提示条上的「立即更新」（打开 `Views/UpdateWindow`）/
+  窗口里的「立即更新」与「重启并完成更新」。
+* **版本号**：`Helpers/AppVersion`（唯一来源是 `exdir.csproj` 的 `<InformationalVersion>`，见第 111 条）；
+  tag 与当前版本只差前缀 `v`，比较只看数字段（`-beta` 这类后缀被切掉），认不出来的 tag 一律当作“不比当前新”。
+* **认哪个资产**：Release 里名字以 `-win-x64.zip` 结尾的那个（退回任意 `.zip`）；一个 zip 都没有时只能打开发布页。
+* **下载后校验**：GitHub 的 `assets[].digest`（`sha256:…`）有就比一次 SHA256，不符就报错、删掉本次中转目录、
+  **不安装**；远端没给摘要就跳过并记一行日志。解压自己用已经 root 住的 `ZipArchive` 做
+  （**不用 `ZipFile`**：那个类在另一个程序集里，裁剪会把整条 assembly 从 deps.json 删掉，见第 71 条），
+  顺便守住 zip-slip。
+* **替换为什么要交给脚本**：运行中的 `exdir.exe` 与已加载的 dll 覆盖不了，所以只能
+  「写 `apply-update.ps1` → 启动它 → 自己退出 → 脚本等本进程消失 → `robocopy /E /IS` 覆盖安装目录 → 重启 exdir」
+  （`Helpers/UpdateApplier`，用系统自带的 Windows PowerShell 5.1 + `-ExecutionPolicy Bypass`）。
+  日志在 `%LOCALAPPDATA%\exdir\update\apply.log`；替换成功后脚本把这次的中转目录删掉，失败就留着便于排查。
+* **安全阀**：当前目录不是发布产物（缺 `build-info.txt`）、目录不可写、或系统里找不到 PowerShell 时
+  **不给自动替换**（`UpdateInfo.CanSelfUpdate=false` + 写明原因），更新窗口只提供「打开发布页」；
+  也不做提权重启 —— 提权起来的 exdir 连拖放都用不了（第 21 条）。
+* **只在窗口真的显示时查，而且只查发布版目录**：启动那一查挂在 `RootGrid.Loaded` 上（所以 `--preload` 不查），
+  并且要求当前目录有 `build-info.txt`（`IUpdateService.IsReleaseLayout`）—— 开发目录（`bin\` 下的 Debug / Release
+  输出）不自动查，免得打扰正在写代码的人，也免得提示条把布局顶下去、影响按坐标点击的回归脚本。
+* **设置**：`AppSettings.CheckUpdatesOnStartup`（默认开，结构版本 12）。关掉只影响启动时的后台检查，
+  「帮助 → 检查更新…」不受影响。
+* **环境变量**（只给回归脚本用）：`EXDIR_UPDATE_FEED` 覆盖 feed 的 URL（默认 GitHub 的公开接口），
+  `EXDIR_UPDATE_VERSION` 覆盖“当前版本”（模拟旧版本用）。
+* **回归**：`tools\test-update.ps1`（8 用例 30 断言，全程 UIA）。它用一个本机 mock feed
+  （`tools\update-test-server`，纯 node，无依赖）冒充 GitHub 的 latest release，并把 `dist` 复制到临时目录里
+  当“安装目录”，所以「发现 → 下载 → 校验 → 替换 → 重启」整条路都能验，而不会动开发机上那份 exdir。
 
 ### 托盘驻留（单窗口模式，2026-09）
 
@@ -814,7 +867,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   | 文件列表 | 显示隐藏文件 / 显示文件扩展名 / 文件夹排在文件前面 / 行高（滑块，默认 28）/ 压缩输出目录（可直接编辑的文本框 + 「浏览…」系统文件夹选择器，留空 = 下载文件夹） |
   | 外观 | 主题（跟随系统/浅色/深色，默认跟随系统）/ 标签页使用直角（默认开）/ 过渡动画 |
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
-  | 启动 | 开机时自动启动 exdir（登录后在后台预热，不显示主窗口） |
+  | 启动 | 开机时自动启动 exdir（登录后在后台预热，不显示主窗口）/ 启动时自动检查更新（默认开；只影响启动时的后台检查） |
   | 侧边栏 | 显示「最新访问」/「主目录」/「收藏夹」/「云存储」/「此电脑」/「远程」六个分组（默认全开）；「主目录」里显示桌面 / 文档 / 下载 / 图片 / 音乐 / 视频六个标准文件夹（**默认只开桌面与下载**） |
   | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 在内置菜单里合并系统菜单项（开关，默认关，见第 109 条）/ 系统右键菜单项逐项开关（动态清单） |
 
@@ -1473,6 +1526,73 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     * 没有交互桌面时怎么验：设置里把开关打开，用 `--preload` 跑一遍（预热路径不显示窗口、不要鼠标），看
       `exdir.log` 里的 `系统右键菜单：读出菜单项（… 含子菜单共 N 项）` 与 `预热完成`（N 明显大于顶级项数就
       说明子菜单真的被填上了）。
+
+110. **系统菜单项的图标（`MENUITEMINFO.hbmpItem`）几个约束**（2026-10）：
+    * **必须在读取菜单项那一拍就把像素抄出来**：位图挂在外壳的 HMENU 上，HMENU 一销毁（快照被 LRU 淘汰时）就
+      作废，而这份快照是要留着执行 `InvokeCommand` 的 —— 延后到渲染时再 `GetDIBits` 只能是随机失败。抄出来的
+      是 16×16 32bpp（100% 缩放；与 `SM_CXSMICON` 同规）的预乘 alpha BGRA，与列表图标走同一套 `IconBitmap`。
+    * **不是所有项都有**：Windows 10 上只有「打开」（就是文件类型图标，不是通用图标）和第三方扩展 / `发送到` 的
+      项带位图；`cut` / `copy` / `delete` / `properties` / `link` / `openas` 是空的（Explorer 10 自己的菜单也
+      不画图标）。Windows 11 的旧式菜单给得多，同一段代码不用改。`hbmpItem == HBMMENU_CALLBACK(-1)`（宿主自己画）
+      与 `HBMMENU_*` 那套固定小整数（1..15）不能当位图句柄用 → 拿不到就那一项不带图标，不要报错、也不要乱解引用。
+      ❗**不能用“负数 = 特殊值”当判据**：GDI 句柄是 32 位的，高位为 1 的那种（如 `0xFFFFFFFFFA050297`）在 64 位下
+      就是负数，但它是**真句柄** —— 本机的 PowerRename / File Locksmith / `发送到` 子项全是这种。判错会静静丢掉
+      一半图标（实测：文件上下文从 17 个掉到 7 个），而且日志里只多出几句“外壳没给位图”。
+    * **`BitmapIcon` 默认单色**（`ShowAsMonochrome=true` 会拿位图当蒙版刷成单色）→ 彩色图标要用 `ImageIcon`。
+      渲染时勾选优先于图标（`CheckIcon()`）；`MenuFlyoutSubItem` 也支持 `Icon`（`7-Zip` 这类子菜单在外壳那边
+      就带图标）。
+    * 回归：`test-context-menu.ps1` 用例 6 断言日志里的 `系统右键菜单：图标抄到 N 个`（N>0）与
+      `内置右键菜单：文件 上下文 … 项（含系统菜单项 … 项）`；图标长什么样、菜单里看着对不对只能靠截图肉眼比对
+      （真鼠标右键那条路需要交互桌面），没有桌面时退到 `--preload` + 日志。
+
+111. **日期型版本号（`0.0.20261001`）不能直接当 AssemblyVersion / FileVersion**（2026-10）：
+    Windows 版本资源里这两者每段只有 **16 位（≤ 65534）**，`20261001` 直接编译报错 ——
+    `CS7034`（error，AssemblyVersion）+ `CS7035`（warning，FileVersion），
+    而 `<Version>` 会被 SDK 拿来生成这两个属性，所以**写 `<Version>` 就等于写它们**。
+    * 正确做法：**只写 `<InformationalVersion>0.0.20261001</InformationalVersion>`** ——
+      它是个自由字符串，没有位数限制；`AssemblyVersion` / `FileVersion` 保持 SDK 默认的 `1.0.0.0`（不参与任何比较）。
+    * 读回：`Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()`
+      （`Helpers/AppVersion`）；**SDK 会在后面追加 `+<git 提交>`**（`IncludeSourceRevisionInInformationalVersion`），
+      比较 / 显示前要把 `+` 之后切掉。工具脚本侧用
+      `[System.Diagnostics.FileVersionInfo]::GetVersionInfo(exe).ProductVersion`（= 同一个值）——
+      注意是 **ProductVersion 不是 FileVersion**（后者是那个没用的 `1.0.0.0`）。
+    * 比较版本不能直接用 `Version`：它对缺失的段按 -1 处理，会把 `0.0.20261001` 判成小于 `0.0.20261001.0` →
+      `AppVersion.IsNewer` 自己拆成固定四段比。
+    * **tag 与版本必须一致**，所以 `tools\release.ps1` 默认拿 `exdir.csproj` 的 `<InformationalVersion>`
+      当 tag（不传 `-Tag` 时），并在发布前再校验一次 exe 的 ProductVersion（不一致直接报错，
+      `-AllowVersionMismatch` 可强跳）。发新版本 = 只改 csproj 那一行并提交。
+
+112. **“退出后替换并重启”只能交给一个独立的脚本**（2026-10，在线更新的最后一拍）：
+    运行中的 `exdir.exe` 与已加载的 dll 是覆盖不了的（写入被拒），而 exdir 是常驻托盘的单窗口程序，
+    更新完又必须真的重启一次。→ `Helpers/UpdateApplier` 写一个 `apply-update.ps1`、启动它、自己退出，
+    脚本「等本进程消失 → `robocopy /E /IS` 覆盖安装目录 → 重启 exdir → 删掉自己」。几个细节：
+    * 用**系统自带的 Windows PowerShell 5.1**（`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`）
+      而不是用户可能没装的 `pwsh`；脚本文件写成**带 BOM 的 UTF-8**（PS 5.1 没 BOM 时按系统 ANSI 码页读，中文乱码），
+      启动时要 `-NoProfile -ExecutionPolicy Bypass`（系统策略 Restricted 时 `-File` 也会被拒）。
+    * `robocopy` 要带 **`/IS`**（“时间戳与大小都一样”的也覆盖）：zip 解出来的时间戳可能与安装目录里的完全一致，
+      默认行为会直接跳过那个文件；`/R:3 /W:1` 防一下杀软 / 索引器短暂占用。
+    * 退出码 `/E` 类成功是 0~7、**≥ 8 才是失败**，脚本里按这个判断“要不要把中转目录收掉”，
+      并且**无论成败都把 exdir 启起来**（半新半旧的目录总比“双击打不开”强，日志里能看出问题）。
+    * 日志写 `%LOCALAPPDATA%\exdir\update\apply.log`；用 `[System.IO.File]::AppendAllText` 而不是
+      `Add-Content -Encoding UTF8`（PS 5.1 每次追加都会再写一个 BOM 到文件中间）。
+    * 提权不做（第 21 条：提权起来的 exdir 连拖放都用不了），所以安装目录不可写时就不给自动替换。
+
+113. **WinUI 3 里 `[ObservableProperty]` 的“字段版”会报 `MVVMTK0045`**（2026-10 实测，改用属性版或手写属性）：
+    字段上的 `[ObservableProperty]` 会生成一个“跨 WinRT ABI 但缺 CsWinRT 编组代码”的属性，
+    裁剪 + AOT 场景下不安全（`The field … using [ObservableProperty] will generate code that is not AOT compatible
+    in WinRT scenarios … a partial property should be used instead`）。仓库里其它 ViewModel
+    （`SettingsViewModel` / `FolderTabViewModel` / `StatusBarViewModel` …）本来就是**手写属性 + `SetProperty`**，
+    新增 ViewModel 沿用同一套（`[RelayCommand]` 不受影响，可以继续用）。判别方式：`dotnet build -t:Rebuild`
+    （增量构建不会重跑分析器，看不到这类警告）。
+
+114. **UIA 里 ContentDialog 的弹出岛窗口是“嵌套”的**（2026-10 实测）：它确实是一个 `ControlType.Window`，
+    但它挂在主窗口下那个 `弹出窗口` 窗口里，**不是 `RootElement` 的直接子元素** →
+    `RootElement.FindAll(TreeScope.Children, …)` 找不到它（表现为“对话框明明弹出来了，脚本却看不到”）。
+    要么 `TreeScope.Descendants`（再按 `GetRuntimeId()` 去重，同一个岛窗口会同时出现在两处），
+    要么先找 `弹出窗口` 再往下找。它的 UIA 名字就是 `ContentDialog.Title`。
+    同时：**给 `TextBlock` 写了 `AutomationProperties.Name` 之后，它在 UIA 里的名字就不再是那段文本了** ——
+    要拿文本断言的 `TextBlock` 一律**不要**设 Name（容器才设，同状态栏那条约定）；
+    如果确实需要“稳定的名字”，就改成断言列表里存在某个按钮 / 控件（`ControlType` + Name）。
 
 ## 7. 非打包模式下的 API 限制
 

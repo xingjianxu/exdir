@@ -6,7 +6,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%USERPROFILE%\.config\exdir\config.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 11;
+    public const int CurrentSchemaVersion = 12;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -78,6 +78,14 @@ public sealed class AppSettings
     /// 见 <see cref="Exdir.Helpers.AutoStart" /> 与 AGENTS.md 第 4 节“开机自启 / 预热启动”。
     /// </summary>
     public bool StartWithWindows { get; set; }
+
+    /// <summary>
+    /// 启动后在后台检查一次在线更新（调用 GitHub Release，默认开）。
+    /// 发现新版本只在窗口顶部弹一条提示条，**不会自己下载或替换任何文件** ——
+    /// 真正的下载与替换都要用户点「立即更新」才发生（见 <see cref="Exdir.Services.IUpdateService" />）。
+    /// 「帮助 → 检查更新…」永远可以手动检查，与这个开关无关。
+    /// </summary>
+    public bool CheckUpdatesOnStartup { get; set; } = true;
 
     // ---------- 外观 ----------
 

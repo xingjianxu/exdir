@@ -116,8 +116,16 @@ if ($commit -ne '(非 git 工作区)') {
 }
 $files = @(Get-ChildItem $outDir -Recurse -File)
 $sizeMB = ($files | Measure-Object Length -Sum).Sum / 1MB
+
+# 应用版本号：唯一事实来源是 exdir.csproj 里的 <InformationalVersion>（见那里的注释），
+# 它编译进程序集的 InformationalVersion（exe 属性页里的“产品版本”）。SDK 会在后面追加
+# "+<git 提交>"，这里切掉。tools\release.ps1 会拿这个值校验“要发的 tag 与代码里的版本一致”。
+$appVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo(
+    (Join-Path $outDir 'exdir.exe')).ProductVersion -split '\+')[0]
+
 $info = @(
     "exdir Release 产物"
+    "版本     : $appVersion"
     "构建时间 : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     "构建配置 : $Configuration / $Platform / $RuntimeIdentifier / self-contained / PublishTrimmed=True"
     "AOT      : 未启用（WinUI 3 + NativeAOT 实测启动即崩，见 AGENTS.md 第 6 节）"

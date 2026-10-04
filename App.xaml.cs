@@ -49,6 +49,9 @@ public partial class App : Application
             // 远程位置：同样在启动时清一次本地中转目录（见 Helpers/RemoteCache）
             Services.GetRequiredService<IRemoteFileService>().CleanupTemp();
 
+            // 在线更新：清掉上次没下完 / 没装上留下的中转目录（只删一天前的，见 UpdateService）
+            Services.GetRequiredService<IUpdateService>().CleanupTemp();
+
             var window = Services.GetRequiredService<MainWindow>();
             MainWindow = window;
 
@@ -123,12 +126,18 @@ public partial class App : Application
         services.AddSingleton<IArchiveClipboardService, ArchiveClipboardService>();
         services.AddSingleton<IDialogService, DialogService>();
 
+        // 在线更新：问 GitHub 要最新 Release、下载校验、退出后替换重启（见 Services/UpdateService.cs）
+        services.AddSingleton<IUpdateService, UpdateService>();
+
         // 「基于 Everything 的快速搜索」：只读地查本机的 Everything 索引（随包分发的 Everything64.dll）
         services.AddSingleton<IEverythingSearchService, EverythingSearchService>();
 
         // ViewModel
         services.AddSingleton<MainViewModel>();
         services.AddSingleton<SidebarViewModel>();
+
+        // 在线更新的状态与命令：主窗口顶部提示条与 UpdateWindow 共用这一份
+        services.AddSingleton<UpdateViewModel>();
 
         // 视图
         services.AddSingleton<MainWindow>();

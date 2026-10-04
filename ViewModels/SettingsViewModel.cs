@@ -39,6 +39,7 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _showSidebar;
     private bool _dualPane;
     private bool _startWithWindows;
+    private bool _checkUpdatesOnStartup;
     private double _rowHeight;
     private string _compressionOutputDirectory;
     private bool _useBuiltInContextMenu;
@@ -103,6 +104,7 @@ public sealed class SettingsViewModel : ObservableObject
         _useBuiltInContextMenu = settings.UseBuiltInContextMenu;
         _builtInMenuIncludeShellItems = settings.BuiltInMenuIncludeShellItems;
         _startWithWindows = settings.StartWithWindows;
+        _checkUpdatesOnStartup = settings.CheckUpdatesOnStartup;
         _sidebarShowRemote = settings.SidebarShowRemote;
         _sidebarShowRecent = settings.SidebarShowRecent;
 
@@ -424,6 +426,17 @@ public sealed class SettingsViewModel : ObservableObject
     {
         get => _startWithWindows;
         set => SetAndNotify(ref _startWithWindows, value);
+    }
+
+    /// <summary>
+    /// 启动后在后台检查一次在线更新（GitHub Release）。
+    /// 发现新版本只在窗口顶部弹提示条，下载与替换都要用户点「立即更新」才做。
+    /// 实际连网在 <c>MainWindow</c>（它才拿得到窗口生命周期的时间点）。
+    /// </summary>
+    public bool CheckUpdatesOnStartup
+    {
+        get => _checkUpdatesOnStartup;
+        set => SetAndNotify(ref _checkUpdatesOnStartup, value);
     }
 
     // ------------------------------------------------------------------ 侧边栏

@@ -119,8 +119,13 @@
     双击 = 跳到所在目录并选中。靠随包分发的 Everything SDK 客户端 `native\x64\Everything64.dll`
     （要求本机装并运行 Everything）—— 见 AGENTS.md 第 4 节“Everything 快速搜索”，
     回归 `tools\test-search.ps1`（10 用例 47 断言）+ `tools\everything-smoke`。
+  - **在线更新（GitHub Release）**（2026-10，S37）：启动后在后台查一次最新 Release（设置里可关），
+    发现新版本只在窗口顶部弹一条提示条；「帮助 → 检查更新…」随时可手动查。点「立即更新」才下载发布包、
+    校验 SHA256，然后退出 exdir、由一个后台 PowerShell 脚本 robocopy 覆盖安装目录并重启。
+    版本号唯一来源 = `exdir.csproj` 的 `<InformationalVersion>`（Release tag = `v` + 它，release.ps1 会校验）。
+    见 AGENTS.md 第 4 节“在线更新”与第 6 节第 111 / 112 条，回归 `tools\test-update.ps1`（本机 mock feed）。
   - 工具脚本：`capture.ps1`（截图）、`inspect-ui.ps1`（UIA 控件树 / 点击）、`publish.ps1`（Release 产物）、`make-icon.ps1`。
-  - Release 产物：`dist\win-x64\exdir.exe`（自包含 + 裁剪，2026-10 含远程位置与 Everything 搜索后是 **196 文件 / 93 MB**，已验证可运行）。
+  - Release 产物：`dist\win-x64\exdir.exe`（自包含 + 裁剪，2026-10 含在线更新后是 **202 文件 / 94 MB**，已验证可运行）。
   - 已知技术债：见本文件第 5 节。
 
 ---
@@ -901,6 +906,41 @@
 
 - [ ] **S36 远程位置后续（按需）**：上传（拖进去 / 粘贴 / 新建目录 / 删除 / 重命名）、
   FTPS 隐式 TLS、known_hosts 校验、多窗口同时浏览同一个远程位置（目前每条连接串行）。
+
+---
+
+## Phase 11 — 在线更新（GitHub Release）
+
+一段一次做完的（用户直接提的需求：“从 github release 上检查最新版本，如果有新版本，用户可以选择自动更新”）。
+已确认的决策：更新方式 = **一键下载并自动替换、重启**（下载 → 校验 SHA256 → 退出 → 后台脚本覆盖 → 重启）；
+检查时机 = **启动时后台查一次 + 「帮助 → 检查更新…」手动查**（设置里可关启动时的那个）。
+
+- [x] **S37 在线更新：检查 / 下载校验 / 退出替换重启**（2026-10，新增 9 个文件 / 改 12 个 + 文档，~1500 行）
+  - 内容：
+    * **版本号落地**：`exdir.csproj` 只写 `<InformationalVersion>`（日期型 `0.0.<yyyyMMdd>`，原因见
+      AGENTS.md 第 111 条）；`Helpers/AppVersion.cs` 负责读取 / 规整 tag / 比较；`publish.ps1` 把它写进
+      `build-info.txt`，`release.ps1` 默认用它当 tag，并在发布前校验 tag 与 exe 的 ProductVersion 一致。
+    * **服务层**：`Models/UpdateInfo.cs`、`Services/IUpdateService.cs` + `UpdateService.cs`
+      （`CheckAsync` / `DownloadAsync` / `ApplyAndRestart` / `CleanupTemp`，GitHub 资产摘要比 SHA256，
+      自己用 `ZipArchive` 解压并防 zip-slip）、`Services/UpdateJsonContext.cs`（源生成 JSON，裁剪版必需）、
+      `Helpers/UpdateApplier.cs`（写 `apply-update.ps1`：等进程退出 → robocopy 覆盖 → 重启，用 Windows
+      PowerShell 5.1 + `-ExecutionPolicy Bypass`）。
+    * **界面**：主窗口顶部一条 `InfoBar`（新增一行，`MainWindow` 行 2）+「帮助 → 检查更新…」；
+      `ViewModels/UpdateViewModel.cs` + `Views/UpdateWindow` + `Views/UpdateView`（当前 / 最新版本、发行说明、
+      下载进度、取消、打开发布页、「重启并完成更新」）；`IShellService.OpenUrl`。
+    * **设置**：「启动 → 启动时自动检查更新」(`AppSettings.CheckUpdatesOnStartup`，默认开，结构版本 11→12)；
+      `EXDIR_UPDATE_FEED` / `EXDIR_UPDATE_VERSION` 两个环境变量供回归脚本用。
+    * **安全阀**：不是发布产物（缺 `build-info.txt`）/ 安装目录不可写 / 没有 PowerShell → 不给自动替换
+      （只给「打开发布页」）；不搞提权重启（第 21 条）。启动时那一查同样要求“是发布版目录”
+      （开发目录只可能手动查）——既免得打扰写代码的人，也免得提示条把布局顶下去影响按坐标点击的回归脚本。
+  - 验收：`tools\test-update.ps1`（8 用例 30 断言，全程 UIA，**在 `dist\win-x64` 那份裁剪过的自包含产物上跑**）
+    全绿：启动后的提示条 / 更新窗口 / 下载 / 点「重启并完成更新」后真的退出、robocopy 覆盖、自动重启
+    （安装目录里出现更新包里才有的标记文件、`apply.log` 里有 robocopy 与重启记录）/ 反面：版本相同不提示、
+    SHA256 不符则报错且不安装 / 关掉开关后启动不联网但手动仍可用 / 手动查无更新弹回执对话框。
+    新写的 `tools\update-test-server`（纯 node，无依赖）冒充 GitHub 的 latest release，
+    并把 `dist` 复制到临时目录当“安装目录”，所以动不到开发机上那份 exdir。
+    同时重跑了 `tools\test-settings.ps1`（新增开关的映射与断言，0 失败）。
+  - 未跑的部分：真实 GitHub 上的“旧版本 → 新版本”（本机已是最新，只在启动时验过“不比当前新”那条路）。
 
 ---
 

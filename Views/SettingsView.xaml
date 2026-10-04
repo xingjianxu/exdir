@@ -207,6 +207,17 @@
                             OffContent=""
                             OnContent="" />
                     </controls:SettingsCard>
+
+                    <!-- 在线更新：启动后延迟几秒在后台问一次 GitHub 的最新 Release，
+                         发现新版本只在窗口顶部弹一条提示条，下载与替换都要用户点「立即更新」才做；
+                         「帮助 → 检查更新…」永远可以手动检查，不受这个开关影响。 -->
+                    <controls:SettingsCard Description="启动后在后台向 GitHub 检查一次新版本；发现新版本只在窗口顶部提示，不会自己下载或替换任何文件（「帮助 → 检查更新…」可随时手动检查）" Header="启动时自动检查更新">
+                        <ToggleSwitch
+                            AutomationProperties.Name="启动时自动检查更新"
+                            IsOn="{x:Bind ViewModel.CheckUpdatesOnStartup, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
                 </StackPanel>
 
                 <!-- ============================ 侧边栏 ============================ -->

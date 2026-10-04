@@ -32,8 +32,11 @@ namespace Exdir;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    /// <summary>托盘驻留的单实例唤回、以及「配置 → 设置…」打开的设置窗口（同一时刻只开一个）。</summary>
+    /// <summary>「配置 → 设置…」打开的设置窗口（同一时刻只开一个）。</summary>
     private SettingsWindow? _settingsWindow;
+
+    /// <summary>「帮助 → 检查更新…」/ 提示条上的「立即更新」打开的更新窗口（同一时刻只开一个）。</summary>
+    private UpdateWindow? _updateWindow;
 
     /// <summary>卷（U 盘 / 光驱 / 网络盘）插拔通知。</summary>
     private readonly IDeviceChangeService _deviceChange;
@@ -173,6 +176,16 @@ public sealed partial class MainWindow : Window
         // 推到消息循环空闲时才做：首次布局已经好了，不能在启动路径上再卡几十~几百毫秒；
         // 设置里没开「在内置菜单里合并系统菜单项」时它什么都不做。
         _ = ViewModel.PreheatShellMenuAsync();
+
+        // 在线更新：启动后过几秒在后台问一次 GitHub（设置「启动 → 启动时自动检查更新」可以关）。
+        // 放在这里而不是 InitializeAsync 里：预热启动（--preload）不显示窗口，根本不需要提示；
+        // 而这几秒的延迟是为了别跟会话恢复 / 首屏图标抢消息循环。
+        // 开发目录（缺 build-info.txt）不自动查 —— 免得打扰写代码的人，也免得提示条把布局顶下去、
+        // 影响那些按坐标点击的回归脚本；「帮助 → 检查更新…」仍然可以手动查。
+        if (ViewModel.Settings.CheckUpdatesOnStartup && ViewModel.Update.CanCheckOnStartup)
+        {
+            _ = CheckUpdatesInBackgroundAsync();
+        }
     }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -431,6 +444,11 @@ public sealed partial class MainWindow : Window
             // 退出时把压缩包的临时文件收一收（中间 tar 直接删，解出来的副本只删一天前的）
             ViewModel.CleanupArchiveTemp();
 
+            // 设置 / 更新窗口是另外两个 Window：主窗口退出时要一起关（否则它们会留在消息循环里，
+            // 下面的 Application.Current.Exit() 也不保证把没关的窗口收干净）
+            _settingsWindow?.Close();
+            _updateWindow?.Close();
+
             // 窗口都要销毁了，卷插拔监听也一并摘掉
             _deviceChange.Detach();
 
@@ -685,6 +703,103 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    // ------------------------------------------------------------------ 在线更新
+
+    /// <summary>
+    /// 启动时的后台检查：延迟几秒（别跟会话恢复 / 图标预取抢消息循环），失败只记日志。
+    /// 发现新版本只把主窗口顶部那条提示条打开，不会自己下载任何东西。
+    /// </summary>
+    private async Task CheckUpdatesInBackgroundAsync()
+    {
+        try
+        {
+            await Task.Delay(4000);
+            await ViewModel.Update.CheckInBackgroundAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("启动时检查更新", ex);
+        }
+    }
+
+    /// <summary>「帮助 → 检查更新…」：手动查一次；发现新版本开更新窗口，否则给一个回执对话框。</summary>
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        var found = await ViewModel.Update.CheckAsync();
+
+        if (found)
+        {
+            ViewModel.Update.IsUpdateAvailable = false; // 提示条让位给更新窗口
+            OpenUpdateWindow();
+            return;
+        }
+
+        await ShowUpdateResultDialogAsync();
+    }
+
+    /// <summary>没有新版本（或检查失败）时的一句回执。</summary>
+    private async Task ShowUpdateResultDialogAsync()
+    {
+        var update = ViewModel.Update;
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            Title = update.HasError ? "检查更新失败" : "检查更新",
+            Content = new TextBlock
+            {
+                Text = update.HasError
+                    ? update.ErrorMessage
+                    : $"当前已是最新版本（{update.CurrentVersion}）。",
+                TextWrapping = TextWrapping.Wrap,
+            },
+            CloseButtonText = "确定",
+        };
+
+        await dialog.ShowAsync();
+    }
+
+    /// <summary>打开（已经开着就唤到最前）更新窗口。它拿的是主窗口那一份 UpdateViewModel。</summary>
+    private void OpenUpdateWindow()
+    {
+        if (_updateWindow is not null)
+        {
+            _updateWindow.Activate();
+            return;
+        }
+
+        try
+        {
+            var window = new UpdateWindow(ViewModel);
+            window.Closed += (_, _) => _updateWindow = null;
+            _updateWindow = window;
+            window.Activate();
+        }
+        catch (Exception ex)
+        {
+            _updateWindow = null;
+            Log.Exception("更新窗口", ex);
+        }
+    }
+
+    /// <summary>提示条上的「立即更新」。</summary>
+    private void UpdateBar_Install_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.Update.IsUpdateAvailable = false;
+        OpenUpdateWindow();
+    }
+
+    /// <summary>提示条上的「打开发布页」。</summary>
+    private void UpdateBar_ReleasePage_Click(object sender, RoutedEventArgs e)
+        => ViewModel.Update.OpenReleasePageCommand.Execute(null);
+
+    /// <summary>
+    /// 关掉提示条。必须把 ViewModel 里的状态也清掉：InfoBar 自己把 IsOpen 置 false 是本地值，
+    /// 绑定那边的“上次已知值”还是 true，下次检查到新版本时就不会再弹出来了（AGENTS.md 第 90 条）。
+    /// </summary>
+    private void UpdateBar_CloseButtonClick(InfoBar sender, object args)
+        => ViewModel.Update.IsUpdateAvailable = false;
+
     private async void About_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new ContentDialog
@@ -695,7 +810,7 @@ public sealed partial class MainWindow : Window
             {
                 Text = "exdir —— 一个紧凑型双窗格文件管理器\n\n"
                      + "技术栈：WinUI 3 + Windows App SDK（非打包部署）\n"
-                     + $"版本：{typeof(App).Assembly.GetName().Version}\n"
+                     + $"版本：{AppVersion.Current}\n"
                      + $"配置文件：{ViewModel.ConfigFilePath}",
                 TextWrapping = TextWrapping.Wrap,
             },

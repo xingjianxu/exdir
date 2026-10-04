@@ -8,6 +8,13 @@ public interface IShellService
     /// <summary>用系统默认程序打开文件或目录。</summary>
     void OpenWithDefaultApp(string path);
 
+    /// <summary>
+    /// 用系统默认浏览器打开一个网址（「检查更新」发现新版本时的「打开发布页」）。
+    /// 走 ShellExecute（<c>UseShellExecute = true</c>），非打包进程下比 WinRT 的
+    /// <c>Launcher.LaunchUriAsync</c> 可靠。返回 false 表示没打开（调用方应提示）。
+    /// </summary>
+    bool OpenUrl(string url);
+
     /// <summary>在资源管理器中定位并选中该项。</summary>
     void RevealInFileExplorer(string path);
 

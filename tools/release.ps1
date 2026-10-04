@@ -1,12 +1,12 @@
 # 把 dist\win-x64 打包并发到 GitHub Release 页面。
 #
 # 用法:
-#   pwsh -NoProfile -File tools\release.ps1                            # 版本号 v0.0.<yyyyMMdd>，先 publish 再上传
+#   pwsh -NoProfile -File tools\release.ps1                                # 版本号 = exdir.csproj 里的 <InformationalVersion>，先 publish 再上传
 #   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0
-#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -DryRun        # 只构建 + 打包 + 打印将要执行的 gh 命令
-#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -SkipPublish   # 用现有 dist（不重新构建）
-#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -Draft         # 建草稿，人工检查后再到网页上点发布
-#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -Clobber       # tag 已有 Release 时覆盖它的资产与说明
+#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -DryRun            # 只构建 + 打包 + 打印将要执行的 gh 命令
+#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -SkipPublish       # 用现有 dist（不重新构建）
+#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -Draft             # 建草稿，人工检查后再到网页上点发布
+#   pwsh -NoProfile -File tools\release.ps1 -Tag v1.2.0 -Clobber           # tag 已有 Release 时覆盖它的资产与说明
 #
 # 流程 = 校验（git 干净 + gh 已登录）→ tools\publish.ps1 → 打 zip → 生成 release 说明
 #        → gh release create（tag 由 gh 在远端创建、指向本次 HEAD）。
@@ -24,6 +24,7 @@ param(
     [string]$Tag,                 # 缺省 v0.0.<yyyyMMdd>
     [switch]$SkipPublish,         # 跳过 tools\publish.ps1，直接用现有 dist
     [switch]$AllowDirty,          # 允许工作区有未提交改动 / dist 不是当前 HEAD 构建的
+    [switch]$AllowVersionMismatch,# 允许 tag 与代码里的版本号（exdir.csproj 的 <InformationalVersion>）不一致
     [switch]$Draft,               # 建草稿
     [switch]$Prerelease,          # 标为预发布
     [switch]$Clobber,             # 远端已有该 tag 的 Release 时覆盖资产与说明
@@ -82,7 +83,15 @@ $head = ((Get-Native git @('rev-parse', 'HEAD')) -join '').Trim()
 $shortHead = ((Get-Native git @('rev-parse', '--short', 'HEAD')) -join '').Trim()
 if (-not $head) { throw '这不是一个 git 仓库（git rev-parse HEAD 失败）。' }
 
-if (-not $Tag) { $Tag = 'v0.0.' + (Get-Date -Format 'yyyyMMdd') }
+if (-not $Tag) {
+    # 默认 tag = 代码里的版本（exdir.csproj 的 <InformationalVersion>）：这样 tag 与
+    # 程序里显示的版本天然一致（否则下面那道校验会直接报错）。发新版本 = 先改那里的版本号并提交。
+    $csproj = (Get-Content (Join-Path $root 'exdir.csproj') -Raw)
+    $version = [regex]::Match($csproj, '<InformationalVersion>\s*([^<\s]+)\s*</InformationalVersion>').Groups[1].Value
+    if (-not $version) { throw 'exdir.csproj 里读不到 <InformationalVersion>：请用 -Tag 显式指定版本号。' }
+    $Tag = 'v' + $version
+    Write-Host "  未指定 -Tag：用 exdir.csproj 里的版本 $version"
+}
 if ($Tag -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') {
     throw "版本号 '$Tag' 不合法：只允许字母/数字/. _ -，且要字母或数字开头（也别带 /，它要进 zip 文件名）。"
 }
@@ -132,6 +141,22 @@ $builtCommit = [regex]::Match($buildInfo, '源码提交\s*:\s*(\S+)').Groups[1].
 # 构建时间形如 “构建时间 : 2026-09-30 21:35:31”，按第一个冒号切（时间本身还有冒号）
 $builtTime = [regex]::Match($buildInfo, '构建时间\s*:\s*(.+)').Groups[1].Value.Trim()
 if (-not $builtCommit) { throw 'build-info.txt 里读不到“源码提交”那一行。' }
+
+# 版本号必须与要发的 tag 一致：不一致的话，用户装上这个包后「检查更新」会一直把同一个版本当成新版本
+# （或反复提示有新版本）。唯一事实来源是 exdir.csproj 里的 <InformationalVersion>，
+# 它编译进 exe 的“产品版本”（SDK 会在后面追加 +<git 提交>，切掉）。
+$appVersion = ([System.Diagnostics.FileVersionInfo]::GetVersionInfo(
+    (Join-Path $distDir 'exdir.exe')).ProductVersion -split '\+')[0]
+$tagVersion = $Tag -replace '^[vV]', ''
+if ($appVersion -ne $tagVersion) {
+    if ($AllowVersionMismatch) {
+        Write-Host ("  警告：tag {0} 与代码里的版本 {1} 不一致（-AllowVersionMismatch）" -f $Tag, $appVersion)
+    } else {
+        throw ("要发的 tag 是 {0}，而代码里的版本是 {1}：先把 exdir.csproj 的 <InformationalVersion> 改成 {2} 并提交，再用 -Tag {0} 发布（或加 -AllowVersionMismatch 强制发布，不推荐）。" -f $Tag, $appVersion, $tagVersion)
+    }
+} else {
+    Write-Host "  版本号=$appVersion（与 tag 一致）"
+}
 if ($builtCommit -ne $shortHead -and -not $AllowDirty) {
     throw ("dist 是 {0} 构建的、不是当前 HEAD（{1}）：先跑 tools\publish.ps1，或用 -AllowDirty 强制发布。" -f $builtCommit, $shortHead)
 }
