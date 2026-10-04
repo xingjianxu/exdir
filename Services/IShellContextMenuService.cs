@@ -35,4 +35,31 @@ public interface IShellContextMenuService
     /// <param name="screenX">弹出位置 X（屏幕物理像素）。</param>
     /// <param name="screenY">弹出位置 Y（屏幕物理像素）。</param>
     void Show(IReadOnlyList<string> paths, bool isBackground, int screenX, int screenY);
+
+    /// <summary>
+    /// 只把这一批目标的菜单项**读出来**（不弹菜单），供 exdir 自己的 <c>MenuFlyout</c> 重画。
+    ///
+    /// 结果是进程内缓存的一份：键 = 作用域 + 选中项签名（所在目录 + 每项是不是目录 / 什么扩展名），
+    /// 因为外壳给的内容本来就跟着**这一次的选中项**走（<c>.zip</c> 才有「解压到」、仓库里才有 Git 那几项、
+    /// 目录背景与文件行不一样），一个“启动时定死的清单”拿去渲染别的选中项只会张冠李戴。
+    /// 同一目录里反复右键同一类东西不重复读；<see cref="Preheat" /> 会把常见上下文先读一遍。
+    ///
+    /// 用户关掉的项（<see cref="IsDisabled" />）已经滤掉，分隔符也修整过。
+    /// 拿不到窗口句柄 / 外壳拒绝时返回 null（调用方照旧只显示内置项）。
+    /// </summary>
+    ShellMenuSnapshot? GetMenuItems(IReadOnlyList<string> paths, bool isBackground);
+
+    /// <summary>
+    /// 按 <see cref="ShellMenuEntry.Offset" /> 执行某一项 —— 仍然交给外壳的 <c>InvokeCommand</c>，
+    /// exdir 自己不解命令。
+    /// </summary>
+    /// <param name="snapshot">渲染时用的那一份（会话/ HMENU 必须还活着，所以缓存不会在菜单开着时淘汰它）。</param>
+    bool InvokeMenuEntry(ShellMenuSnapshot snapshot, ShellMenuEntry entry, int screenX, int screenY);
+
+    /// <summary>
+    /// 预热：把常见上下文（%TEMP% 里的样本文件、配置目录本身 / 它的背景）先读一遍并缓存。
+    /// 单纯一次 <c>QueryContextMenu</c> 就要把第三方 shell 扩展 Load 进本进程（几十~几百毫秒），
+    /// 所以只应该在**预热启动**（<c>--preload</c>）这种不在用户等待路径上的时候调。
+    /// </summary>
+    void Preheat();
 }

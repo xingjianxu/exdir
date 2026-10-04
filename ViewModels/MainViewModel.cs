@@ -10,6 +10,7 @@ using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.Models;
 using Exdir.Services;
+using Microsoft.UI.Dispatching;
 
 namespace Exdir.ViewModels;
 
@@ -710,6 +711,53 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// 预热系统右键菜单的枚举：把第三方 shell 扩展先 Load 进本进程，并缓存三份常见上下文
+    /// （仅在设置里「在内置菜单里合并系统菜单项」打开时才有意义，见
+    /// <see cref="AppSettings.BuiltInMenuIncludeShellItems" />）。
+    ///
+    /// 一次 <c>QueryContextMenu</c> 是几十到几百毫秒的量级，**不能在用户等待路径上做**，
+    /// 所以挂在预热启动（<c>--preload</c>）与窗口首次显示之后：推到消息循环空闲（Low）时再跑，
+    /// 不让它挡着首屏。设置里中途打开这个开关时不做（那一刻现读会把设置窗口卡一下）。
+    /// </summary>
+    public Task PreheatShellMenuAsync()
+    {
+        if (!_settings.Current.BuiltInMenuIncludeShellItems)
+        {
+            return Task.CompletedTask;
+        }
+
+        var queue = DispatcherQueue.GetForCurrentThread();
+        if (queue is null)
+        {
+            PreheatShellMenu();
+            return Task.CompletedTask;
+        }
+
+        var done = new TaskCompletionSource();
+        queue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+        {
+            PreheatShellMenu();
+            done.TrySetResult();
+        });
+
+        return done.Task;
+    }
+
+    /// <summary>同步预热（已经在 UI 线程上、且不在用户等待路径上时调）。</summary>
+    public void PreheatShellMenu()
+    {
+        try
+        {
+            _contextMenu.Preheat();
+        }
+        catch (Exception ex)
+        {
+            // 外壳扩展千奇百怪：预热失败不影响任何功能（右键那一刻还会现读一遍）
+            Log.Exception("系统右键菜单：预热", ex);
+        }
+    }
+
+    /// <summary>
     /// 处理命令行请求（<c>exdir [path]</c>）：启动时带的路径、以及已在运行的实例转发过来的路径都走这里。
     ///
     /// 规则（与用户确认过）：
@@ -954,6 +1002,10 @@ public sealed partial class MainViewModel : ObservableObject
         // 所以这里只需写回设置，不需要通知任何界面。
         settings.UseBuiltInContextMenu = edited.UseBuiltInContextMenu;
 
+        // 内置菜单里要不要合并一份系统菜单项：视图也是每次右键现读的，所以这里只需写回设置
+        // （预热交给启动时的 PreheatShellMenuAsync —— 拨开关那一刻现读会把设置窗口卡一下，不值得）
+        settings.BuiltInMenuIncludeShellItems = edited.BuiltInMenuIncludeShellItems;
+
         // 清单本身也存回去（设置页里新枚举出来的项要留下，否则下次打开又得重新枚举），
         // 被关掉的只存 Key，弹出菜单前据此把项从 HMENU 里删掉。
         settings.ShellMenuKnownItems = edited.ShellMenuItems.Select(i => i.Item).ToList();
@@ -979,6 +1031,7 @@ public sealed partial class MainViewModel : ObservableObject
             + $"{edited.SidebarHomePictures}/{edited.SidebarHomeMusic}/{edited.SidebarHomeVideos} "
             + $"开机自启={edited.StartWithWindows} "
             + $"右键菜单={(edited.UseBuiltInContextMenu ? "内置" : "系统")} "
+            + $"内置菜单合并系统菜单项={settings.BuiltInMenuIncludeShellItems} "
             + $"系统菜单项={edited.ShellMenuItems.Count}（关闭 {settings.ShellMenuDisabledItems.Count}）");
     }
 

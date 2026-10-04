@@ -179,6 +179,17 @@ public sealed class AppSettings
     public bool UseBuiltInContextMenu { get; set; } = true;
 
     /// <summary>
+    /// 把系统右键菜单里的项（含 7-Zip / Git 这类第三方扩展）**平铺合并进内置菜单**：
+    /// 内置菜单的末尾接一个分隔符，后面是这一批选中项在外壳里的菜单项（按规范动词与内置项去重，
+    /// 子菜单（发送到 / 打开方式 / 新建……）原样保留下来）。
+    ///
+    /// 默认关（false）：读一遍系统菜单要把第三方 shell 扩展 Load 进本进程，弹出会明显变慢
+    /// （与直接弹系统菜单同一个量级）。开启后按“作用域 + 选中项签名”缓存，同一目录反复右键不再重读，
+    /// 详见 AGENTS.md 第 4 节“内置菜单里合并系统菜单项”。
+    /// </summary>
+    public bool BuiltInMenuIncludeShellItems { get; set; }
+
+    /// <summary>
     /// 已经在设置里见过、可以逐项开关的系统右键菜单项。
     /// 用户在设置页里看到的就是这份清单（再并上打开设置页时用样本目标现枚举出来的那些）。
     /// </summary>

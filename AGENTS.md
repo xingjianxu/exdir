@@ -76,13 +76,13 @@ pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-C
 
 | 脚本 | 覆盖 | 桌面 |
 | --- | --- | --- |
-| `test-settings.ps1`（10 用例） | 分类齐全 / 每页只显示本分类的项 / 初值一致 / 拨一下立即落盘并生效 / 跨分类与关窗重开读回 / 只开一个窗口 / 「右键菜单」页系统菜单项默认全开且能逐项关掉（拨 `verb:properties` 落盘、重开仍关、拨回清空）/ 「行高」滑块（初值、跨分类读不到、拖完列表行真的变高）/ 侧边栏分组（含「最新访问」）与「主目录」文件夹开关当场作用到树 / 「标签页使用直角」当场落盘应用 / 「主题」三态下拉框与标题栏太阳月亮开关同步 / 「启动」页开关真的写删 `HKCU\...\Run` 的 `"<exe>" --preload` | 不需 |
+| `test-settings.ps1`（10 用例） | 分类齐全 / 每页只显示本分类的项 / 初值一致 / 拨一下立即落盘并生效 / 跨分类与关窗重开读回 / 只开一个窗口 / 「右键菜单」页系统菜单项默认全开且能逐项关掉（拨 `verb:properties` 落盘、重开仍关、拨回清空）、「在内置菜单里合并系统菜单项」默认关且拨一下立即落盘 / 「行高」滑块（初值、跨分类读不到、拖完列表行真的变高）/ 侧边栏分组（含「最新访问」）与「主目录」文件夹开关当场作用到树 / 「标签页使用直角」当场落盘应用 / 「主题」三态下拉框与标题栏太阳月亮开关同步 / 「启动」页开关真的写删 `HKCU\...\Run` 的 `"<exe>" --preload` | 不需 |
 | `test-status-bar.ps1`（16 断言） | 只有一条 / 一行高 / 贴底 / 项数 / 选中摘要 + 合计大小 / 磁盘可用空间 / 跟随活动窗格。**用例 4 拿 `%TEMP%` 数量比对状态栏“N 项”，偶发差 1 项就 FAIL，属脚本时序问题，重跑即可** | 需 |
 | `test-recent.ps1`（8 用例） | 侧边栏「最新访问」只有一个入口（排最上面、没有平铺的子项、不带展开箭头）/ 点它**新开**一个专用标签页（原标签页还在、再点一次不重复开）/ 列表 = 最近访问过的**目录与文件**，按访问时间倒序（即使“文件夹排在文件前面”开着也不重排）/ 已不存在的路径不显示但记录还留着 / 目录行的箭头点一下会就地展开、文件行点了没反应 / 会话恢复期间的导航不记录 / 导航一次记到最前（`IsDirectory=true`）/ 旧格式（只有 `Folders`）自动迁移成 `Entries` 且顺序不变 / 上限 50 条挤掉最旧的 / 关掉 `SidebarShowRecent` 后入口不显示 / 打开文件也会记进列表（真桌面，否则 SKIP）/ 右键「清空最新访问」（真鼠标，无交互桌面时 SKIP）。用独立 `XDG_CONFIG_HOME` / `XDG_DATA_HOME`，不动用户的 config.json 与 recents.json | 用例 7/8 需 |
 | `test-shell-icons.ps1`（13 断言） | 每行都有图标 / 不同程序不同 / `.lnk` 带小箭头 / 同扩展名只提取一次 / 滚动后仍有图标 | 需 |
 | `measure-row-align.ps1` | 图标与文字是否垂直居中（截图 + UIA 量墨迹中心）。判断“图标该不该再微调”用它，别靠肉眼 | 需 |
 | `test-pin-drag.ps1`（6 用例） | 收藏夹子项与 config.json 一致 / 列表→固定目录 / 侧边栏→固定目录 / 拖拽排序 / 右键取消固定 / 拖到收藏夹。**shell 提权时自动用 explorer.exe 降权启动**（第 21 条） | 需 |
-| `test-context-menu.ps1`（5 用例） | 系统菜单（文件行 / 空白处各弹 `#32768`、菜单项记清单、关掉 `verb:properties` 后不再有「属性」）+ 内置菜单（按名字断言 `MenuItem`、`InvokePattern` 点「新建文件夹」验磁盘上真的建出目录）。系统菜单自绘、UIA 读不到项 → “弹没弹”看 `#32768` 窗口、“有哪些项”看 `exdir.log` | 需 |
+| `test-context-menu.ps1`（6 用例） | 系统菜单（文件行 / 空白处各弹 `#32768`、菜单项记清单、关掉 `verb:properties` 后不再有「属性」）+ 内置菜单（按名字断言 `MenuItem`、`InvokePattern` 点「新建文件夹」验磁盘上真的建出目录）+ 内置菜单合并系统菜单项（打开设置后出现外壳的「发送到」、`打开`/`复制`/`属性` 各只有一份、展开「发送到」子菜单真的多出项、启动预热日志）。系统菜单自绘、UIA 读不到项 → “弹没弹”看 `#32768` 窗口、“有哪些项”看 `exdir.log` | 需 |
 | `test-list-selection.ps1`（5 用例） | 单击行只选中它 / `Ctrl+A` 全选且状态栏同步 / 点空白处清空 / 行上的点击不算空白处 / 地址栏的 `Ctrl+A` 仍是文本框全选 | 需 |
 | `test-row-dblclick.ps1`（8 用例） | 6 个落点双击都进目录（行内边距 / 名称右侧空白 / 类型与大小列的空白…）/ 行首展开箭头只展开不进目录 / 列表下方空白处不导航 | 需 |
 | `test-column-resize.ps1`（8 用例） | 每个列边界都拖得动 / 列头与数据行仍对齐 / 双击复位 / 最右一列也拖得动 / 拖完落盘 / 列头排序仍可用 | 需 |
@@ -165,7 +165,7 @@ exdir/
 ├─ MainWindow.xaml(.cs)       外壳：TitleBar（菜单栏）/ 工具条 / 侧边栏 / 1~2 个窗格 + 托盘图标
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
 ├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / AppTheme / QuickCommand / CloudSyncState /
-│                             ShellMenuItem / IconBitmap / ArchivePath / RemoteLocation / RemotePath / RecentItems /
+│                             ShellMenuItem / ShellMenuEntry / IconBitmap / ArchivePath / RemoteLocation / RemotePath / RecentItems /
 │                             枚举（含 SettingsCategory / RemoteProtocol / RemoteAuthMethod）
 ├─ Services/                  接口 + 实现成对；Native/ 放 Win32 互操作
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态；远程 / 压缩包路径分派
@@ -428,8 +428,17 @@ exdir/
     `属性` 走 `IShellService.ShowProperties`（`Verb = "properties"`，不建 `IContextMenu`）；`新建文件夹` 由
     `CreateNewFolderAsync` 自建（重名依次 `(2)(3)…`）并选中；其余复用标签页命令与视图 `SelectAll`。风格在**每次右键
     时现读** `UseBuiltInContextMenu` → 改设置立即生效。
+  * **内置菜单里合并系统菜单项**（`AppSettings.BuiltInMenuIncludeShellItems`，**默认关**，2026-10）：打开后内置菜单
+    末尾接一个分隔符，后面平铺外壳给**这一批选中项**的菜单项（`发送到` / `7-Zip` / `新建` 这类子菜单原样保留），
+    **按规范动词与内置项去重**（行菜单：`open` / `cut` / `copy` / `paste` / `delete` / `properties` /
+    `copyaspath` 只留 exdir 自己那份；背景菜单只有 `paste` —— 背景里本来就没有「属性」，不能连外壳那份也一起去掉），
+    点击按偏移交回外壳执行（exdir 自己不解任何系统命令）。压缩包内 / 远程 / 「最新访问」这三个只读
+    上下文不给（它们本来就没有真实路径）。
+    读一次要把第三方 shell 扩展 Load 进本进程（与弹系统菜单同量级），所以按「作用域 + 所在目录 + 每项是目录还是
+    什么扩展名」在进程内缓存（LRU 24 份，`Services/ShellMenuSnapshot` 持有 HMENU 与 `IContextMenu` 会话，
+    执行靠它）；`Preheat()` 挂在 `--preload` 与窗口首次显示之后的 Low 优先级任务里。**四个硬约束见第 109 条。**
   * **系统菜单**（关掉开关才用）：内容全来自 `IContextMenu`，第三方项（7-Zip / Git / VS Code / WPS）与“发送到 /
-    打开方式”子菜单都在，默认全开、可在同一页逐项关掉（只对系统菜单生效）。
+    打开方式”子菜单都在，默认全开、可在同一页逐项关掉（开了上面那个开关时对内置菜单里合并进来的那份也生效）。
   * 实现：`ShellContextMenuService` + `Native/ShellContextMenuInterop`。选中项走 `IShellFolder.GetUIObjectOf`，目录
     背景走**目录自己**的 `IShellFolder.CreateViewObject`（不是它所在目录的），再 `QueryContextMenu` 填 HMENU →
     `TrackPopupMenuEx(TPM_RETURNCMD)` → `InvokeCommand(偏移 = id − idCmdFirst)`（exdir 自己不实现任何命令）。弹出期间
@@ -807,7 +816,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
   | 启动 | 开机时自动启动 exdir（登录后在后台预热，不显示主窗口） |
   | 侧边栏 | 显示「最新访问」/「主目录」/「收藏夹」/「云存储」/「此电脑」/「远程」六个分组（默认全开）；「主目录」里显示桌面 / 文档 / 下载 / 图片 / 音乐 / 视频六个标准文件夹（**默认只开桌面与下载**） |
-  | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 系统右键菜单项逐项开关（动态清单） |
+  | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 在内置菜单里合并系统菜单项（开关，默认关，见第 109 条）/ 系统右键菜单项逐项开关（动态清单） |
 
   * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`（顺序即导航顺序），绑到
     `NavigationView.MenuItemsSource`（`MenuItemTemplate` 的根必须是 `NavigationViewItem`）。切换分类**用
@@ -1436,6 +1445,34 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     要数总数就看**状态栏的「N 项」**（`StatusBarViewModel` 数的是 `FolderTabViewModel.ItemCount` = 整个集合），
     容器有 `AutomationProperties.Name="状态栏"`、里面的 `TextBlock` 名字就是文本（`tools\test-status-bar.ps1`
     与 `tools\test-recent.ps1` 用例 5 都是这个做法）。
+
+109. **把系统右键菜单项读出来自己画**（`AppSettings.BuiltInMenuIncludeShellItems`，2026-10）：内容拿得到，但有几个硬约束。
+    * **菜单内容跟着“这一次的选中项 + 所在目录”走**：`.zip` 才有「解压到」、仓库里才有 Git 那几项、目录背景的
+      「新建」与文件行完全是两套。所以**不能**“启动时读一份清单、之后一直拿它渲染” —— 除了会出现不该有的项，
+      更致命的是 `InvokeCommand` 的偏移**只在那一次建出来的 HMENU 上有意义**，复用到别的目录 = 命令作用到别的
+      文件 / 别的目录上。现在缓存键 =「作用域 + 所在目录 + 每个选中项是目录还是什么扩展名」，同一目录同类
+      选中项不重复读；`Preheat()` 读的是三份样本（`%TEMP%` 样本文件 / 配置目录 / 它的背景），它真正的价值是把
+      第三方 shell 扩展先 Load 进本进程（样本目录那个键几乎不会再被命中）。
+    * **懒填的子菜单要自己代发 `WM_INITMENUPOPUP`**：外壳与不少扩展（`打开方式`、`发送到` 里的部分项）是“即将
+      展开时才往里塞东西”的，真菜单靠 `TrackPopupMenu` 的跟踪循环发这条消息，自己画就没有那条循环了 →
+      读之前对每个弹出项调一次 `IContextMenu3.HandleMenuMsg2(WM_INITMENUPOPUP, 子菜单HMENU, MAKELONG(父内位置,0))`
+      （退回 `IContextMenu2.HandleMenuMsg`），`lParam` 低 16 位必须是**它在父菜单里的位置**。
+      **`MenuFlyoutSubItem` 在 WinUI 3 里没有“展开”事件**（只有 `Items`），所以只能一次全填好；好处是预填过的
+      子菜单反而没有 microsoft-ui-xaml#9371 那个悬停卡顿。实测（本机）：文件上下文 36 项 / 含子菜单 63 项、
+      文件夹 37 / 65、背景 10 / 21。
+    * **owner-draw 项的文本**在扩展自己的 `dwItemData`（指针）里，不能当字符串去解引用（会 AV）→ 既没文本也
+      没规范动词的项直接跳过并记一行日志（`MFT_OWNERDRAW` 记进 `ShellMenuEntry.IsOwnerDraw`）。本机上 `发送到`
+      的文本 `GetMenuString` 是给得出来的（清单里一直是 `text:发送到`），所以这条只是兜底。
+    * **去重只能靠规范动词，而且集合要分上下文**：外壳的 `open` / `cut` / `copy` / `paste` / `delete` / `properties` /
+      `copyaspath` 与行菜单内置项是同一件事，按动词丢外壳那份（`DetailsView.RowProvidedVerbs`）；而**背景菜单**里本来
+      没有「属性」，拿行菜单那份集合去套就会把外壳的「属性」也去掉（`BackgroundProvidedVerbs` 只含 `paste`）。
+      `text:` 开头的项（`发送到` / `打开方式` / `新建` / 7-Zip 的子菜单）判不了重，一律保留。另外：这条路
+      **不需要** `ShellMenuHost`（`SetWindowSubclass` 转发菜单消息那套是给 `TrackPopupMenu` 用的），改成直接调
+      `HandleMenuMsg2`；菜单关掉之前那份快照（HMENU + `IContextMenu`）必须活着，所以由缓存按 LRU `Dispose`，
+      视图只记一个引用。
+    * 没有交互桌面时怎么验：设置里把开关打开，用 `--preload` 跑一遍（预热路径不显示窗口、不要鼠标），看
+      `exdir.log` 里的 `系统右键菜单：读出菜单项（… 含子菜单共 N 项）` 与 `预热完成`（N 明显大于顶级项数就
+      说明子菜单真的被填上了）。
 
 ## 7. 非打包模式下的 API 限制
 

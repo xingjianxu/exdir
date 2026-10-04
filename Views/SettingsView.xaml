@@ -399,11 +399,21 @@
                             OnContent="" />
                     </controls:SettingsCard>
 
+                    <!-- 把系统菜单里的项平铺合并进内置菜单：内容完整（含 7-Zip / Git / 发送到），
+                         但读一遍要把第三方 shell 扩展 Load 进本进程，弹出会与系统菜单一样慢，所以默认关。 -->
+                    <controls:SettingsCard Description="在内置菜单末尾接上外壳当前的菜单项（含 7-Zip / Git / 发送到 / 重命名这类 exdir 自己没实现的），按动词去重；读一遍要把第三方扩展加载进本进程，弹出与系统菜单一样慢" Header="在内置菜单里合并系统菜单项">
+                        <ToggleSwitch
+                            AutomationProperties.Name="在内置菜单里合并系统菜单项"
+                            IsOn="{x:Bind ViewModel.BuiltInMenuIncludeShellItems, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
                     <TextBlock
                         Margin="4,0,4,8"
                         Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                         Style="{ThemeResource CaptionTextBlockStyle}"
-                        Text="下面列出系统右键菜单里的项（含第三方扩展），关掉的项不会再出现在系统菜单里；内置菜单不使用这份清单。"
+                        Text="下面列出系统右键菜单里的项（含第三方扩展），关掉的项不会出现在系统菜单里；开启上面那个「在内置菜单里合并系统菜单项」后，这份清单也会作用于内置菜单。"
                         TextWrapping="Wrap" />
                     <TextBlock
                         Margin="4,0,4,8"

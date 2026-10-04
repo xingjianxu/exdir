@@ -13,9 +13,10 @@ namespace Exdir.Services.Native;
 /// 再把这张 <c>HMENU</c> 交给 <c>TrackPopupMenu</c>；用户选中哪一项会以命令 id 的形式返回，
 /// 最后用 <c>IContextMenu::InvokeCommand</c> 把偏移（id − idCmdFirst）交给外壳执行。
 ///
-/// 第三条路（把菜单项读出来自己用 WinUI 重画）虽然好看，但拿不到 <c>WM_INITMENUPOPUP</c> 那类
-/// 运行时才填内容的子菜单、也没法让 owner-draw 项自己画自己，所以这里老老实实弹出真菜单：
-/// 第三方扩展（7-Zip / Git / 杀软）与“发送到”“打开方式”全都原样可用。
+/// 第三条路（把菜单项读出来自己用 WinUI 重画，见 <c>ShellContextMenuService.ReadTree</c>）也是可行的，
+/// 但有两个天然的限制：懒填的子菜单（`打开方式`）要自己代发 <c>WM_INITMENUPOPUP</c>，
+/// owner-draw 项的文本在扩展自己的 <c>dwItemData</c> 里、拿不到就只能跳过。
+/// 所以两种做法都留着：默认弹出真菜单（内容最完整），设置里打开“合并系统菜单项”时才走重画那条路。
 /// </summary>
 internal static class ShellContextMenuInterop
 {
@@ -30,6 +31,16 @@ internal static class ShellContextMenuInterop
     public const uint MiimId = 0x00000002;
     public const uint MiimSubMenu = 0x00000004;
     public const uint MiimFType = 0x00000100;
+    public const uint MiimState = 0x00000001;
+
+    /// <summary>MENUITEMINFO.fType 里的 owner-draw 位（外壳自己画文字与图标）。</summary>
+    public const uint MftOwnerDraw = 0x00000100;
+
+    // MENUITEMINFO.fState（渲染“自定义菜单”时要读出来：置灰 / 勾选 / 默认动词）
+    public const uint MfsGrayed = 0x00000001;
+    public const uint MfsDisabled = 0x00000002;
+    public const uint MfsChecked = 0x00000008;
+    public const uint MfsDefault = 0x00001000;
 
     /// <summary>GetCommandString 的“要规范动词（Unicode）”标志。</summary>
     public const uint GcsVerbW = 0x00000004;

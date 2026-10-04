@@ -168,6 +168,11 @@ public sealed partial class MainWindow : Window
         // 会话已恢复：从现在起可以处理命令行请求了（启动时就带了路径的那一次也在队列里等这一步）
         _initialized.TrySetResult();
         QueueActivation(CommandLine.Request);
+
+        // 预热系统右键菜单的枚举（把第三方 shell 扩展 Load 进本进程）。
+        // 推到消息循环空闲时才做：首次布局已经好了，不能在启动路径上再卡几十~几百毫秒；
+        // 设置里没开「在内置菜单里合并系统菜单项」时它什么都不做。
+        _ = ViewModel.PreheatShellMenuAsync();
     }
 
     private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -283,6 +288,10 @@ public sealed partial class MainWindow : Window
 
             var icons = await ViewModel.PreloadIconsAsync();
             var folder = ViewModel.ActivePane.ActiveTab?.CurrentPath ?? "(无)";
+
+            // 系统右键菜单的枚举（把第三方 shell 扩展 Load 进本进程）也放到预热里：
+            // 用户真正右键时就不用等那几十~几百毫秒了。设置里没开“合并系统菜单项”时它什么都不做。
+            await ViewModel.PreheatShellMenuAsync();
 
             // 命令行请求的等待者不必等窗口显示
             _initialized.TrySetResult();

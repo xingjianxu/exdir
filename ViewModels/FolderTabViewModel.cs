@@ -166,6 +166,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// </summary>
     public bool UseBuiltInContextMenu => _settings.Current.UseBuiltInContextMenu;
 
+    /// <summary>
+    /// 内置菜单里要不要合并一份“系统菜单项”（见 <see cref="AppSettings.BuiltInMenuIncludeShellItems" />）：
+    /// true = 内置菜单末尾接一个分隔符，后面是这一批选中项在外壳里的菜单项（按规范动词与内置项去重）。
+    /// 与上面那个一样，视图在**每次右键时现读**，设置里改完立即生效。
+    /// </summary>
+    public bool ShowShellItemsInBuiltInMenu => _settings.Current.BuiltInMenuIncludeShellItems;
+
     /// <summary>列表整体重建后需要恢复的选中项路径（视图在重建后读取）。</summary>
     public IReadOnlyList<string> PendingSelection => _pendingSelection;
 
@@ -2705,6 +2712,36 @@ public sealed partial class FolderTabViewModel : ObservableObject
         {
             // 外壳扩展千奇百怪，弹菜单失败不能把整个应用带走
             Log.Exception("系统右键菜单", ex);
+        }
+    }
+
+    /// <summary>
+    /// 读一份可以直接渲染的系统菜单项（含子菜单），供内置菜单合并用。
+    /// 读不到（没有窗口句柄 / 外壳拒绝）时返回 null，调用方只显示内置项，不影响菜单弹出来。
+    /// </summary>
+    public ShellMenuSnapshot? GetShellMenuItems(IReadOnlyList<string> paths, bool isBackground)
+    {
+        try
+        {
+            return _contextMenu.GetMenuItems(paths, isBackground);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("系统右键菜单：读取菜单项", ex);
+            return null;
+        }
+    }
+
+    /// <summary>内置菜单里点击合并进来的系统菜单项：按偏移交回外壳执行（exdir 自己不解命令）。</summary>
+    public void InvokeShellMenuEntry(ShellMenuSnapshot snapshot, ShellMenuEntry entry, int screenX, int screenY)
+    {
+        try
+        {
+            _contextMenu.InvokeMenuEntry(snapshot, entry, screenX, screenY);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("系统右键菜单：执行菜单项", ex);
         }
     }
 

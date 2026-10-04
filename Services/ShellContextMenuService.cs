@@ -137,6 +137,372 @@ public sealed class ShellContextMenuService : IShellContextMenuService
         }
     }
 
+    // ------------------------------------------------------------------ 读成菜单项树（供内置菜单合并）
+
+    /// <summary>
+    /// 缓存上限：键里带着目录，所以一个目录一份。满了按最近最少使用淘汰，
+    /// 淘汰时连它背后的 HMENU / <c>IContextMenu</c> 一起释放。
+    /// </summary>
+    private const int MaxCachedMenus = 24;
+
+    private readonly Dictionary<string, ShellMenuSnapshot> _cache = new(StringComparer.Ordinal);
+
+    public ShellMenuSnapshot? GetMenuItems(IReadOnlyList<string> paths, bool isBackground)
+    {
+        if (OwnerWindow == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        var signature = BuildSignature(paths, isBackground);
+        if (signature is null)
+        {
+            return null;
+        }
+
+        if (_cache.TryGetValue(signature, out var cached))
+        {
+            cached.LastUsedTicks = Environment.TickCount64;
+            Log.Write($"系统右键菜单：命中缓存（{cached.Scope} 上下文 {cached.Items.Count} 项）");
+            return cached;
+        }
+
+        var snapshot = BuildSnapshot(paths, isBackground, signature);
+        if (snapshot is null)
+        {
+            return null;
+        }
+
+        _cache[signature] = snapshot;
+        Evict();
+
+        Log.Write(
+            $"系统右键菜单：读出菜单项（{snapshot.Scope} 上下文 {snapshot.Items.Count} 项，"
+            + $"含子菜单共 {CountEntries(snapshot.Items)} 项，缓存 {_cache.Count} 份）");
+        return snapshot;
+    }
+
+    /// <summary>把项树里的所有项（含各级子菜单）数一遍 —— 日志里能看出子菜单是不是真的被填上了。</summary>
+    private static int CountEntries(IReadOnlyList<ShellMenuEntry> entries)
+    {
+        var total = 0;
+
+        foreach (var entry in entries)
+        {
+            if (entry.IsSeparator)
+            {
+                continue;
+            }
+
+            total += 1 + CountEntries(entry.Children);
+        }
+
+        return total;
+    }
+
+    public bool InvokeMenuEntry(ShellMenuSnapshot snapshot, ShellMenuEntry entry, int screenX, int screenY)
+    {
+        // 偏移只在**那一张 HMENU** 上有意义，所以快照连同背后的会话一起活在缓存里；
+        // 子菜单项本身没有命令，点它不算执行
+        if (snapshot.Session is not ContextMenuSession session || entry.IsSeparator || entry.Children.Count > 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            // 与弹真菜单那条路一样：先把本窗口置前，免得外壳命令弹出的对话框没有属主 / 抢不到焦点
+            SetForegroundWindow(OwnerWindow);
+            Invoke(session.MenuObject, entry.Offset, screenX, screenY);
+            snapshot.LastUsedTicks = Environment.TickCount64;
+            Log.Write($"内置右键菜单：执行系统菜单项「{entry.Text}」（偏移 {entry.Offset}，{snapshot.Scope} 上下文）");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("系统右键菜单：执行菜单项", ex);
+            return false;
+        }
+    }
+
+    public void Preheat()
+    {
+        if (OwnerWindow == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var started = Environment.TickCount64;
+        var warmed = 0;
+
+        var sampleFile = EnsureSampleFile();
+        var sampleFolder = _settings.DataDirectory;
+
+        try
+        {
+            Directory.CreateDirectory(sampleFolder);
+        }
+        catch (Exception)
+        {
+            // 配置目录建不出来就不预热文件夹那两份
+        }
+
+        // 预热本身不是为了“这几份以后能命中”（键里带着目录，样本目录很少再被右键），
+        // 而是把第三方 shell 扩展先 Load 进本进程 —— 用户第一次真右键时就不用等了
+        if (sampleFile is not null && GetMenuItems(new[] { sampleFile }, false) is not null)
+        {
+            warmed++;
+        }
+
+        if (Directory.Exists(sampleFolder))
+        {
+            if (GetMenuItems(new[] { sampleFolder }, false) is not null)
+            {
+                warmed++;
+            }
+
+            if (GetMenuItems(new[] { sampleFolder }, true) is not null)
+            {
+                warmed++;
+            }
+        }
+
+        Log.Write($"系统右键菜单：预热完成，用时 {Environment.TickCount64 - started} ms，读到 {warmed} 份，缓存 {_cache.Count} 份");
+    }
+
+    private ShellMenuSnapshot? BuildSnapshot(IReadOnlyList<string> paths, bool isBackground, string signature)
+    {
+        var session = Open(paths, isBackground, out var scope);
+        if (session is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var contextMenu = (IContextMenu)session.MenuObject;
+            var discovered = new List<ShellMenuItem>();
+            var items = ReadTree(session.Menu, contextMenu, scope, string.Empty, discovered);
+
+            TrimSeparators(items);
+
+            // 顺手把这次见到的项并进“清单”（设置页下次打开就能看到，不必再枚举一遍）
+            Remember(discovered);
+
+            return new ShellMenuSnapshot(signature, scope, items)
+            {
+                Session = session,
+                LastUsedTicks = Environment.TickCount64,
+            };
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("系统右键菜单：读取菜单项", ex);
+            session.Dispose();
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 把一张装好系统菜单项的 HMENU 读成项树（递归到子菜单）。
+    ///
+    /// 两个关键动作：
+    ///   * **替系统代发 <c>WM_INITMENUPOPUP</c>**（<see cref="InitializeSubMenu" />）：<c>打开方式</c> 这类
+    ///     子菜单是“即将展开时才填内容”的，真菜单靠 <c>TrackPopupMenu</c> 的跟踪循环发这条消息，
+    ///     我们自己画就只能自己发，否则子菜单里永远只有一个同名占位项；
+    ///   * **过滤**：用户在设置里关掉的项（<see cref="IsDisabled" />）连同整棵子菜单都不产出，
+    ///     owner-draw 且连文本都读不到的项也跳过（渲染出来只会是一行空白）。
+    /// </summary>
+    private List<ShellMenuEntry> ReadTree(
+        IntPtr menu,
+        IContextMenu contextMenu,
+        string scope,
+        string menuPath,
+        List<ShellMenuItem> discovered)
+    {
+        var entries = new List<ShellMenuEntry>();
+        var count = GetMenuItemCount(menu);
+
+        for (var index = 0; index < count; index++)
+        {
+            if (!TryGetItemInfo(menu, index, out var info))
+            {
+                continue;
+            }
+
+            if ((info.fType & MfSeparator) != 0)
+            {
+                entries.Add(new ShellMenuEntry { IsSeparator = true });
+                continue;
+            }
+
+            var text = CleanText(GetMenuText(menu, index));
+            var verb = GetVerb(contextMenu, info.wID);
+            var key = BuildKey(verb, menuPath, text);
+
+            var children = new List<ShellMenuEntry>();
+            if (info.hSubMenu != IntPtr.Zero)
+            {
+                // 顺序很重要：先代发 INITMENUPOPUP 让外壳把子菜单填上，再去读
+                InitializeSubMenu(contextMenu, info.hSubMenu, index);
+
+                var childPath = string.IsNullOrEmpty(text)
+                    ? menuPath
+                    : string.IsNullOrEmpty(menuPath) ? text : menuPath + " › " + text;
+
+                children = ReadTree(info.hSubMenu, contextMenu, scope, childPath, discovered);
+            }
+
+            if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(verb))
+            {
+                // owner-draw 项的文本在它自己的 dwItemData（指针）里，不敢按字符串去解引用；
+                // 既没文本也没动词就渲染不出东西来，记一行日志跳过
+                Log.Write(
+                    $"系统右键菜单：跳过一项读不到文本的菜单项（owner-draw={(info.fType & MftOwnerDraw) != 0}，子项 {children.Count} 个）");
+                continue;
+            }
+
+            var display = string.IsNullOrEmpty(text) ? verb! : text;
+
+            discovered.Add(new ShellMenuItem
+            {
+                Key = key,
+                Text = display,
+                MenuPath = menuPath,
+                Scopes = new List<string> { scope },
+            });
+
+            if (IsDisabled(key))
+            {
+                continue;
+            }
+
+            if (children.Count == 0 && info.hSubMenu != IntPtr.Zero)
+            {
+                // 子菜单是空的（扩展没填 / INITMENUPOPUP 没被理）—— 留一个点不出东西的子菜单只会让人困惑
+                continue;
+            }
+
+            var entry = new ShellMenuEntry
+            {
+                Key = key,
+                Text = display,
+                Verb = verb,
+                MenuPath = menuPath,
+                Offset = info.wID >= IdCmdFirst && info.wID <= IdCmdLast ? info.wID - IdCmdFirst : 0,
+                IsEnabled = (info.fState & (MfsDisabled | MfsGrayed)) == 0,
+                IsChecked = (info.fState & MfsChecked) != 0,
+                IsDefault = (info.fState & MfsDefault) != 0,
+                IsOwnerDraw = (info.fType & MftOwnerDraw) != 0,
+            };
+
+            entry.Children.AddRange(children);
+            entries.Add(entry);
+        }
+
+        return entries;
+    }
+
+    /// <summary>
+    /// 替系统把 <c>WM_INITMENUPOPUP</c> 交给 <c>IContextMenu2/3</c>。
+    ///
+    /// 外壳与不少扩展是懒填子菜单的（<c>打开方式</c> 最典型），它们要等这条消息才知道该往子菜单里塞什么。
+    /// 真菜单由 <c>TrackPopupMenu</c> 的跟踪循环发，我们不用它了，所以在这里自己发一次。
+    /// 代发只是“尽力”：少数扩展假定自己在真正的跟踪循环里，会拒或不理 —— 那就留个空子菜单（上面会跳过）。
+    /// </summary>
+    private static void InitializeSubMenu(IContextMenu contextMenu, IntPtr subMenu, int parentIndex)
+    {
+        var menu3 = contextMenu as IContextMenu3;
+        var menu2 = contextMenu as IContextMenu2;
+
+        if (menu3 is null && menu2 is null)
+        {
+            return;
+        }
+
+        // lParam 低 16 位 = 这个弹出项在**父菜单**里的位置，高 16 位 = 是不是窗口菜单（不是，所以 0）
+        var lParam = (IntPtr)(parentIndex & 0xFFFF);
+
+        try
+        {
+            if (menu3 is not null && menu3.HandleMenuMsg2(WmInitMenuPopup, subMenu, lParam, out _) >= 0)
+            {
+                return;
+            }
+
+            menu2?.HandleMenuMsg(WmInitMenuPopup, subMenu, lParam);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("系统右键菜单：初始化子菜单", ex);
+        }
+    }
+
+    /// <summary>去掉开头 / 结尾 / 连续重复的分隔符（用户关掉几项之后就会出现）。</summary>
+    private static void TrimSeparators(List<ShellMenuEntry> entries)
+    {
+        foreach (var entry in entries)
+        {
+            TrimSeparators(entry.Children);
+        }
+
+        for (var i = entries.Count - 1; i >= 0; i--)
+        {
+            if (!entries[i].IsSeparator)
+            {
+                continue;
+            }
+
+            if (i == 0 || i == entries.Count - 1 || entries[i - 1].IsSeparator)
+            {
+                entries.RemoveAt(i);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 缓存的键：**作用域 + 所在目录 + 每个选中项是目录还是什么扩展名**。
+    ///
+    /// 为什么不能省掉目录：菜单内容本来就跟着目录走（仓库里才有 Git 那几项、目录背景的「新建」、
+    /// 每个文件夹自己的自定义动词），而**执行时用的偏移只在那一张 HMENU 上有意义** ——
+    /// 复用了别的目录那一份，点了「在此处打开终端」就会开到别的目录去。
+    /// </summary>
+    private static string? BuildSignature(IReadOnlyList<string> paths, bool isBackground)
+    {
+        if (isBackground)
+        {
+            var directory = paths.FirstOrDefault(static p => !string.IsNullOrEmpty(p));
+            return directory is null ? null : "bg|" + directory.TrimEnd('\\');
+        }
+
+        var items = paths.Where(static p => !string.IsNullOrEmpty(p)).ToList();
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        // 与 Open() 保持一致：GetUIObjectOf 一次只针对一个文件夹，只认与第一项同目录的那些
+        var parent = Path.GetDirectoryName(items[0]) ?? string.Empty;
+        var parts = items
+            .Where(p => string.Equals(Path.GetDirectoryName(p), parent, StringComparison.OrdinalIgnoreCase))
+            .Select(static p => Directory.Exists(p) ? "d" : "f" + Path.GetExtension(p).ToLowerInvariant())
+            .OrderBy(static p => p, StringComparer.Ordinal)
+            .ToList();
+
+        return parts.Count == 0 ? null : "it|" + parent.TrimEnd('\\') + "|" + string.Join(',', parts);
+    }
+
+    /// <summary>超过上限就丢掉最久没用过的那几份（连同背后的 HMENU / IContextMenu 一起释放）。</summary>
+    private void Evict()
+    {
+        while (_cache.Count > MaxCachedMenus)
+        {
+            var oldest = _cache.Values.OrderBy(static s => s.LastUsedTicks).First();
+            _cache.Remove(oldest.Signature);
+            oldest.Dispose();
+        }
+    }
+
     // ------------------------------------------------------------------ 构建 / 枚举
 
     /// <summary>
@@ -505,7 +871,7 @@ public sealed class ShellContextMenuService : IShellContextMenuService
         info = new MENUITEMINFO
         {
             cbSize = (uint)Marshal.SizeOf<MENUITEMINFO>(),
-            fMask = MiimId | MiimSubMenu | MiimFType,
+            fMask = MiimId | MiimSubMenu | MiimFType | MiimState,
         };
 
         return GetMenuItemInfo(menu, (uint)index, true, ref info);

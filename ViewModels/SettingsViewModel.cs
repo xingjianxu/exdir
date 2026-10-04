@@ -42,6 +42,7 @@ public sealed class SettingsViewModel : ObservableObject
     private double _rowHeight;
     private string _compressionOutputDirectory;
     private bool _useBuiltInContextMenu;
+    private bool _builtInMenuIncludeShellItems;
     private int _themeIndex;
     private bool _sidebarShowHome;
     private bool _sidebarShowFavorites;
@@ -100,6 +101,7 @@ public sealed class SettingsViewModel : ObservableObject
         _sidebarHomeMusic = settings.SidebarHomeMusic;
         _sidebarHomeVideos = settings.SidebarHomeVideos;
         _useBuiltInContextMenu = settings.UseBuiltInContextMenu;
+        _builtInMenuIncludeShellItems = settings.BuiltInMenuIncludeShellItems;
         _startWithWindows = settings.StartWithWindows;
         _sidebarShowRemote = settings.SidebarShowRemote;
         _sidebarShowRecent = settings.SidebarShowRecent;
@@ -188,6 +190,16 @@ public sealed class SettingsViewModel : ObservableObject
     {
         get => _useBuiltInContextMenu;
         set => SetAndNotify(ref _useBuiltInContextMenu, value);
+    }
+
+    /// <summary>
+    /// 把系统菜单里的项（含第三方扩展）平铺合并进内置菜单。
+    /// 默认关：读一遍系统菜单要把第三方 shell 扩展 Load 进本进程，弹出会明显变慢。
+    /// </summary>
+    public bool BuiltInMenuIncludeShellItems
+    {
+        get => _builtInMenuIncludeShellItems;
+        set => SetAndNotify(ref _builtInMenuIncludeShellItems, value);
     }
 
     /// <summary>

@@ -136,6 +136,8 @@ $KeyMap = [ordered]@{
     '显示工具条'             = 'toolbar'
     '显示侧边栏'             = 'sidebar'
     '双窗格模式'             = 'dualPane'
+    # "右键菜单" 页（那页是动态清单，不进 $CategoryMap，所以单独在用例 5 里断言）
+    '在内置菜单里合并系统菜单项' = 'shellItems'
     '显示「最新访问」分组'   = 'sidebarRecent'
     '显示「主目录」分组'     = 'sidebarHome'
     '显示「收藏夹」分组'     = 'sidebarFavorites'
@@ -631,6 +633,8 @@ Set-Setting 'SidebarHomeVideos' $false
 # 右键菜单默认全部开启，且默认用内置菜单：不先归位的话，用例 5 的断言会被历史值干扰
 Set-Setting 'ShellMenuDisabledItems' ([string[]]@())
 Set-Setting 'UseBuiltInContextMenu' $true
+# 「内置菜单里合并系统菜单项」默认关（开它要在右键时现读一遍外壳菜单，弹出会变慢）
+Set-Setting 'BuiltInMenuIncludeShellItems' $false
 # 开机自启默认关：用例 10 要断言“初值 Off → 拨开写注册表”，历史值会让它不可控；
 # 顺手把注册表里的自启项也清掉，保证它确实是“拨开关”写出来的
 Set-Setting 'StartWithWindows' $false
@@ -778,6 +782,16 @@ if ($shellToggles.ContainsKey('使用内置的轻量右键菜单')) {
 Assert ($shellToggles.ContainsKey('打开')) '清单里有「打开」'
 Assert ($shellToggles.ContainsKey('属性')) '清单里有「属性」'
 Assert ((Get-ToggleState -Element $shellToggles['打开']) -eq 'On') '系统菜单项默认全部开启（「打开」= On）'
+
+# 「在内置菜单里合并系统菜单项」：默认关，拨一下就立即落盘（开关自己也是这张卡片）
+Assert ($shellToggles.ContainsKey('在内置菜单里合并系统菜单项')) '「右键菜单」页有「在内置菜单里合并系统菜单项」开关'
+if ($shellToggles.ContainsKey('在内置菜单里合并系统菜单项')) {
+    Assert ((Get-ToggleState -Element $shellToggles['在内置菜单里合并系统菜单项']) -eq 'Off') '默认不在内置菜单里合并系统菜单项（Off）'
+    Toggle-Element -Element $shellToggles['在内置菜单里合并系统菜单项']
+    Assert ((Get-Setting 'BuiltInMenuIncludeShellItems') -eq $true) '拨开后立即落盘（BuiltInMenuIncludeShellItems=true）'
+    Toggle-Element -Element $shellToggles['在内置菜单里合并系统菜单项']
+    Assert ((Get-Setting 'BuiltInMenuIncludeShellItems') -eq $false) '再拨回来又立即落盘（false）'
+}
 
 Toggle-Element -Element $shellToggles['属性']
 Start-Sleep -Seconds 1

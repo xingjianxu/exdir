@@ -17,6 +17,12 @@
 #   5. 空白处菜单里有「新建文件夹 / 全选 / 在此处打开终端」，用 UIA 的 InvokePattern 点「新建文件夹」
 #      → 磁盘上真的建出了目录（内置菜单的命令是 exdir 自己执行的，不是交回外壳）。
 #
+# 最后一个用例验的是「内置菜单里合并系统菜单项」（BuiltInMenuIncludeShellItems=true）：
+#   6. 打开这个开关后，内置菜单（仍是 WinUI MenuFlyout、进程里没有 #32768）里会出现外壳的项
+#      （「发送到」这种 exdir 自己没实现的），而「打开 / 复制 / 属性」不会重复（按规范动词去重）；
+#      展开「发送到」子菜单真的多出项来（子菜单是外壳“即将展开时才填”的，渲染前替它代发了
+#      WM_INITMENUPOPUP）；背景菜单里也合并了（日志）；启动预热日志里有「系统右键菜单：预热完成」。
+#
 # 为什么用 exdir.log 断言而不是 UIA：Windows 11 的外壳右键菜单是自绘的，
 # Win32 #32768 窗口里没有可供 UIA 读取的 MenuItem（整张菜单在 UIA 里就是一个 Pane），
 # 所以“菜单弹出来了”靠 EnumWindows 找 #32768，“有哪些项 / 关掉了哪些项”靠 exdir 自己的日志。
@@ -188,6 +194,21 @@ function Get-PopupMenus {
 
 # 内置（自建）右键菜单是 WinUI MenuFlyout，会进 UIA 树（和系统菜单不同）；
 # 但它不在主窗口的 UIA 子树里（见 AGENTS.md 第 6 节第 24 条），要从桌面往下找、并按进程过滤。
+function Get-VisibleMenuItems {
+    param($Session)
+    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
+    $cond = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::MenuItem)
+    $items = @()
+    foreach ($el in $desktop.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond)) {
+        if ($el.Current.ProcessId -ne $Session.Proc.Id) { continue }
+        if ($el.Current.IsOffscreen) { continue }
+        $items += $el
+    }
+    return $items
+}
+
 function Find-MenuItems {
     param($Session, [string]$Name)
     $desktop = [System.Windows.Automation.AutomationElement]::RootElement
@@ -352,6 +373,8 @@ try {
     Assert ((Find-MenuItems -Session $session -Name '复制路径').Count -ge 1) '内置菜单里有「复制路径」'
     Assert ((Find-MenuItems -Session $session -Name '属性').Count -ge 1) '内置菜单里有「属性」'
     Assert ((Find-MenuItems -Session $session -Name '新建文件夹').Count -eq 0) '文件行的菜单里没有背景命令「新建文件夹」'
+    # 默认**不**合并系统菜单项（那一步要把第三方 shell 扩展 Load 进本进程，弹出会变慢）
+    Assert ((Find-MenuItems -Session $session -Name '发送到').Count -eq 0) '默认不合并系统菜单项（没有外壳的「发送到」）'
     Assert (@(Get-LogTail | Where-Object { $_ -match '内置右键菜单：文件 上下文 \d+ 项' }).Count -ge 1) '日志记下了内置菜单的上下文与项数'
 
     Save-Shot -Session $session -Name 'context-menu-builtin-file'
@@ -382,6 +405,61 @@ try {
         Start-Sleep -Seconds 3
         Assert (Test-Path (Join-Path $testDir '新建文件夹')) '点「新建文件夹」后磁盘上真的建出了目录'
     }
+
+    Stop-Session -Session $session
+
+    # ============================================================== 用例 6：内置菜单里合并系统菜单项
+
+    Write-Host '--- 用例 6：打开「在内置菜单里合并系统菜单项」后，内置菜单里出现外壳的项 ---'
+    Set-Setting 'BuiltInMenuIncludeShellItems' $true
+
+    $session = Start-Session
+
+    # 预热：启动时就把常见上下文读一遍并缓存（把第三方扩展 Load 进本进程）；
+    # 它在消息循环空闲时才跑，所以等一会儿（它自己在日志里留一行）
+    $preheated = $false
+    for ($i = 0; $i -lt 20 -and -not $preheated; $i++) {
+        $preheated = @(Get-LogTail -Lines 200 | Where-Object { $_ -match '系统右键菜单：预热完成' }).Count -ge 1
+        if (-not $preheated) { Start-Sleep -Seconds 1 }
+    }
+    Assert $preheated '启动预热里读了系统菜单项（日志「系统右键菜单：预热完成」）'
+
+    $rows = Find-Rows -Session $session
+    $alpha = $rows | Where-Object { $_.Current.Name -like 'alpha*' } | Select-Object -First 1
+    Assert ($null -ne $alpha) '测试目录里的 alpha.txt 出现在列表里（合并系统菜单项）'
+
+    $rect = $alpha.Current.BoundingRectangle
+    Invoke-RightClick -Session $session -ScreenX ([int]($rect.X + $rect.Width / 3)) -ScreenY ([int]($rect.Y + $rect.Height / 2))
+
+    Assert ((Get-PopupMenus -Session $session).Count -eq 0) '合并系统菜单项后仍然是 WinUI 菜单（进程里没有 #32768）'
+    Assert ((Find-MenuItems -Session $session -Name '发送到').Count -ge 1) '内置菜单里有外壳的「发送到」（exdir 自己没这一项）'
+    Assert ((Find-MenuItems -Session $session -Name '打开').Count -eq 1) '「打开」不重复（按规范动词 verb:open 去掉了外壳那一份）'
+    Assert ((Find-MenuItems -Session $session -Name '复制').Count -eq 1) '「复制」不重复（verb:copy 去重）'
+    Assert ((Find-MenuItems -Session $session -Name '属性').Count -eq 1) '「属性」不重复（verb:properties 去重）'
+    Assert (@(Get-LogTail | Where-Object { $_ -match '内置右键菜单：文件 上下文 \d+ 项（含系统菜单项 \d+ 项）' }).Count -ge 1) '日志记下了合并进来的系统菜单项个数'
+
+    # 子菜单里的项是“即将展开时才填”的（外壳的 WM_INITMENUPOPUP）：我们渲染前替外壳代发了它，
+    # 所以展开「发送到」应该真的多出项来（空的子菜单在服务层就被丢掉了）
+    $sendTo = Find-MenuItems -Session $session -Name '发送到' | Select-Object -First 1
+    if ($null -ne $sendTo) {
+        $before = @(Get-VisibleMenuItems -Session $session).Count
+        try { $sendTo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() } catch { }
+        Start-Sleep -Seconds 2
+        $after = @(Get-VisibleMenuItems -Session $session).Count
+        Write-Host ("  「发送到」展开前 {0} 个菜单项，展开后 {1} 个" -f $before, $after)
+        Assert ($after -gt $before) '「发送到」子菜单展开后真的多出了项（不是空的占位子菜单）'
+    }
+
+    Save-Shot -Session $session -Name 'context-menu-builtin-shell-items'
+    Dismiss-Menu -Session $session
+
+    # 背景菜单也要合并且不去重掉外壳的「属性」（背景里本来没有 属性，不能拿行菜单那份动词集合来套）
+    $rowRect = $alpha.Current.BoundingRectangle
+    Invoke-RightClick -Session $session -ScreenX ([int]($rowRect.X + $rowRect.Width / 3)) -ScreenY ([int]($rowRect.Y + $rowRect.Height * 4))
+    Assert ((Find-MenuItems -Session $session -Name '全选').Count -ge 1) '合并后的背景菜单里仍有内置的「全选」'
+    Assert (@(Get-LogTail | Where-Object { $_ -match '内置右键菜单：背景 上下文 \d+ 项（含系统菜单项 \d+ 项）' }).Count -ge 1) '背景菜单也合并了系统菜单项（日志）'
+    Save-Shot -Session $session -Name 'context-menu-builtin-shell-items-background'
+    Dismiss-Menu -Session $session
 
     Stop-Session -Session $session
 

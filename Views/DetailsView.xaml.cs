@@ -12,8 +12,10 @@ using Exdir.Controls;
 using Exdir.Diagnostics;
 using Exdir.Helpers;
 using Exdir.Models;
+using Exdir.Services;
 using Exdir.ViewModels;
 using Microsoft.UI.Input;
+using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -1244,12 +1246,185 @@ public sealed partial class DetailsView : UserControl
             AddContextMenuItem(flyout, "在此处打开终端", viewModel.OpenTerminalCommand);
         }
 
+        // 合并一份系统菜单项（设置里打开才做）：平铺到末尾、按规范动词与内置项去重。
+        // 读一遍系统菜单要把第三方 shell 扩展 Load 进本进程，所以默认关（见 AppSettings）。
+        var shellItemCount = AppendShellMenuItems(flyout, viewModel, position, isBackground: !onRow);
+
         // 回归脚本的断言依据（内置菜单在 UIA 里读得到，不像系统菜单那样只能看 #32768）
-        Log.Write($"内置右键菜单：{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项");
+        Log.Write(
+            $"内置右键菜单：{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项"
+            + (shellItemCount > 0 ? $"（含系统菜单项 {shellItemCount} 项）" : string.Empty));
 
         // Position 是相对 DetailsRoot 的 DIP 坐标，ShowAt 自己会换算，所以这里不做 DPI 换算
         flyout.ShowAt(DetailsRoot, new FlyoutShowOptions { Position = position });
     }
+
+    /// <summary>
+    /// 把系统菜单项平铺合并进内置菜单的末尾（见 <see cref="AppSettings.BuiltInMenuIncludeShellItems" />）：
+    /// 先接一个分隔符，后面就是外壳给这一批选中项的菜单项（<c>发送到</c> / <c>7-Zip</c> 这类子菜单原样保留）。
+    ///
+    /// 为什么是“这一批选中项”：外壳给的内容本来就跟着**选中项与目录**走（<c>.zip</c> 才有「解压到」、
+    /// 仓库里才有 Git 那几项、目录背景的「新建」），而执行的偏移也只在那一次建出来的 HMENU 上有意义。
+    /// </summary>
+    /// <returns>真的加进去的系统菜单项个数（不含分隔符）。</returns>
+    private int AppendShellMenuItems(
+        MenuFlyout flyout,
+        FolderTabViewModel viewModel,
+        Point position,
+        bool isBackground)
+    {
+        if (!viewModel.ShowShellItemsInBuiltInMenu)
+        {
+            return 0;
+        }
+
+        var paths = isBackground
+            ? new[] { viewModel.CurrentPath }
+            : EntryList.SelectedItems.OfType<FileItemViewModel>().Select(static i => i.FullPath).ToArray();
+
+        if (paths.Length == 0 || (isBackground && string.IsNullOrEmpty(viewModel.CurrentPath)))
+        {
+            return 0;
+        }
+
+        var snapshot = viewModel.GetShellMenuItems(paths, isBackground);
+        if (snapshot is null)
+        {
+            return 0;
+        }
+
+        // 执行要用屏幕物理像素（ptInvoke），错一次的代价很小，所以在弹出前算一次就行
+        var screen = DpiHelper.ToScreenPoint(DetailsRoot, MainWindowHandle, position);
+
+        var pending = new List<MenuFlyoutItemBase>();
+
+        // 只去重“这次真的已经给过”的那些动词（行菜单与背景菜单给的东西不一样，见上面两个集合）
+        var provided = isBackground ? BackgroundProvidedVerbs : RowProvidedVerbs;
+
+        foreach (var entry in snapshot.Items)
+        {
+            // 内置项已经给过的动词不再重复一份（「打开」只留 exdir 自己那个）
+            if (entry.Verb is not null && provided.Contains(entry.Verb))
+            {
+                continue;
+            }
+
+            var item = BuildShellMenuItem(flyout, viewModel, snapshot, entry, screen);
+            if (item is not null)
+            {
+                pending.Add(item);
+            }
+        }
+
+        if (pending.Count == 0)
+        {
+            return 0;
+        }
+
+        flyout.Items.Add(new MenuFlyoutSeparator());
+
+        var added = 0;
+        foreach (var item in pending)
+        {
+            flyout.Items.Add(item);
+
+            if (item is not MenuFlyoutSeparator)
+            {
+                added++;
+            }
+        }
+
+        // 菜单关掉之前这份快照（连同它背后的 HMENU / IContextMenu）得留着：缓存自己管释放，
+        // 这里只记下“本次菜单拿着它”，释放时只清引用
+        _builtInShellMenu = snapshot;
+        flyout.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_builtInShellMenu, snapshot))
+            {
+                _builtInShellMenu = null;
+            }
+        };
+
+        return added;
+    }
+
+    /// <summary>
+    /// 把一个系统菜单项变成 WinUI 菜单项：子菜单递归展开，勾选 / 置灰 / 默认动词（加粗）照抄，
+    /// 点击交回外壳执行（exdir 自己不解任何系统命令）。
+    /// </summary>
+    private static MenuFlyoutItemBase? BuildShellMenuItem(
+        MenuFlyout flyout,
+        FolderTabViewModel viewModel,
+        ShellMenuSnapshot snapshot,
+        ShellMenuEntry entry,
+        Point screen)
+    {
+        if (entry.IsSeparator)
+        {
+            return new MenuFlyoutSeparator();
+        }
+
+        if (string.IsNullOrEmpty(entry.Text))
+        {
+            return null;
+        }
+
+        if (entry.Children.Count > 0)
+        {
+            var subMenu = new MenuFlyoutSubItem { Text = entry.Text, IsEnabled = entry.IsEnabled };
+
+            if (entry.IsChecked)
+            {
+                subMenu.Icon = CheckIcon();
+            }
+
+            foreach (var child in entry.Children)
+            {
+                var childItem = BuildShellMenuItem(flyout, viewModel, snapshot, child, screen);
+                if (childItem is not null)
+                {
+                    subMenu.Items.Add(childItem);
+                }
+            }
+
+            // 一个子项都放不进去的空子菜单不如不显示
+            return subMenu.Items.Count == 0 ? null : subMenu;
+        }
+
+        var item = new MenuFlyoutItem { Text = entry.Text, IsEnabled = entry.IsEnabled };
+
+        if (entry.IsChecked)
+        {
+            item.Icon = CheckIcon();
+        }
+
+        if (entry.IsDefault)
+        {
+            // 外壳把默认动词（双击 / 回车执行的那个）标了出来，照抄它的加粗
+            item.FontWeight = FontWeights.SemiBold;
+        }
+
+        item.Click += (_, _) =>
+        {
+            // 先把菜单收掉：外壳命令可能弹自己的模态对话框，菜单还挂着会抢焦点。
+            // Hide 本身可能因为“框架已经关过了”而失败，不能让它挡住下面这行执行命令。
+            try
+            {
+                flyout.Hide();
+            }
+            catch (Exception)
+            {
+                // 忽略：菜单已经关掉了
+            }
+
+            viewModel.InvokeShellMenuEntry(snapshot, entry, (int)screen.X, (int)screen.Y);
+        };
+
+        return item;
+    }
+
+    /// <summary>系统菜单里被勾上的项（「查看 → 大图标」这类）前面画一个勾。</summary>
+    private static FontIcon CheckIcon() => new() { Glyph = "\uE73E", FontSize = 12 };
 
     private static void AddContextMenuItem(
         MenuFlyout flyout,
@@ -1541,6 +1716,38 @@ public sealed partial class DetailsView : UserControl
     private const long DuplicateContextMenuGuardMs = 400;
 
     private long _lastContextMenuTicks;
+
+    /// <summary>
+    /// 行菜单自己已经提供的命令对应的**规范动词**：把系统菜单项平铺合并进内置菜单时按它去重
+    /// —— 外壳的「打开 / 剪切 / 复制 / 粘贴 / 删除 / 属性 / 复制文件地址」与内置项是同一件事，只留内置的。
+    /// 内置没有实现的功能（重命名 / 打印 / 以管理员身份运行 / 发送到 / 新建 / 7-Zip……）不在这里，照常显示。
+    /// </summary>
+    private static readonly HashSet<string> RowProvidedVerbs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "open",
+        "cut",
+        "copy",
+        "paste",
+        "delete",
+        "properties",
+        "copyaspath",
+    };
+
+    /// <summary>
+    /// 目录背景菜单自己已经提供的命令只有「粘贴」。
+    /// **不能拿行菜单那份集合来套**：背景菜单里本来没有「属性」，去重后把外壳的「属性」也去掉，
+    /// 用户就再也点不到文件夹属性了。
+    /// </summary>
+    private static readonly HashSet<string> BackgroundProvidedVerbs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "paste",
+    };
+
+    /// <summary>
+    /// 本次内置菜单合并进来的那份系统菜单项。缓存负责释放它，这里只是“菜单还开着”的一个引用，
+    /// 免得菜单还挂在屏幕上的时候它背后的 HMENU 被淘汰掉（按偏移执行命令需要它活着）。
+    /// </summary>
+    private ShellMenuSnapshot? _builtInShellMenu;
 
     /// <summary>从命中的最深层元素往上找它所属的那一行；没找到（空白处 / 列头）返回 null。</summary>
     private FileItemViewModel? FindRowItem(object? source)
