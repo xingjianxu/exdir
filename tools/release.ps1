@@ -41,12 +41,36 @@ $distDir = Join-Path $root 'dist\win-x64'
 $artifacts = Join-Path $root '.artifacts'
 
 function Get-Native {
-    # 跑原生命令、按行返回 stdout（stderr 丢给 $null：失败与否只看退出码，
-    # 不然 2>&1 混进来的 ErrorRecord 会在后面当成数据行处理）；不抛异常
-    param([string]$Exe, [string[]]$Arguments)
-    $out = & $Exe @Arguments 2>$null
-    $script:lastExit = $LASTEXITCODE
-    return @($out | ForEach-Object { [string]$_ })
+    # 跑原生命令、按行返回 stdout（stderr 默认丢掉：失败与否只看退出码）；不抛异常，
+    # 退出码放 $script:lastExit；-MergeStdErr 时把 stderr 也接上（gh 的报错写在 stderr）。
+    #
+    # 为什么不用 `& git ... 2>$null` 直接捕获：PowerShell 捕获原生命令的输出时按
+    # [Console]::OutputEncoding 解码（本机控制台码页 936 = GBK），而 git / gh 写出来的是 UTF-8 字节
+    # → 提交信息里的中文会变成「鍦ㄧ嚎鏇存柊…」这种乱码，写进 Release 说明一眼就看得出
+    # （发 v0.0.20261004 时真踩过一次）。这里显式按 UTF-8 解码，不看控制台码页的脸色；
+    # 参数逐个塞进 ArgumentList，含空格的 --pretty=format:- %s 不会被拆开，也不用自己拼引号。
+    param([string]$Exe, [string[]]$Arguments, [switch]$MergeStdErr)
+
+    $info = [System.Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $Exe
+    $info.WorkingDirectory = $root
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $info.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
+
+    $process = [System.Diagnostics.Process]::Start($info)
+    # 两个流都异步读：先同步读完一个再读另一个，输出量大时可能互相堵住
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $process.WaitForExit()
+    $script:lastExit = $process.ExitCode
+    $text = if ($MergeStdErr) { $stdoutTask.Result + "`n" + $stderrTask.Result } else { $stdoutTask.Result }
+    $process.Dispose()
+
+    return @($text -split "`r?`n" | Where-Object { $_ -ne '' })
 }
 
 function Invoke-Gh {
@@ -58,9 +82,10 @@ function Invoke-Gh {
         return ''
     }
     Write-Host "  $display"
-    $out = & gh @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) { throw ("gh 失败（退出码 {0}）：{1}`n{2}" -f $LASTEXITCODE, $display, ($out -join "`n")) }
-    return (($out | Out-String).Trim())
+    # stdout + stderr 一起收，失败时把两段都拼进异常（走 Get-Native：UTF-8 解码，见那里）
+    $out = Get-Native -Exe 'gh' -Arguments $Arguments -MergeStdErr
+    if ($script:lastExit -ne 0) { throw ("gh 失败（退出码 {0}）：{1}`n{2}" -f $script:lastExit, $display, ($out -join "`n")) }
+    return (($out -join "`n").Trim())
 }
 
 # ---------------------------------------------------------------- 1/6 前置校验
@@ -96,8 +121,10 @@ if ($Tag -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') {
     throw "版本号 '$Tag' 不合法：只允许字母/数字/. _ -，且要字母或数字开头（也别带 /，它要进 zip 文件名）。"
 }
 
-# 远端 tag：指向别的提交就报错（否则资产会挂到旧提交的 Release 上、说明却写着新提交）
-$remoteTag = Get-Native git @('ls-remote', '--tags', 'origin', "refs/tags/$Tag")
+# 远端 tag：指向别的提交就报错（否则资产会挂到旧提交的 Release 上、说明却写着新提交）。
+# 外面那个 @() 不能省：函数返回的单元素数组会被 PowerShell 拆成字符串，那样 $remoteTag[0] 拿到的是
+# 第一个字符（曾经就因此把“远端 tag 指向别的提交”报成「（7，当前 HEAD 是 7d7d37b）」）。
+$remoteTag = @(Get-Native git @('ls-remote', '--tags', 'origin', "refs/tags/$Tag"))
 if ($script:lastExit -ne 0) {
     Write-Host '  警告：git ls-remote 失败，跳过「远端 tag 是否指向别的提交」这项检查'
 }
@@ -250,7 +277,9 @@ $notes = $notesTemplate.
 
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
 $notesPath = Join-Path $artifacts "release-notes-$Tag.md"
-Set-Content -Path $notesPath -Value $notes -Encoding utf8
+# 显式写不带 BOM 的 UTF-8（gh 按 UTF-8 读这个文件）：Set-Content -Encoding utf8 在
+# Windows PowerShell 5.1 下会带 BOM，那个 BOM 会变成 Release 正文开头的隐形字符。
+[System.IO.File]::WriteAllText($notesPath, $notes, [System.Text.UTF8Encoding]::new($false))
 Write-Host "  $notesPath"
 
 # ---------------------------------------------------------------- 6/6 上传

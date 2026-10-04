@@ -141,7 +141,8 @@ pwsh -NoProfile -File tools\publish.ps1     # 把最新 Release 产物镜像到 
   SHA256 + `build-info.txt`，存 `.artifacts\release-notes-<tag>.md`）→ `gh release create`。tag 由 gh 在远端创建、
   指向当前 HEAD，所以**工作区必须干净**（否则 build-info 的提交号对不上源码，默认报错；确实要发加 `-AllowDirty`）。
   `-DryRun` 只构建 + 打包 + 打印 gh 命令；`-Draft` / `-Prerelease`；tag 上已有 Release 要 `-Clobber` 才覆盖。
-  前置：`gh auth login` 过、只传一个 zip。
+  前置：`gh auth login` 过、只传一个 zip。说明文件按**不带 BOM 的 UTF-8**写、提交信息**显式按 UTF-8 解**（本机控制台
+  码页是 936，直接捕获 `git log` 会把中文变成乱码 —— 第 115 条）。
 
 **测试范围**：改完只跑与本次改动直接相关的交互式回归脚本（改托盘只跑 `test-tray.ps1`，改列宽只跑
 `test-column-resize.ps1`），**不要每次全跑**；只有用户明确要求“全部测试”时才全跑。非交互检查（`dotnet build`、单测、
@@ -1593,6 +1594,27 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     同时：**给 `TextBlock` 写了 `AutomationProperties.Name` 之后，它在 UIA 里的名字就不再是那段文本了** ——
     要拿文本断言的 `TextBlock` 一律**不要**设 Name（容器才设，同状态栏那条约定）；
     如果确实需要“稳定的名字”，就改成断言列表里存在某个按钮 / 控件（`ControlType` + Name）。
+
+115. **PowerShell 捕获原生命令（git / gh）的输出是按「控制台码页」解码的，而它们写出来的是 UTF-8 字节**（2026-10 实测）：
+    本机控制台码页是 936（GBK），所以 `$lines = & git log --pretty=format:'- %s'` 拿到的字符串里，中文已经是
+    「鍦ㄧ嚎鏇存柊…」这种乱码 —— 直接写进 Release 说明的「本次变更」就是一眼可见的错
+    （发 v0.0.20261004 时真踩过一次；事后 `gh release edit <tag> --notes-file <修好的说明>` 改回来即可，**不用重发资产**）。
+    * 最迷惑人的地方是**同一次输出里只有「来自原生命令」的那些字会乱**：脚本里的中文模板（here-string）全都正常，
+      页面上看着是“格式没问题、只有提交信息乱码”，很容易去怀疑 git 或 gh。
+    * **另一个症状**：GBK 是双字节编码，UTF-8 中文的末尾字节会把后面的换行“吃掉” → 捕获 10 行只拿到 7 个元素
+      （`@(git log …).Count` 与 `git log` 打印的行数对不上），按行处理的逻辑就会悄悄串行。
+    * 修法（`tools\release.ps1` 的 `Get-Native` 就是这么写的）：别用 `& $exe @args` 直接捕获，也别指望
+      `[Console]::OutputEncoding = UTF8`（它是进程级全局、会连带影响别的命令，无控制台 / 重定向受限时还可能设不上），
+      而是 `ProcessStartInfo` + `StandardOutputEncoding = [Text.Encoding]::UTF8`，参数**逐个塞进 `ArgumentList`**
+      （含空格的 `--pretty=format:- %s` 不会被拆开，也不用自己拼引号）。**新脚本只要会把非 ASCII 的原生命令输出
+      写进文件 / 界面，就得走这条路。**（`tools\publish.ps1` 只从 git 取短提交号，是 ASCII，不受影响。）
+    * 两条同源的坑：① 函数返回的**单元素数组会被 PowerShell 拆成标量**（`$tag = Get-Native …` 之后 `$tag[0]`
+      取到的是**第一个字符**，“远端 tag 指向别的提交”就报成「（7，当前 HEAD 是 7d7d37b）」）→ 要索引 / 数个数就写
+      `$tag = @(Get-Native …)`；② 写“要交给别的程序读”的文本文件用
+      `[IO.File]::WriteAllText($path, $text, [Text.UTF8Encoding]::new($false))` —— `Set-Content -Encoding utf8`
+      在 Windows PowerShell 5.1 下是**带 BOM** 的（BOM 就是 Release 正文开头那个隐形字符）。
+    * 反过来：`tools\*.ps1` 自己是**无 BOM 的 UTF-8**，只有 pwsh 7 按 UTF-8 读（PS 5.1 会当 ANSI，中文全乱）；
+      而**要交给 PS 5.1 读**的脚本（`Helpers/UpdateApplier` 生成的 `apply-update.ps1`）必须**带 BOM**（第 112 条）。
 
 ## 7. 非打包模式下的 API 限制
 
