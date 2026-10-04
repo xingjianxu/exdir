@@ -764,6 +764,13 @@ public sealed partial class MainWindow : Window
         ViewModel.EditActivePathCommand.Execute(null);
     }
 
+    /// <summary>Ctrl+F：把焦点交给活动标签页的搜索框（Everything 快速搜索）。</summary>
+    private void Accelerator_FocusSearch(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        ViewModel.FocusActiveSearchCommand.Execute(null);
+    }
+
     // ------------------------------------------------------------------ 窗口位置
 
     private void RestoreWindowPlacement()

@@ -308,12 +308,30 @@
                                     Visibility="{x:Bind HasIcon, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
                             </Grid>
 
-                            <TextBlock
-                                Grid.Column="3"
-                                Margin="0,0,8,0"
-                                VerticalAlignment="Center"
-                                Text="{x:Bind DisplayName}"
-                                TextTrimming="CharacterEllipsis" />
+                            <Grid Grid.Column="3" Margin="0,0,8,0" VerticalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock
+                                    Grid.Column="0"
+                                    VerticalAlignment="Center"
+                                    Text="{x:Bind DisplayName}"
+                                    TextTrimming="CharacterEllipsis" />
+                                <!-- 搜索结果：名称右边用暗色小字标出它在搜索根下的哪个子目录 ——
+                                     递归结果里光看文件名分不清哪个是哪个。普通目录里这一格不显示。
+                                     容器给名字、叶子 TextBlock 不给：UIA 里它的名字就是自己的文本，脚本能直接断言。 -->
+                                <TextBlock
+                                    Grid.Column="1"
+                                    MaxWidth="140"
+                                    Margin="8,0,0,0"
+                                    VerticalAlignment="Center"
+                                    FontSize="11"
+                                    Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                    Text="{x:Bind SearchPathText, Mode=OneWay}"
+                                    TextTrimming="CharacterEllipsis"
+                                    Visibility="{x:Bind HasSearchPath, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                            </Grid>
                         </Grid>
 
                         <TextBlock
@@ -356,14 +374,15 @@
             </ListView.ItemTemplate>
         </ListView>
 
-        <!-- ===================== 空目录提示 ===================== -->
+        <!-- ===================== 空目录提示 =====================
+             搜索模式下这句话是“没有匹配项”（见 FileItemViewModel.EmptyHint）。 -->
         <TextBlock
             Grid.Row="1"
             Margin="0,24,0,0"
             HorizontalAlignment="Center"
             VerticalAlignment="Top"
             Foreground="{ThemeResource TextFillColorTertiaryBrush}"
-            Text="此文件夹为空"
+            Text="{x:Bind ViewModel.EmptyHint, Mode=OneWay}"
             Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
 
         <!-- ===================== 加载指示 ===================== -->
@@ -381,11 +400,12 @@
              状态栏不在这个控件里：它是全窗口一条（文件列表区底部），见 Views/StatusBarView -->
         <StackPanel Grid.Row="2">
             <InfoBar
+                CloseButtonClick="ErrorInfoBar_CloseButtonClick"
                 IsClosable="True"
                 IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}"
                 Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                 Severity="Warning"
-                Title="无法打开" />
+                Title="{x:Bind ViewModel.ErrorTitle, Mode=OneWay}" />
 
             <!-- “正在解出压缩包内条目…”：拖拽开始前要先解出真实文件，几百 MB 的条目会等一会儿。
                  不可关闭、没有按钮（区别于下面的“做完了”提示）。 -->

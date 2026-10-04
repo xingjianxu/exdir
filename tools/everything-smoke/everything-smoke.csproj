@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    「基于 Everything 的快速搜索」的**服务级**冒烟测试（不需要交互桌面，见 AGENTS.md 第 2 节）。
+
+    直接 include exdir 的源码文件来测真实现（与 archive-smoke 同一套路）：
+      * 查询串拼接（EverythingQuery）—— 纯函数，任何时候都能断言；
+      * 原生加载 + 真实查询（EverythingInterop）—— 需要本机 Everything 在运行；
+      * 隐藏文件过滤 / 结果映射（EverythingSearchService）。
+
+    Everything64.dll 从 native\x64 拷到输出目录旁边（与 exdir 的发布形态一致）。
+
+    跑法与参数说明看 Program.cs 顶部的注释。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>everything-smoke</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\Models\ArchivePath.cs" />
+    <Compile Include="..\..\Models\CloudSyncState.cs" />
+    <Compile Include="..\..\Models\FileSystemEntry.cs" />
+    <Compile Include="..\..\Helpers\EverythingLocator.cs" />
+    <Compile Include="..\..\Helpers\EverythingQuery.cs" />
+    <Compile Include="..\..\Helpers\FileTypeHelper.cs" />
+    <Compile Include="..\..\Services\IArchiveService.cs" />
+    <Compile Include="..\..\Services\IEverythingSearchService.cs" />
+    <Compile Include="..\..\Services\EverythingSearchService.cs" />
+    <Compile Include="..\..\Services\Native\EverythingInterop.cs" />
+    <Compile Include="..\..\Diagnostics\Log.cs" />
+    <None Include="..\..\native\x64\Everything64.dll" Link="Everything64.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

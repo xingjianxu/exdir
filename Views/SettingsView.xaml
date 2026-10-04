@@ -223,6 +223,14 @@
                         Text="选择左侧文件夹树里显示哪几个分组（关掉只是不显示，不会丢掉已展开的目录与收藏）。"
                         TextWrapping="Wrap" />
 
+                    <controls:SettingsCard Description="最近导航过的目录（最多 10 条），排在侧边栏最上面" Header="显示「最新访问」分组">
+                        <ToggleSwitch
+                            AutomationProperties.Name="显示「最新访问」分组"
+                            IsOn="{x:Bind ViewModel.SidebarShowRecent, Mode=TwoWay}"
+                            OffContent=""
+                            OnContent="" />
+                    </controls:SettingsCard>
+
                     <controls:SettingsCard Description="用户主目录，以及桌面 / 文档 / 下载 / 图片等标准文件夹" Header="显示「主目录」分组">
                         <ToggleSwitch
                             AutomationProperties.Name="显示「主目录」分组"

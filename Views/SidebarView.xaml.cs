@@ -82,8 +82,11 @@ public sealed partial class SidebarView : UserControl
     {
         var nodes = args.Items.OfType<SidebarNodeViewModel>().ToList();
 
+        // 远程位置的路径不能拖（落点只接受真实的本地目录）；「最新访问」是个虚拟位置，
+        // 拖它没有意义（固定 / 收藏都只会被拒），不如根本不让它开始拖
         if (nodes.Any(static node => node.Kind == SidebarNodeKind.Remote
-                                     || RemotePath.LooksRemote(node.FullPath)))
+                                     || RemotePath.LooksRemote(node.FullPath)
+                                     || RecentView.IsRecentViewPath(node.FullPath)))
         {
             args.Cancel = true;
             return;
@@ -191,10 +194,12 @@ public sealed partial class SidebarView : UserControl
         }
     }
 
-    /// <summary>收藏项右键菜单：取消收藏（工具条被隐藏时这是唯一的移除入口）。</summary>
+    /// <summary>
+    /// 侧边栏的右键菜单：收藏项可「取消收藏」，「最新访问」节点上可「清空最新访问」。其它节点不弹菜单。
+    /// </summary>
     private void SidebarItem_ContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
-        if (NodeFromContainer(sender) is not { Kind: SidebarNodeKind.Favorite } favorite
+        if (NodeFromContainer(sender) is not { } node
             || ViewModel is not { } viewModel
             || sender is not FrameworkElement anchor)
         {
@@ -202,14 +207,28 @@ public sealed partial class SidebarView : UserControl
         }
 
         var flyout = new MenuFlyout();
-        var unpin = new MenuFlyoutItem
-        {
-            Text = "取消收藏",
-            Icon = new FontIcon { Glyph = "\uE77A" },
-        };
 
-        unpin.Click += (_, _) => viewModel.RequestUnpin(favorite.FullPath);
-        flyout.Items.Add(unpin);
+        switch (node.Kind)
+        {
+            case SidebarNodeKind.Favorite:
+            {
+                var unpin = new MenuFlyoutItem { Text = "取消收藏", Icon = new FontIcon { Glyph = "\uE77A" } };
+                unpin.Click += (_, _) => viewModel.RequestUnpin(node.FullPath);
+                flyout.Items.Add(unpin);
+                break;
+            }
+
+            case SidebarNodeKind.RecentGroup:
+            {
+                var clear = new MenuFlyoutItem { Text = "清空最新访问", Icon = new FontIcon { Glyph = "\uE74D" } };
+                clear.Click += (_, _) => viewModel.RequestRecentClear();
+                flyout.Items.Add(clear);
+                break;
+            }
+
+            default:
+                return;
+        }
 
         if (args.TryGetPosition(anchor, out var position))
         {

@@ -863,7 +863,8 @@ public sealed partial class DetailsView : UserControl
         // 当前目录在压缩包里 / 在远程位置上时不接受拖放：
         // 压缩包那种情况 CurrentPath 是虚拟路径，退回去当落点会经 NormalizeDirectoryPath 落到
         // **压缩包所在的目录**（见 AGENTS.md 第 6 节第 83 条）；远程位置则是根本不能写。
-        if (viewModel.IsInsideArchive || viewModel.IsRemote)
+        // 「最新访问」同理：当前路径是 <c>exdir://recent</c>，不是一个能写的目录。
+        if (viewModel.IsInsideArchive || viewModel.IsRemote || viewModel.IsRecentView)
         {
             return;
         }
@@ -1047,7 +1048,7 @@ public sealed partial class DetailsView : UserControl
             EntryList.SelectedItem = item;
         }
 
-        if (viewModel.UseBuiltInContextMenu || viewModel.IsInsideArchive || viewModel.IsRemote || item?.IsInArchive == true)
+        if (viewModel.UseBuiltInContextMenu || viewModel.IsInsideArchive || viewModel.IsRemote || viewModel.IsRecentView || item?.IsInArchive == true)
         {
             ShowBuiltInContextMenu(viewModel, item, position);
         }
@@ -1100,6 +1101,33 @@ public sealed partial class DetailsView : UserControl
         }
 
         var flyout = new MenuFlyout();
+
+        // 「最新访问」是虚拟视图：行是真实文件（能打开 / 复制 / 删除），但当前“目录”不是真目录，
+        // 所以背景菜单里的写操作（粘贴 / 新建文件夹 / 终端）根本没给，行上给看得懂的那几项。
+        // 键盘入口另有守卫（FolderTabViewModel.RefuseInRecentView）。
+        if (viewModel.IsRecentView)
+        {
+            if (onRow)
+            {
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+                AddContextMenuItem(flyout, "打开所在文件夹", viewModel.OpenContainingFolderCommand);
+                AddContextMenuItem(flyout, "在资源管理器中显示", viewModel.RevealInExplorerCommand);
+
+                flyout.Items.Add(new MenuFlyoutSeparator());
+                AddContextMenuItem(flyout, "复制", viewModel.CopySelectionCommand, "Ctrl+C");
+                AddContextMenuItem(flyout, "复制路径", viewModel.CopySelectionPathCommand);
+                AddContextMenuItem(flyout, "属性", viewModel.ShowPropertiesCommand);
+            }
+            else
+            {
+                AddContextMenuItem(flyout, "刷新", viewModel.RefreshCommand);
+                AddContextMenuAction(flyout, "全选", SelectAllRows);
+            }
+
+            Log.Write($"内置右键菜单：「最新访问」{(onRow ? "文件" : "背景")} 上下文 {flyout.Items.Count} 项");
+            flyout.ShowAt(DetailsRoot, new FlyoutShowOptions { Position = position });
+            return;
+        }
 
         // 远程位置（SFTP / FTP）也是**只读**的：留看得懂的（打开 / 下载到… / 复制到本地），
         // 写操作的入口（剪切 / 删除 / 粘贴 / 新建文件夹 / 压缩 / 属性 / 在资源管理器中显示）根本不给；
@@ -1161,7 +1189,17 @@ public sealed partial class DetailsView : UserControl
 
         if (onRow)
         {
-            AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+            // 搜索结果：双击是“打开所在文件夹并选中”，所以菜单里把这两件事都写清楚。
+            // 其余项（剪切 / 复制 / 删除 / 压缩 / 复制路径 / 属性）本来就是拿条目的完整路径干活，直接可用。
+            if (viewModel.IsSearchMode)
+            {
+                AddContextMenuItem(flyout, "打开所在文件夹", viewModel.OpenContainingFolderCommand);
+                AddContextMenuItem(flyout, "打开", viewModel.OpenWithDefaultAppCommand);
+            }
+            else
+            {
+                AddContextMenuItem(flyout, "打开", viewModel.OpenSelectionCommand);
+            }
 
             // 真实压缩包文件（可多选）多两个入口：交给系统的 7-Zip 打开 / 解压到「下载」文件夹。
             // 没装 7-Zip 时那一项留着但置灰、标题里写明原因 —— 直接不显示会让人以为功能没做。
@@ -1246,6 +1284,9 @@ public sealed partial class DetailsView : UserControl
 
     /// <summary>关掉“操作结果”提示条时同步清掉 VM 里的状态，下次解压才能再弹出来。</summary>
     private void StatusInfoBar_CloseButtonClick(InfoBar sender, object args) => ViewModel?.ClearStatus();
+
+    /// <summary>关掉错误 / 提示条时同样要清掉 VM 里的文案，否则下一次换了内容也弹不出来（见 AGENTS.md 第 90 条）。</summary>
+    private void ErrorInfoBar_CloseButtonClick(InfoBar sender, object args) => ViewModel?.ClearError();
 
     /// <summary>“操作结果”提示条上的「打开目录」：在资源管理器里打开这次解压到的目录。</summary>
     private void StatusInfoBar_OpenDirectory(object sender, RoutedEventArgs args) => ViewModel?.OpenStatusTarget();
@@ -1387,6 +1428,7 @@ public sealed partial class DetailsView : UserControl
         if (string.IsNullOrEmpty(viewModel.CurrentPath)
             || viewModel.IsInsideArchive
             || viewModel.IsRemote
+            || viewModel.IsRecentView
             || e.DataView.Contains(DragDropHelper.PinnedReorderFormat))
         {
             return false;

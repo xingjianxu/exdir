@@ -156,6 +156,20 @@
       <Link>LICENSE-7z.txt</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!--
+      Everything SDK 的 IPC 客户端（“基于 Everything 的快速搜索”）：
+      只有 91 KB，但必须与 exe 同目录 —— 它自己按模块名找不到时就退回 exe 目录（见 Helpers/EverythingLocator）。
+      与 7z.dll 一样是独立文件，不参与 .NET 裁剪；来源 / 许可 / 升级见 native/README.md 与
+      native/LICENSE-Everything-SDK.txt。
+    -->
+    <Content Include="native\x64\Everything64.dll" Condition="'$(Platform)' == 'x64'">
+      <Link>Everything64.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="native\LICENSE-Everything-SDK.txt">
+      <Link>LICENSE-Everything-SDK.txt</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

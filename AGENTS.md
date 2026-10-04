@@ -19,6 +19,10 @@
 
 界面语言：**简体中文硬编码**（不引入 .resw）。
 
+**快速搜索**：基于本机 Everything 索引的搜索（`Ctrl+F`，或直接点导航条右侧那个搜索框），
+**默认范围 = 当前目录及其子目录**，旁边一个「整机」开关放到全部索引；结果替换当前标签页的列表。
+见下面「Everything 快速搜索」一节。
+
 **尚未实现**（见 `plan.md`）：键盘导航其余部分（`Ctrl+Shift+A` 反选、回车打开、type-ahead；打开选中项可以用
 「文件 → 打开」菜单或双击）、重命名、重命名以外
 的新建、哈希；拖拽不能把**真实目录里的**文件拖到资源管理器（数据包里只有自定义格式与纯文本，没放 `StorageItems`；
@@ -54,6 +58,9 @@ dotnet run -c Debug --project tools\archive-smoke              # 压缩包服务
 node tools\remote-test-server\server.js                        # 远程位置回归用的本机 FTP + SFTP 测试服务器（见下两行）
 dotnet run -c Debug --project tools\remote-smoke               # 远程位置服务级冒烟（真实 FTP / SFTP；需先起上面那个服务器）
 pwsh -NoProfile -File tools\test-remote.ps1                    # 远程位置界面回归（UIA，不需交互桌面；自己起测试服务器）
+dotnet run -c Debug --project tools\everything-smoke [-- --root <已索引目录>]   # Everything 搜索的服务级冒烟（需本机装并运行 Everything）
+pwsh -NoProfile -File tools\test-search.ps1                    # Everything 搜索界面回归（UIA；测试目录没被索引时才临时改 Everything 配置并还原）
+pwsh -NoProfile -File tools\test-recent.ps1                    # 「最新访问」回归（UIA，不需交互桌面；用独立 XDG 目录，不动用户的配置）
 pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-Clobber] [-Draft] [-Prerelease]
 ```
 
@@ -69,8 +76,9 @@ pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-C
 
 | 脚本 | 覆盖 | 桌面 |
 | --- | --- | --- |
-| `test-settings.ps1`（10 用例） | 分类齐全 / 每页只显示本分类的项 / 初值一致 / 拨一下立即落盘并生效 / 跨分类与关窗重开读回 / 只开一个窗口 / 「右键菜单」页系统菜单项默认全开且能逐项关掉（拨 `verb:properties` 落盘、重开仍关、拨回清空）/ 「行高」滑块（初值、跨分类读不到、拖完列表行真的变高）/ 侧边栏分组与「主目录」文件夹开关当场作用到树 / 「标签页使用直角」当场落盘应用 / 「主题」三态下拉框与标题栏太阳月亮开关同步 / 「启动」页开关真的写删 `HKCU\...\Run` 的 `"<exe>" --preload` | 不需 |
+| `test-settings.ps1`（10 用例） | 分类齐全 / 每页只显示本分类的项 / 初值一致 / 拨一下立即落盘并生效 / 跨分类与关窗重开读回 / 只开一个窗口 / 「右键菜单」页系统菜单项默认全开且能逐项关掉（拨 `verb:properties` 落盘、重开仍关、拨回清空）/ 「行高」滑块（初值、跨分类读不到、拖完列表行真的变高）/ 侧边栏分组（含「最新访问」）与「主目录」文件夹开关当场作用到树 / 「标签页使用直角」当场落盘应用 / 「主题」三态下拉框与标题栏太阳月亮开关同步 / 「启动」页开关真的写删 `HKCU\...\Run` 的 `"<exe>" --preload` | 不需 |
 | `test-status-bar.ps1`（16 断言） | 只有一条 / 一行高 / 贴底 / 项数 / 选中摘要 + 合计大小 / 磁盘可用空间 / 跟随活动窗格。**用例 4 拿 `%TEMP%` 数量比对状态栏“N 项”，偶发差 1 项就 FAIL，属脚本时序问题，重跑即可** | 需 |
+| `test-recent.ps1`（8 用例） | 侧边栏「最新访问」只有一个入口（排最上面、没有平铺的子项、不带展开箭头）/ 点它**新开**一个专用标签页（原标签页还在、再点一次不重复开）/ 列表 = 最近访问过的**目录与文件**，按访问时间倒序（即使“文件夹排在文件前面”开着也不重排）/ 已不存在的路径不显示但记录还留着 / 目录行的箭头点一下会就地展开、文件行点了没反应 / 会话恢复期间的导航不记录 / 导航一次记到最前（`IsDirectory=true`）/ 旧格式（只有 `Folders`）自动迁移成 `Entries` 且顺序不变 / 上限 50 条挤掉最旧的 / 关掉 `SidebarShowRecent` 后入口不显示 / 打开文件也会记进列表（真桌面，否则 SKIP）/ 右键「清空最新访问」（真鼠标，无交互桌面时 SKIP）。用独立 `XDG_CONFIG_HOME` / `XDG_DATA_HOME`，不动用户的 config.json 与 recents.json | 用例 7/8 需 |
 | `test-shell-icons.ps1`（13 断言） | 每行都有图标 / 不同程序不同 / `.lnk` 带小箭头 / 同扩展名只提取一次 / 滚动后仍有图标 | 需 |
 | `measure-row-align.ps1` | 图标与文字是否垂直居中（截图 + UIA 量墨迹中心）。判断“图标该不该再微调”用它，别靠肉眼 | 需 |
 | `test-pin-drag.ps1`（6 用例） | 收藏夹子项与 config.json 一致 / 列表→固定目录 / 侧边栏→固定目录 / 拖拽排序 / 右键取消固定 / 拖到收藏夹。**shell 提权时自动用 explorer.exe 降权启动**（第 21 条） | 需 |
@@ -88,6 +96,7 @@ pwsh -NoProfile -File tools\release.ps1 -Tag v0.1.0 [-DryRun] [-SkipPublish] [-C
 | `test-archive-copy.ps1`（9 用例） | 包内复制只记在内存里（不动磁盘、清空系统剪贴板）→ 上一级 → 粘贴 → 文件真落到磁盘、日志有「压缩包复制：sample.zip 解出 1 项」/ 多选（文件 + 目录）时目录按整棵子树解出来 / 中转副本用完就删 / 系统剪贴板优先 / `.iso` 也当目录进、也能复制出来（测试 ISO 用系统 IMAPI2FS 现造，造不出就 SKIP）/ 用例 7～9：真实目录里就地展开压缩包，展开出来的行仍是只读的（「复制」进内存、「删除」被拦、折叠后行集合复原） | 不需 |
 | `test-archive-extract.ps1`（4 用例） | 压缩包行的内置菜单里有「使用 7-Zip 打开」与「解压到下载文件夹」（没装 7-Zip 时那一项置灰且标题写明原因，与本机实际情况比对）/ 普通文件行没有这两项 / 点「解压到下载文件夹」→ `Downloads\<包名>\` 里真的出现包内文件与子目录、绿色「解压完成」InfoBar（带「打开目录」）、日志有「解压：…」/ 同一个包再解一次落到 `<包名> (2)`。收尾删掉解出来的目录并还原 config.json | 需 |
 | `test-compress.ps1`（4 用例） | 文件行 / 目录行的内置菜单里有「压缩」，空白处没有 / 点「压缩」→ 默认输出目录（「下载」文件夹）出现 `<名字>.zip`、包内条目与源一致、**剪贴板里就是这个 zip**（`CF_HDROP` + DropEffect=1）、绿色「压缩完成」InfoBar（带「打开目录」）、日志有「压缩：…」「压缩产物已复制到剪贴板：…」/ 多选时包名 = 当前文件夹名、再压一次落到 `… (2).zip` / 设置里的「压缩输出目录」指向别处后压缩落到那里。收尾删掉生成的 zip 并还原 config.json。等待条件用「zip 能真的打开」/「剪贴板里已出现它」（第 94 条）| 需 |
+| `test-search.ps1`（11 用例 61 断言） | 搜索框存在且可用且初值空 / 输入关键字 → 结果替换列表（状态栏「N 项」= 命中数、行真的出现、**日志里的查询串恰好是 `path:"<当前目录>\" <关键字>`**）/ 结果行右侧标出相对搜索根的目录（直接子项不标）/ 「显示隐藏文件」开着关着当场作用到搜索结果 / 「整机」开关把范围放到整个索引（前缀相同的兄弟目录与外部目录的文件都进来、日志里没有 `path:`）/ 点「×」清空 → 回原目录 / 搜索中导航 → 自动退出搜索模式 / 选中结果 → 「文件 → 打开」→ 跳到它所在目录并选中它 / 打开压缩包那个标签页的搜索框是禁用的 / `EXDIR_EVERYTHING_DLL` 指向不存在的路径 → 提示「未检测到 Everything」且**不动列表** / **当前目录不在 Everything 索引里 → 查询串仍是当前目录、提示条说明“索引里没有这个目录”并给出装 Everything 服务的办法（反面：索引覆盖到的目录不误报）**。**测试目录没被索引时本脚本才会临时把它加进 Everything 的「文件夹索引」并重启 Everything（已按卷索引的机器上完全不碰它的配置），跑完恢复 `Everything.ini` 与进程**；本机没装 Everything 时整个脚本 SKIP | 不需 |
 
 真鼠标那条路（右键菜单里的「复制」）在 `test-archive.ps1` 用例 12。
 
@@ -136,6 +145,7 @@ pwsh -NoProfile -File tools\publish.ps1     # 把最新 Release 产物镜像到 
 ```
 %LOCALAPPDATA%\exdir\exdir.log              # 崩溃 / 启动 / 窗口位置恢复（日志留在 LocalAppData）
 %USERPROFILE%\.config\exdir\config.json     # 全部设置与会话（设了 XDG_CONFIG_HOME 时以它为准）
+%USERPROFILE%\.local\share\exdir\recents.json  # 「最新访问」列表：最近访问过的目录与文件（设了 XDG_DATA_HOME 时以它为准）
 ```
 
 非打包 WinUI 崩溃没有控制台输出，`Diagnostics/Log.cs` 写到上面这个日志里，排查启动崩溃的**第一步永远是看
@@ -155,39 +165,45 @@ exdir/
 ├─ MainWindow.xaml(.cs)       外壳：TitleBar（菜单栏）/ 工具条 / 侧边栏 / 1~2 个窗格 + 托盘图标
 ├─ Themes/ExdirTheme.xaml     紧凑密度覆盖 + 布局常量 + 扁平按钮样式 + 强调色悬停色刷（合并顺序在 XamlControlsResources 之后）
 ├─ Models/                    POCO：FileSystemEntry / DriveModel / AppSettings / AppTheme / QuickCommand / CloudSyncState /
-│                             ShellMenuItem / IconBitmap / ArchivePath / RemoteLocation / RemotePath /
+│                             ShellMenuItem / IconBitmap / ArchivePath / RemoteLocation / RemotePath / RecentItems /
 │                             枚举（含 SettingsCategory / RemoteProtocol / RemoteAuthMethod）
 ├─ Services/                  接口 + 实现成对；Native/ 放 Win32 互操作
 │   ├─ IFileSystemService     目录枚举（异步、跳过无权限项）、路径规整、云目录条目附带同步状态；远程 / 压缩包路径分派
 │   ├─ IDriveService / IKnownFolderService / INetworkLocationService / ICloudSyncService / IShellIconService
-│   ├─ IArchiveService / IArchiveClipboardService / ICompressionService / IDialogService / ISettingsService
+│   ├─ IArchiveService / IArchiveClipboardService / ICompressionService / IDialogService / ISettingsService / IRecentItemsService
+│   │                         （RecentItemsService：「最新访问」记录的读写，落盘 recents.json）
 │   ├─ IRemoteFileService / IRemoteLocationSource（远程位置：列目录 + 下载到本地，只读）
+│   ├─ IEverythingSearchService  跨进程查本机 Everything 索引（只读；见 AGENTS.md 第 4 节「Everything 快速搜索」）
 │   ├─ IShellService / IClipboardService / IFileOperationService / IShellContextMenuService / IDeviceChangeService
 │   ├─ Remote/                远程连接：RemoteSession 抽象 + SftpSession（SSH.NET）+ FtpSession（FluentFTP）+
 │   │                         RemoteSessionPool（按连接身份缓存、失败重连、空闲回收）
 │   └─ Native/                ShellPropertyStore / ShellIconExtractor / ShellContextMenuInterop / VolumeChangeWatcher /
 │                             ClipboardInterop / FileOperationInterop / SevenZipInterop / ShellLinkInterop /
-│                             DpapiInterop（凭据加密）
+│                             DpapiInterop（凭据加密）/ EverythingInterop（Everything SDK 的导出函数）
 ├─ ViewModels/                MainViewModel / PanelViewModel / FolderTabViewModel / PathSegmentViewModel /
 │                             SidebarViewModel（懒加载 + 收藏夹镜像 + ApplyGroupVisibility / ApplyHomeFolders /
 │                             ApplyRemoteLocations / 差量 RefreshDrives）/ FileItemViewModel / PinnedFolderViewModel /
 │                             StatusBarViewModel / SettingsCategoryViewModel / ShellMenuItemViewModel /
 │                             SettingsViewModel / RemoteLocationItemViewModel
 ├─ Views/                     SidebarView / DriveBarView / PaneView / NavigationBarView / PathBreadcrumb / DetailsView
-│                             （DetailsView 还管文件列表的拖放与右键菜单）/ StatusBarView / SettingsWindow / SettingsView
+│                             （DetailsView 还管文件列表的拖放与右键菜单）/ StatusBarView / SearchBarView /
+│                             SettingsWindow / SettingsView
 │                             （+ SettingsView.Remote.cs：远程位置编辑对话框）
 ├─ Controls/                  PaneSplitter.cs（自研分隔条，WinUI 没有 GridSplitter）；ColumnResizeHandle.cs
 ├─ Helpers/                   ColumnLayout / ThemeHelper / CloudSyncStateHelper / DpiHelper / FileTypeHelper /
 │                             IconImageHelper / SizeFormatter / DragDropHelper / CommandLine / AutoStart /
 │                             SingleInstance / ArchiveFormats / CompressTargets / FolderPicker /
-│                             SecretProtector（DPAPI 凭据）/ RemoteCache（远程中转目录）/ SevenZipLocator（找 7zFM.exe）
+│                             SecretProtector（DPAPI 凭据）/ RemoteCache（远程中转目录）/ SevenZipLocator（找 7zFM.exe）/
+│                             EverythingLocator（找 Everything64.dll）/ EverythingQuery（拼 Everything 查询串）/
+│                             RecentView（「最新访问」虚拟路径 exdir://recent）
 ├─ Converters/CommonConverters.cs / Diagnostics/Log.cs（可多进程同时追加，第 72 条）
 ├─ icon.svg                   程序图标唯一源文件（改它再跑 tools\make-icon.ps1）
 ├─ Assets/                    图标（exdir.ico + 各尺寸徽标 PNG，都由 make-icon.ps1 生成）
-├─ native/                    原生组件（x64\7z.dll + LICENSE-7z.txt + 来源/升级说明 README.md）
+├─ native/                    原生组件（x64\7z.dll + x64\Everything64.dll + LICENSE-*.txt + 来源/升级说明 README.md）
 └─ tools/                     capture / inspect-ui / shot-settings / test-*.ps1 / measure-row-align / publish /
                               release / make-icon，以及 archive-smoke（不需交互桌面的服务级冒烟工程）、
-                              remote-smoke（远程位置的服务级冒烟）、remote-test-server（本机 FTP + SFTP 测试服务器）
+                              remote-smoke（远程位置的服务级冒烟）、everything-smoke（Everything 搜索的服务级冒烟）、
+                              remote-test-server（本机 FTP + SFTP 测试服务器）
 ```
 
 ## 4. 界面布局约定（改动前务必对齐）
@@ -211,13 +227,22 @@ exdir/
   `SetTitleBar(AppTitleBar);`；系统窗口按钮由 AppWindow 原生绘制，不要自绘。
 * `TitleBar` 分区属性 = `LeftHeader` / `Content` / `RightHeader`；`ContentBefore` / `ContentAfter` 被标 experimental、
   XAML 编译报 `WMC0011`，**不要用**。`LeftHeader` 里是 `StackPanel`：**主题开关（太阳/月亮）在「文件」菜单左边**。
-* **侧边栏分组**（自上而下）：`收藏夹`（固定目录镜像，可拖目录进来收藏；排最上面，`AllGroups()` 与
-  `RefreshRoots()` 的 `desired` 顺序必须一致）、`主目录`（点它去 %USERPROFILE%，子项桌面/文档/下载/图片/音乐/视频）、
-  `云存储`（注册表探测的同步根）、`此电脑`（磁盘 + 「网络位置」）。节点可导航当且仅当有路径
+* **侧边栏分组**（自上而下）：`最新访问`（一个入口，点它开一个专用标签页；见下）、`收藏夹`
+  （固定目录镜像，可拖目录进来收藏）、`主目录`（点它去 %USERPROFILE%，子项桌面/文档/下载/图片/音乐/视频）、
+  `云存储`（注册表探测的同步根）、`此电脑`（磁盘 + 「网络位置」）、`远程`（SFTP / FTP 位置）。
+  `AllGroups()` 与 `RefreshRoots()` 的 `desired` 顺序必须一致。节点可导航当且仅当有路径
   （`SidebarNodeViewModel.IsNavigable`）。
-  * 四个分组可在设置「侧边栏」页关掉（`SidebarShowHome` / `SidebarShowFavorites` / `SidebarShowCloud` /
-    `SidebarShowComputer`，默认全开）：`ApplySidebarGroups()` → `SidebarViewModel.ApplyGroupVisibility()` 只增删
-    `Roots` 差异项、不整表重建（整表重建会丢折叠状态与已懒加载子节点）。
+  * 六个分组可在设置「侧边栏」页关掉（`SidebarShowRecent` / `SidebarShowHome` / `SidebarShowFavorites` /
+    `SidebarShowCloud` / `SidebarShowComputer` / `SidebarShowRemote`，默认全开）：`ApplySidebarGroups()` →
+    `SidebarViewModel.ApplyGroupVisibility()` 只增删 `Roots` 差异项、不整表重建（整表重建会丢折叠状态与已懒加载子节点）。
+  * 「最新访问」在侧边栏里**只有一个入口**（列表本身在专用标签页里，见下面「「最新访问」虚拟视图」一节）：
+    那个节点带虚拟路径 `exdir://recent`（`Helpers/RecentView`）、`canExpand: false`（不画展开箭头）、
+    `Kind = SidebarNodeKind.RecentGroup`；点它由 `MainViewModel.OnSidebarNavigateRequested` → `OpenRecentView()`
+    在活动窗格**新开**一个标签页（已经开着就切过去，不重复开）。右键它 →「清空最新访问」。
+    记录由 `IRecentItemsService` 管，落盘在 `%USERPROFILE%\.local\share\exdir\recents.json`
+    （**不在 config.json 里**：它是使用痕迹、导航 / 开文件一次就可能变一次，和用户显式配置分开）。
+    **回归脚本注意**：凡是会导航（双击进目录、点侧边栏节点、`exdir <路径>`）的脚本，都会把测试目录写进
+    用户的 `recents.json`；会导航的脚本要把 `XDG_DATA_HOME` 指到自己的临时目录（`test-recent.ps1` 就是这个做法）。
   * 「主目录」显示哪几个标准文件夹也可配（`SidebarHomeDesktop` / `Documents` / `Downloads` / `Pictures` / `Music` /
     `Videos`，**默认只开桌面与下载**）：按 `SpecialFolderModel.Key`（`UserFolderKey` 稳定标识，不是显示名/路径）筛；
     `SyncHomeFolders()` 只增删差异子项、复用未变节点。
@@ -418,6 +443,32 @@ exdir/
   * 关掉的项在 **`TrackPopupMenu` 之前**按位置 `RemoveMenu` 删（不会打乱其它 id），顺带清理空子菜单与重复/首尾分隔
     符。右键事件挂 `DetailsView` **最外层 Grid**（第 39/40 条）；行上右键先把该行选中再弹。`DpiHelper.ToScreenPoint`
     负责 DIP → 屏幕物理像素（`TransformToVisual(null)` + `ClientToScreen`）。回归 `test-context-menu.ps1`。
+
+### 「最新访问」虚拟视图（`exdir://recent`，2026-10）
+
+侧边栏只有**一个**入口（`最新访问` 节点）：点它就开一个专用标签页，列出最近访问过的**目录与文件**，
+**按访问时间倒序**（最近的在最前）。它不是一个真实目录 —— `FolderTabViewModel.CurrentPath` 里是哨兵值
+`exdir://recent`（`Helpers/RecentView`），由 `FileSystemService` 认出来后按记录枚举，
+于是面包屑 / 后退 / 会话恢复 / 状态栏这些按“路径字符串”干活的地方一行都不用改。
+
+* **记录**（`IRecentItemsService`，落盘 `recents.json`，上限 50 条）：目录在 `MainViewModel.RecordRecentDirectory`
+  （导航时；跳过压缩包内的虚拟路径与「最新访问」自己，会话恢复期间不记），文件在
+  `FolderTabViewModel.RecordRecentFile`（用默认程序打开时；包内条目 / 远程文件打开的是中转副本，不记）。
+  `RecentEntry { Path, IsDirectory }` 的**列表顺序就是访问顺序**（提到最前），所以不需要时间戳。
+  旧格式（`{"Folders":[…]}`）读进来自动迁移成 `Entries`，写回时不再有 `Folders` 字段。
+* **默认不排序**：`BuildRootNodes()` 只在 `!_sortByAccessOrder` 时排序；进「最新访问」时把它置 true，
+  一旦点列头或拨“文件夹排在文件前面”就走 `ResortItems()` 把它置 false（用户明确要排序就听他的）。
+* **已经不存在的本地路径不显示**（`FileSystemService.TryCreateRecentEntry` 用 `Directory/File.Exists` 筛），
+  但记录不删；远程位置的条目不联网看类型（用记录里的 `IsDirectory`）。这个视图**不看**“显示隐藏文件”。
+* **行都是真实路径**：打开 / 复制 / 剪切 / 删除 / 压缩 / 属性 / 在资源管理器中显示 / 拖出去都正常；
+  但**针对当前目录**的写操作（粘贴 / 新建文件夹 / 终端 / 拖入）一律拒绝
+  （`FolderTabViewModel.RefuseInRecentView()` + `DetailsView.TryResolveDrop`），文案
+  「「最新访问」列表不支持该操作（它不是一个真实目录）」；右键菜单换成“最新访问版”（行：打开 / 打开所在文件夹 /
+  在资源管理器中显示 / 复制 / 复制路径 / 属性；背景：刷新 / 全选）并且**强制用内置菜单**。
+* 搜索框在这个标签页里禁用（它不在 Everything 索引里）；列表空时提示「还没有最近访问的记录」。
+* 列表变化（新记录 / 清空）会触发 `IRecentItemsService.Changed` → 开着的「最新访问」标签页
+  `ReloadRecentViewAsync()` 重读一遍（只换行集合，不动历史与当前路径，不会自激）。
+* 回归 `tools\test-recent.ps1`（8 用例，UIA，用例 7/8 需真桌面）；第 107 条。
 
 ### 托盘驻留（单窗口模式，2026-09）
 
@@ -671,6 +722,56 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
 * 回归：`tools\test-remote.ps1`（9 用例，UIA，不需交互桌面）、`tools\remote-smoke`（服务级，需先起
   `tools\remote-test-server`）；真鼠标与拖拽需要交互桌面，见上面「回归脚本」那一节。
 
+### Everything 快速搜索（2026-10）
+
+导航条右侧一个搜索框（`Ctrl+F` 聚焦），**基于本机 Everything 的索引**做快速搜索：输入即搜（去抖 180 ms）、
+结果**替换当前标签页的列表**、`Esc`（或搜索框上的「×」）回到原目录。每个标签页各有自己的一份状态。
+
+* **默认范围 = 当前目录及其子目录**（Everything 的 `path:"<目录>\"` 限定词，结尾那个反斜杠是必须的，第 101 条）；
+  搜索框右边的「整机」开关（`ExToolbarChipToggleButtonStyle`）把范围放大到整个索引。
+  结果行在名称右边用暗色小字标出它**相对搜索根的目录**（`sub\deep`；整机范围给完整目录；直接位于搜索根里的不标）。
+* **不新增列**：那一小段目录挂在名称列的右侧（`FileItemViewModel.SearchPathText` + `HasSearchPath`），
+  不给 `ColumnLayout` 加列 —— 加列要同时改 5 处（第 20 条），而这里只是在名称列里补一段附属文字。
+* **列表还是那个列表**：`_entries` 换成搜索结果、`_rootNodes` 是扁平的根层，所以状态栏「N 项」、列头排序、
+  多选、右键菜单、复制 / 剪切 / 删除 / 压缩 / 属性 / 在资源管理器中显示**全都不用改**（它们本来就按条目的完整路径干活）。
+  而**双击结果 = 跳到它所在目录并选中它**（目录结果直接进去）—— 搜完通常是要去那个位置做事，
+  右键菜单里另有「打开所在文件夹」与「打开」（前者与双击同义，后者交给默认程序）。
+* **去抖与竞态**：`FolderTabViewModel._searchCts` 每敲一个字就换一个新的 `CancellationTokenSource`，
+  旧的那次查询结果直接丢弃（Everything 只答几毫秒，180 ms 去抖只是为了不在快速输入时白发一堆查询）。
+* **一次查询最多取回 5000 条**（`EverythingQuery.MaxResults`）：整机搜一个字母能出几十万条，
+  多出来的用「前 5000 项 / 共 81234 项」表示（`Everything_GetTotResults` 是总数）。
+* **「显示隐藏文件」也作用于搜索结果**：SDK 报的文件属性里带 Hidden / System 的会被滤掉。
+  Everything 没开「索引文件属性」时属性全是 0 —— 那时**不能**把它当成“非隐藏”，
+  所以 `EverythingInterop.AttributesAvailable` 为 false 时干脆不滤（并记一行日志）。
+* **无结果 / 出错**：无结果显示「没有匹配项」（`EmptyHint`）；Everything 不可用时**不动列表**、
+  只在顶部提示条里说明（清空列表会让人以为“这个目录空了”），标题是「搜索」而不是「无法打开」
+  （`ErrorTitle` 看搜索框里有没有字）。
+* **索引没覆盖当前目录时会说明原因**（2026-10 补）：当前目录范围一个都没搜到、而目录里确实有东西、
+  且 Everything 里这个目录下一条都没有（`IEverythingSearchService.IsDirectoryIndexedAsync` 用范围词单独查一次）
+  → 顶部提示条直说“Everything 的索引里没有这个目录”，并给出办法：**以管理员身份装一次 Everything 服务**
+  （`Everything.exe -install-service`，或「工具 → 选项 → 常规」）让整块磁盘被索引，或把这个目录加进
+  「工具 → 选项 → 索引 → 文件夹」；日志留一行 `Everything 的索引没有覆盖当前目录：…`。
+  没这段提示时的表面现象是“当前目录什么都搜不到、一按整机又只剩 exdir 自己目录里的文件”，
+  看着像“搜索范围是程序的工作目录”（根因与坑见第 106 条）。
+* **只在真实目录里可用**：压缩包内 / 远程位置 / 没有路径的「此电脑」标签页里搜索框禁用
+  （那些位置不在 Everything 的索引里），悬停提示写明原因（`FolderTabViewModel.CanSearch` / `SearchHint`）。
+* **换目录 / 点「×」/ 按 `Esc` 都退出搜索模式**（`ResetSearchState`）；`F5` 在搜索模式里 = 拿当前关键字重搜
+  （重新枚举原目录没有意义）；文件名 / 扩展名的设置变化也会重搜。
+* **引擎**：随包分发的 **`native\x64\Everything64.dll`**（Everything SDK 的 IPC 客户端，MIT，
+  来源 / 许可 / 升级见 `native/README.md` 与 `native/LICENSE-Everything-SDK.txt`），
+  互操作层 `Services/Native/EverythingInterop.cs`（`NativeLibrary.TryLoad` + 委托，与 `SevenZipInterop` 同一套路，
+  不用 `[DllImport]`），服务实现 `Services/EverythingSearchService.cs`。
+  查找顺序（`Helpers/EverythingLocator.cs`）：`EXDIR_EVERYTHING_DLL` 环境变量（**指定了就以它为准**，
+  回归脚本用它造“找不到 DLL”的降级场景）→ exe 旁边 → 注册表 `InstallLocation` →
+  `%ProgramFiles%\Everything` 等常见目录 → `PATH` 上的 Everything.exe 同目录。
+* **SDK 是 IPC 客户端**：它要求 **Everything 客户端进程正在运行**（只装 Everything 服务不够）。
+  没在运行时 `Everything_QueryW` 会**立刻**返回 false、`Everything_GetLastError() == 2`（不会卡住），
+  界面提示「Everything 没有在运行」。
+* 只读：不写 Everything 的索引、不做任何文件操作；SDK 的搜索状态是**进程级全局**的一份，
+  服务层用一把 `SemaphoreSlim` 串行化所有查询，查询本身跑在线程池上（UI 线程不碰）。
+* 回归：`tools\test-search.ps1`（11 用例 61 断言，UIA，不需要交互桌面）、`tools\everything-smoke`（服务级：
+  查询串拼接 10 + 真实查询 13 + 结果映射 14 + **索引覆盖检查 3**；没装 Everything 或那个目录没被索引时 SKIP 并以退出码 2 报告）。
+
 ### 键盘快捷键（定义在 MainWindow.xaml 的 `Grid.KeyboardAccelerators`）
 
 | 快捷键 | 动作 |
@@ -685,6 +786,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
 | `Delete` / `Shift+Delete` | 删除到回收站 / 永久删除（走 `DetailsRoot.PreviewKeyDown`，仅作用于文件列表） |
 | `F6` / `F10` | 切换活动窗格 / 单双窗格切换 |
 | `Ctrl+L` / `Alt+D` | 编辑活动窗格的地址栏（等价于点地址栏空白处） |
+| `Ctrl+F` | 聚焦活动标签页的 Everything 搜索框（等价于点导航条右侧那个搜索框） |
 
 另外：`文件列表 / 侧边栏文件夹树` 里的**目录**可直接拖到工具条右侧的“固定目录”区固定；文件列表里的文件 / 目录拖到
 某个**目录行**上（或拖到另一个窗格）就是移动，按住 `Ctrl` 是复制。
@@ -704,7 +806,7 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
   | 外观 | 主题（跟随系统/浅色/深色，默认跟随系统）/ 标签页使用直角（默认开）/ 过渡动画 |
   | 布局 | 列宽自动适应窗格宽度 / 显示工具条 / 显示侧边栏 / 双窗格模式 |
   | 启动 | 开机时自动启动 exdir（登录后在后台预热，不显示主窗口） |
-  | 侧边栏 | 显示「主目录」/「收藏夹」/「云存储」/「此电脑」四个分组（默认全开）；「主目录」里显示桌面 / 文档 / 下载 / 图片 / 音乐 / 视频六个标准文件夹（**默认只开桌面与下载**） |
+  | 侧边栏 | 显示「最新访问」/「主目录」/「收藏夹」/「云存储」/「此电脑」/「远程」六个分组（默认全开）；「主目录」里显示桌面 / 文档 / 下载 / 图片 / 音乐 / 视频六个标准文件夹（**默认只开桌面与下载**） |
   | 右键菜单 | 使用内置的轻量右键菜单（开关，默认开）/ 系统右键菜单项逐项开关（动态清单） |
 
   * 分类是 `Models/SettingsCategory`（枚举）+ `SettingsViewModel.Categories`（顺序即导航顺序），绑到
@@ -1259,6 +1361,81 @@ exdir D:\a\b.txt       → 打开文件所在目录并选中它
     终端 / 属性 / 在资源管理器中显示 / 压缩 / `TransferAsync`）逐个加，右键菜单另做一份“远程只读版”；
     拖放落点则在 `DetailsView.TryResolveDrop` / `CompleteInternalDropAsync` 里遇到远程行 / 远程当前目录**整个不接受**
     （不能退回到“当前目录”，那会搬错地方）。
+
+101. **Everything 的 `path:` 范围词结尾必须补一个反斜杠，而 `folder:` 根本不是“限定目录”**（用 1.4.1.1032 实测）：
+    * `path:"D:\a\b"` 是“完整路径里包含这个串”，所以 `D:\a\bc\x.txt` 也会命中 —— 造两个前缀相同的目录
+      （`qtest` / `qtest2`）各放一个同名文件，不带尾反斜杠时命中 3 条、带上之后恰好 2 条。
+      实测反斜杠在 Everything 的引号里**就是普通字符**（不是转义），所以补一个 `\` 就够。
+    * `folder:` 不是“限定在这个目录下递归”，它是**项目类型过滤**（匹配目录而不是文件）：
+      `folder:"D:\x"` 会列出 x 下的所有目录；和另一个关键字组合时 `folder:"D:\x" *.ps1` 变成
+      “名字匹配 `*.ps1` 的目录”→恒为 0。要“限定目录下递归搜”只能用 `path:`，要“只列直接子项”用 `parent:`。
+    * 一条查询完全可能**只命中文件**，所以“属性到底读到了没有”不能靠“目录结果带 DIRECTORY 位”判断
+      （那会让属性明明可用时却报 false）。改成“任意一条命中的属性不为 0”。
+    * 常量与函数签名以 SDK 的 `include/Everything.h` 为准；`SetMax` 限制的是取回条数，
+      `GetTotResults` 才是总数（界面上的「前 N 项 / 共 M 项」）。
+    * 客户端没在运行时 `Everything_QueryW(true)` **立刻**返回 false（不阻塞），
+      `Everything_GetLastError() == EVERYTHING_ERROR_IPC(2)`。
+
+102. **`Border` 不是 `Control`，XAML 里没有 `IsEnabled`**（`WMC0011: Unknown member 'IsEnabled' on element 'Border'`）→
+    要禁用整块外观得把 `IsEnabled` 绑到里面的 `TextBox` / `ToggleButton` 上；`Border` 自己保持可命中，
+    否则“为什么禁用”的悬停提示（`ToolTipService.ToolTip`）就弹不出来。
+
+103. **scoop 装的 Everything 有两层，改配置要改对那一份**：`scoop\shims\Everything.exe` 只是转发器，
+    它旁边**没有 `Everything.ini`**（Everything 真读的是 `scoop\apps\everything\<版本>\Everything.ini`）。
+    → `tools\test-search.ps1` 解析 Everything 时要按「注册表 → Program Files → `scoop\apps\everything\current`
+    → PATH（排除 `\shims\`）」的顺序取**真实 exe**。踩错时的症状极具欺骗性：改出来的是一份没人读的配置，
+    “Everything 怎么都不索引测试目录”，可中间某次查询又偶尔能命中一条（旧索引的残留），非常难查。
+
+104. **`yield return` 不能写在带 `catch` 的 `try` 里**（`CS1626`）→ 迭代器里要容错，
+    就把“路径非法 = 这个候选不存在”抽成一个小方法（`EverythingLocator.SafeFileExists`）。
+
+105. **PowerShell 双引号串里的转义符是反引号，不是反斜杠**：`"… path:\"<目录>\" …"` 会被解析成
+    “字符串在 `\` 后面那个引号处就结束了”，紧跟的 `<` 被当成重定向，报的是
+    `RedirectionNotSupported`（看着完全不像引号问题）→ 要写“反斜杠 + 引号”就用**单引号串拼接**
+    （`'path:"' + $dir + '\"'`），或者一律用反引号转义。改完先拿
+    `[System.Management.Automation.Language.Parser]::ParseFile` 扫一遍（同第 69 / 91 条）。
+
+106. **“搜索范围看起来是程序自己的工作目录”十有八九是 Everything 的索引只覆盖了那几个文件夹**（2026-10 实测）：
+    * 现象：在某个目录里搜什么都 0 项（日志里 `path:"<当前目录>\"` 的查询串本身是对的），
+      一按「整机」又只剩 exdir 自己目录里的文件（`D:\prj\exdir`）—— 很容易看成“范围跑到程序的周目录去了”。
+    * 根因：Everything 没装/没启用**服务**（或只加了「文件夹索引」）时它不索引整块磁盘；
+      而 exdir 的范围词只是**限制查询范围**，索引里没有的目录照样搜不出来。判断“范围”对不对要看日志里
+      的查询串，别拿结果集反推。
+    * 对症：让 Everything 索引整块磁盘 —— 首次要**以管理员身份装一次 Everything 服务**
+      （`Everything.exe -install-service`，或「工具 → 选项 → 常规」），别只加文件夹索引。
+      界面上现在会自己把话说出来（`FolderTabViewModel.WarnIfDirectoryNotIndexedAsync`），
+      判断依据是“范围词单独查一次为 0 + 当前目录在磁盘上非空（`_directoryEntryCount`）”。
+    * 写回归时的坑：`subst` 出来的盘符**不是**“索引之外的地方”—— 实测 Everything 会把 `X:\` 解析回
+      真实卷，用 `path:"X:\"` 查照样命中（子目录也一样）。要造一个“索引覆盖不到的目录”，用
+      **隐藏目录 + Everything 的「排除隐藏文件与文件夹」**最省事，而且这个夹具顺便把
+      “索引覆盖到的目录不误报”也验了（用例 11 就是两半：先反面、后正面）。
+    * 顺带：`tools\test-search.ps1` 现在是**先问再改** —— 先跑一次 `everything-smoke` 看测试目录是不是
+      已经被索引，已被索引就完全不碰 Everything 的配置。因为 Everything 的**文件夹索引与卷索引不去重**，
+      给一个已在卷索引里的目录再加一条文件夹索引会让结果成对出现（count 断言全崩）；
+      而重启 Everything 又会让按卷索引的机器短时间内查不到新文件（扫描还在排队）。
+
+107. **「最新访问」从“侧边栏平铺”改成“一个入口 + 专用标签页”时，四个地方必须一起想到**（2026-10）：
+    * **列表默认不能排序**：排序（`BuildRootNodes` / `ResortItems` / `FoldersFirst`）是普通目录的习惯，
+      而这里要的是“访问时间倒序” = **服务给的顺序**。用一个 `_sortByAccessOrder` 标志：进这个视图时置 true、
+      `ResortItems()` 里置 false（用户点列头 / 拨设置就听他的）；`RefreshAsync()` 会重新 `NavigateAsync`，
+      所以“同一路径的刷新”不要重置它（否则 F5 会把用户选的排序弄回去）。
+    * **“当前目录”的写操作要单独拒**：行是真实文件（删 / 复制 / 拖出去都能用），但当前“目录”是个虚拟路径，
+      `NormalizeDirectoryPath("exdir://recent")` 给 null、`Directory.CreateDirectory` 会抛非法字符 ——
+      所以粘贴 / 新建文件夹 / 终端 / 拖入走 `RefuseInRecentView()`、拖放落点在
+      `DetailsView.TryResolveDrop` / `CompleteInternalDropAsync` 里整个不接受；右键菜单另做一份。
+    * **记录文件是另一条路**：目录在 `MainViewModel.OnPaneNavigated` 里记，文件在用默认程序打开时记
+      （`FolderTabViewModel.RecordRecentFile`，只记“真实存在的本地文件”，包内条目 / 远程文件打开的是
+      中转副本，记下来没意义）；两边共用同一个服务，`RecentEntry.IsDirectory` 就是靠这个区分的。
+    * **UIA 里“行首展开箭头在不在”不能当“这行能不能展开”**：那个 `Button` 每行都有
+      （`IsHitTestVisible` 绑 `CanExpand`、字形不可展开时是空串），它的 `AutomationProperties.Name` 始终是
+      「展开或折叠」→ 回归脚本要“点一下看行数变不变”（`tools\test-recent.ps1` 用例 2 就是这么写的）。
+
+108. **UIA 里数“行数”不可靠：文件列表是虚拟化的**（2026-10 实测）：`DetailsView` 的 `ListView` 只会为视口里的行
+    生成容器，`FindAll(Descendants, ListItem)` 只能拿到已生成的那一批 —— 实测 50 条的列表只能读到 23 行，
+    拿它做 `Count -eq 50` 的断言必定失败（而“行内容对不对”、“每行都有图标”这类断言不受影响）。
+    要数总数就看**状态栏的「N 项」**（`StatusBarViewModel` 数的是 `FolderTabViewModel.ItemCount` = 整个集合），
+    容器有 `AutomationProperties.Name="状态栏"`、里面的 `TextBlock` 名字就是文本（`tools\test-status-bar.ps1`
+    与 `tools\test-recent.ps1` 用例 5 都是这个做法）。
 
 ## 7. 非打包模式下的 API 限制
 

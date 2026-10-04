@@ -26,6 +26,8 @@ public sealed partial class PanelViewModel : ObservableObject
     private readonly IRemoteFileService _remote;
     private readonly IKnownFolderService _knownFolders;
     private readonly IDialogService _dialogs;
+    private readonly IEverythingSearchService _everythingSearch;
+    private readonly IRecentItemsService _recents;
 
     private FolderTabViewModel? _activeTab;
     private bool _isActive;
@@ -44,7 +46,9 @@ public sealed partial class PanelViewModel : ObservableObject
         ICompressionService compression,
         IRemoteFileService remote,
         IKnownFolderService knownFolders,
-        IDialogService dialogs)
+        IDialogService dialogs,
+        IEverythingSearchService everythingSearch,
+        IRecentItemsService recents)
     {
         Id = id;
         _fileSystem = fileSystem;
@@ -60,6 +64,8 @@ public sealed partial class PanelViewModel : ObservableObject
         _remote = remote;
         _knownFolders = knownFolders;
         _dialogs = dialogs;
+        _everythingSearch = everythingSearch;
+        _recents = recents;
     }
 
     /// <summary>窗格标识：<c>primary</c> 或 <c>secondary</c>。</summary>
@@ -120,7 +126,7 @@ public sealed partial class PanelViewModel : ObservableObject
     public FolderTabViewModel CreateTab()
     {
         var tab = new FolderTabViewModel(
-            _fileSystem, _shell, _settings, _icons, _contextMenu, _clipboard, _fileOperations, _archive, _archiveClipboard, _compression, _remote, _knownFolders, _dialogs);
+            _fileSystem, _shell, _settings, _icons, _contextMenu, _clipboard, _fileOperations, _archive, _archiveClipboard, _compression, _remote, _knownFolders, _dialogs, _everythingSearch, _recents);
         tab.PropertyChanged += OnTabPropertyChanged;
         Tabs.Add(tab);
         ActiveTab = tab;

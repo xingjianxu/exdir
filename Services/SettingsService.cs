@@ -203,6 +203,10 @@ public sealed class SettingsService : ISettingsService
         // v10 新增远程位置（RemoteLocations）与侧边栏「远程」分组开关（SidebarShowRemote）：
         // 默认没有连接、分组显示；旧设置里没有这两个字段，反序列化会保留属性初始值，同样不需要迁移。
 
+        // v11 新增侧边栏「最新访问」分组开关（SidebarShowRecent）：默认显示；
+        // 旧设置里没有这个字段，反序列化会保留属性初始值 true，同样不需要迁移。
+        // （「最新访问」列表本身存在另一个文件 recents.json，不归这里管。）
+
         settings.SchemaVersion = AppSettings.CurrentSchemaVersion;
     }
 

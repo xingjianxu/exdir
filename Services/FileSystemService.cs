@@ -16,12 +16,18 @@ public sealed class FileSystemService : IFileSystemService
     private readonly ICloudSyncService _cloudSync;
     private readonly IArchiveService _archive;
     private readonly IRemoteFileService _remote;
+    private readonly IRecentItemsService _recents;
 
-    public FileSystemService(ICloudSyncService cloudSync, IArchiveService archive, IRemoteFileService remote)
+    public FileSystemService(
+        ICloudSyncService cloudSync,
+        IArchiveService archive,
+        IRemoteFileService remote,
+        IRecentItemsService recents)
     {
         _cloudSync = cloudSync;
         _archive = archive;
         _remote = remote;
+        _recents = recents;
     }
 
     public Task<IReadOnlyList<FileSystemEntry>> EnumerateDirectoryAsync(
@@ -33,6 +39,12 @@ public sealed class FileSystemService : IFileSystemService
         if (_remote.IsRemotePath(path))
         {
             return _remote.ListAsync(path, includeHidden, cancellationToken);
+        }
+
+        // 「最新访问」虚拟视图：条目来自最近访问记录（目录 + 文件，按访问时间倒序），不碰真实文件系统
+        if (RecentView.IsRecentViewPath(path))
+        {
+            return EnumerateRecentAsync(cancellationToken);
         }
 
         // 压缩包里的目录：条目来自 7z.dll，不碰真实文件系统
@@ -60,9 +72,9 @@ public sealed class FileSystemService : IFileSystemService
             cancellationToken);
     }
 
-    // 注意：DirectoryExists / FileExists 故意**不**处理远程路径（一律返回 false）。
+    // 注意：DirectoryExists / FileExists 故意**不**处理远程路径与「最新访问」虚拟视图（一律返回 false）。
     // 它们被写操作守卫（粘贴 / 删除 / 新建文件夹 / 拖放落点 / 固定目录）当成“磁盘上真有这个路径”，
-    // 远程路径在那里必须是不存在的；远程目录的存在性判断走 ResolveDirectoryAsync。
+    // 远程路径与 exdir://recent 在那里必须是不存在的；这两类位置的存在性判断走 ResolveDirectoryAsync。
 
     public bool DirectoryExists(string path)
     {
@@ -91,6 +103,12 @@ public sealed class FileSystemService : IFileSystemService
     public string? GetParentDirectory(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        // 「最新访问」是顶层虚拟视图，没有上一层（“向上一级”按钮因此是灰的）
+        if (RecentView.IsRecentViewPath(path))
         {
             return null;
         }
@@ -164,6 +182,8 @@ public sealed class FileSystemService : IFileSystemService
 
     public bool IsRemotePath(string path) => _remote.IsRemotePath(path);
 
+    public bool IsRecentViewPath(string path) => RecentView.IsRecentViewPath(path);
+
     public bool TryParseArchivePath(string path, out ArchivePath location) => _archive.TryParse(path, out location);
 
     public async Task<string?> ResolveDirectoryAsync(string input, CancellationToken cancellationToken = default)
@@ -174,6 +194,12 @@ public sealed class FileSystemService : IFileSystemService
         }
 
         var candidate = input.Trim().Trim('"');
+
+        // 「最新访问」虚拟视图：不用问文件系统，字符串对上就是它（会话恢复也靠这一条）
+        if (RecentView.IsRecentViewPath(candidate))
+        {
+            return RecentView.Path;
+        }
 
         try
         {
@@ -214,6 +240,94 @@ public sealed class FileSystemService : IFileSystemService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 「最新访问」视图的枚举：把最近访问过的目录与文件变成列表里的行，**顺序就是访问时间倒序**
+    /// （所以这个视图默认不参与列头排序，见 <c>FolderTabViewModel</c>）。
+    /// </summary>
+    private Task<IReadOnlyList<FileSystemEntry>> EnumerateRecentAsync(CancellationToken cancellationToken)
+        => Task.Run<IReadOnlyList<FileSystemEntry>>(
+            () =>
+            {
+                var list = new List<FileSystemEntry>();
+
+                foreach (var entry in _recents.Entries)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (TryCreateRecentEntry(entry, out var item))
+                    {
+                        list.Add(item);
+                    }
+                }
+
+                return list;
+            },
+            cancellationToken);
+
+    /// <summary>
+    /// 把一条「最近访问」记录变成列表里的一行。本地路径已经不在了（被删 / 被移走）就跳过这一行；
+    /// 远程位置不联网去看一眼（只看记录时记下的类型），免得为了画一份列表把服务器全连一遍。
+    /// 注意这个视图**不看**“显示隐藏文件”开关：它是使用痕迹，用户自己进过的隐藏目录也该回得去。
+    /// </summary>
+    private bool TryCreateRecentEntry(RecentEntry entry, out FileSystemEntry result)
+    {
+        result = null!;
+
+        var path = entry.Path;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        if (_remote.IsRemotePath(path))
+        {
+            var name = RemotePath.TryParse(path, out var remote)
+                ? (remote.Path == "/" ? RemotePath.RootDisplayOf(remote) : RemotePath.NameOf(remote))
+                : path;
+
+            result = new FileSystemEntry
+            {
+                FullPath = path,
+                Name = name,
+                IsDirectory = entry.IsDirectory,
+                TypeName = entry.IsDirectory ? "远程文件夹" : "远程文件",
+            };
+
+            return true;
+        }
+
+        var isDirectory = entry.IsDirectory;
+        if (isDirectory ? !Directory.Exists(path) : !File.Exists(path))
+        {
+            return false;
+        }
+
+        try
+        {
+            FileSystemInfo info = isDirectory ? new DirectoryInfo(path) : new FileInfo(path);
+
+            result = new FileSystemEntry
+            {
+                FullPath = info.FullName,
+                Name = info.Name,
+                IsDirectory = isDirectory,
+                Size = info is FileInfo file ? file.Length : 0,
+                LastWriteTime = info.LastWriteTimeUtc,
+                CreationTime = info.CreationTimeUtc,
+                TypeName = FileTypeHelper.GetTypeName(info.FullName, isDirectory),
+                IsHidden = (info.Attributes & (FileAttributes.Hidden | FileAttributes.System)) != 0,
+                IsArchive = !isDirectory && _archive.IsArchiveFile(info.FullName),
+            };
+
+            return true;
+        }
+        catch (Exception)
+        {
+            // 属性读不出来（权限之类）就不显示这一行，不要因为一条记录让整个列表打不开
+            return false;
+        }
     }
 
     /// <summary>

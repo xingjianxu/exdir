@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Exdir.Views.SearchBarView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!--
+        导航条右侧的「Everything 快速搜索」：输入框 + 范围开关 + 结果计数。
+        每个标签页各有一份实例（搜索状态在 FolderTabViewModel 上），所以两个标签页可以同时
+        各自停在不同的搜索结果里。搜索的语义与降级路径见 AGENTS.md 第 4 节。
+    -->
+    <Grid ColumnSpacing="4" VerticalAlignment="Center">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 输入框：前置放大镜 + 输入框 + 清空按钮。
+             TextBox 按坑 12 的写法：不设 Height，只给上下对称的 ExTextControlPadding，
+             外层 VerticalAlignment=Center（TextControlThemeMinHeight 已在主题里覆盖为 0）。
+             “能不能搜”绑在里面的控件上（Border 不是 Control，没有 IsEnabled），
+             而 Border 自身仍参与命中测试 —— 不然悬停提示“压缩包内不支持搜索”就弹不出来了。 -->
+        <Border
+            Grid.Column="0"
+            Width="200"
+            Background="{ThemeResource ControlFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+            BorderThickness="1"
+            CornerRadius="4"
+            ToolTipService.ToolTip="{x:Bind ViewModel.SearchHint, Mode=OneWay}">
+            <Grid ColumnSpacing="2">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <FontIcon
+                    Grid.Column="0"
+                    Margin="6,0,0,0"
+                    VerticalAlignment="Center"
+                    FontSize="12"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    Glyph="&#xE721;" />
+
+                <TextBox
+                    x:Name="SearchBox"
+                    Grid.Column="1"
+                    Padding="{StaticResource ExTextControlPadding}"
+                    VerticalAlignment="Center"
+                    VerticalContentAlignment="Center"
+                    AutomationProperties.Name="搜索"
+                    FontSize="12"
+                    IsEnabled="{x:Bind ViewModel.CanSearch, Mode=OneWay}"
+                    IsSpellCheckEnabled="False"
+                    KeyDown="SearchBox_KeyDown"
+                    PlaceholderText="搜索"
+                    Text="{x:Bind ViewModel.SearchQuery, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                <Button
+                    Grid.Column="2"
+                    Width="20"
+                    Height="20"
+                    MinWidth="0"
+                    MinHeight="0"
+                    Margin="0,0,2,0"
+                    Padding="0"
+                    AutomationProperties.Name="清除搜索"
+                    Click="Clear_Click"
+                    Style="{StaticResource ExFlatSubtleButtonStyle}"
+                    ToolTipService.ToolTip="清空搜索（Esc）"
+                    Visibility="{x:Bind ViewModel.IsSearchMode, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                    <FontIcon FontSize="10" Glyph="&#xE711;" />
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- 范围开关：不勾 = 当前目录（含子目录，默认），勾上 = 整机（整个 Everything 索引） -->
+        <ToggleButton
+            Grid.Column="1"
+            Height="24"
+            MinHeight="0"
+            Padding="8,0,8,0"
+            AutomationProperties.Name="搜索整机"
+            Content="整机"
+            FontSize="12"
+            IsChecked="{x:Bind ViewModel.SearchAllDrives, Mode=TwoWay}"
+            IsEnabled="{x:Bind ViewModel.CanSearch, Mode=OneWay}"
+            Style="{StaticResource ExToolbarChipToggleButtonStyle}"
+            ToolTipService.ToolTip="搜索范围：勾上 = 整机（整个 Everything 索引）；不勾 = 当前目录及其子目录" />
+
+        <!-- 结果计数。容器给名字、叶子 TextBlock 不给 —— 这样 UIA 里那个 TextBlock 的名字就是它自己的文本，
+             脚本能直接断言（与状态栏同一条约定）。 -->
+        <StackPanel
+            Grid.Column="2"
+            VerticalAlignment="Center"
+            AutomationProperties.Name="搜索状态"
+            Visibility="{x:Bind ViewModel.HasSearchStatus, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock
+                FontSize="12"
+                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                Text="{x:Bind ViewModel.SearchStatusText, Mode=OneWay}" />
+        </StackPanel>
+    </Grid>
+</UserControl>

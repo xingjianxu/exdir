@@ -37,6 +37,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ICompressionService _compression;
     private readonly IRemoteFileService _remote;
     private readonly IDialogService _dialogs;
+    private readonly IEverythingSearchService _everythingSearch;
+    private readonly IRecentItemsService _recents;
 
     private PanelViewModel _activePane = null!;
     private bool _isDualPane;
@@ -59,7 +61,9 @@ public sealed partial class MainViewModel : ObservableObject
         ICompressionService compression,
         IRemoteLocationSource remoteLocations,
         IRemoteFileService remote,
-        IDialogService dialogs)
+        IDialogService dialogs,
+        IEverythingSearchService everythingSearch,
+        IRecentItemsService recents)
     {
         _settings = settings;
         _driveService = driveService;
@@ -74,6 +78,8 @@ public sealed partial class MainViewModel : ObservableObject
         _compression = compression;
         _remote = remote;
         _dialogs = dialogs;
+        _everythingSearch = everythingSearch;
+        _recents = recents;
 
         // 复制 / 移动完成后要让受影响的目录重新枚举（可能是另一个窗格、另一个标签页）；
         // 解压到目录也一样（目标目录与其父目录可能正开在某个标签页里），
@@ -89,12 +95,17 @@ public sealed partial class MainViewModel : ObservableObject
         Sidebar.NavigateRequested += OnSidebarNavigateRequested;
         Sidebar.PinRequested += OnSidebarPinRequested;
         Sidebar.UnpinRequested += OnSidebarUnpinRequested;
+        Sidebar.RecentClearRequested += OnSidebarRecentClearRequested;
+
+        // 「最新访问」列表变了（新访问了一条 / 被清空）→ 把开着的「最新访问」标签页重读一遍；
+        // 它只有一个入口（侧边栏那一个节点），点它开 / 切到一个专用标签页，见 OpenRecentViewAsync
+        _recents.Changed += OnRecentItemsChanged;
 
         // 侧边栏的「收藏夹」分组是工具条固定目录的镜像：增删、拖拽排序都立刻同步过去
         PinnedFolders.CollectionChanged += (_, _) => Sidebar.SyncFavorites(PinnedFolders);
 
-        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, remote, knownFolders, dialogs);
-        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, remote, knownFolders, dialogs);
+        PrimaryPane = new PanelViewModel("primary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, remote, knownFolders, dialogs, everythingSearch, recents);
+        SecondaryPane = new PanelViewModel("secondary", fileSystem, shell, settings, icons, contextMenu, clipboard, fileOperations, archive, archiveClipboard, compression, remote, knownFolders, dialogs, everythingSearch, recents);
 
         PrimaryPane.Navigated += OnPaneNavigated;
         SecondaryPane.Navigated += OnPaneNavigated;
@@ -444,6 +455,10 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void EditActivePath() => ActivePane.ActiveTab?.BeginPathEdit();
 
+    /// <summary>把焦点交给活动标签页的搜索框（Ctrl+F）。</summary>
+    [RelayCommand]
+    private void FocusActiveSearch() => ActivePane.ActiveTab?.RequestSearchFocus();
+
     /// <summary>导航指定窗格（<c>primary</c> / <c>secondary</c>）到某路径。</summary>
     [RelayCommand]
     private async Task NavigateToAsync(string? path)
@@ -644,23 +659,37 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>本进程的会话只恢复一次，重复调用返回同一个 Task（见 <see cref="InitializeAsync" />）。</summary>
     private Task? _initialization;
 
+    /// <summary>
+    /// 正在恢复上次会话：期间的导航是程序自己做的，不算用户“访问过”，
+    /// 不能记进「最新访问」（否则每次启动都把上次的标签页又提一遍）。
+    /// </summary>
+    private bool _restoringSession;
+
     private async Task InitializeCoreAsync()
     {
         ApplySettingsToState();
 
-        await RestorePaneAsync(
-            PrimaryPane,
-            _settings.Current.PrimaryTabs,
-            _settings.Current.PrimaryActiveTab,
-            fallback: _knownFolders.UserProfile).ConfigureAwait(true);
-
-        if (IsDualPane)
+        _restoringSession = true;
+        try
         {
             await RestorePaneAsync(
-                SecondaryPane,
-                _settings.Current.SecondaryTabs,
-                _settings.Current.SecondaryActiveTab,
+                PrimaryPane,
+                _settings.Current.PrimaryTabs,
+                _settings.Current.PrimaryActiveTab,
                 fallback: _knownFolders.UserProfile).ConfigureAwait(true);
+
+            if (IsDualPane)
+            {
+                await RestorePaneAsync(
+                    SecondaryPane,
+                    _settings.Current.SecondaryTabs,
+                    _settings.Current.SecondaryActiveTab,
+                    fallback: _knownFolders.UserProfile).ConfigureAwait(true);
+            }
+        }
+        finally
+        {
+            _restoringSession = false;
         }
 
         RaiseActivePaneDependent();
@@ -863,6 +892,7 @@ public sealed partial class MainViewModel : ObservableObject
         settings.SidebarShowCloud = edited.SidebarShowCloud;
         settings.SidebarShowComputer = edited.SidebarShowComputer;
         settings.SidebarShowRemote = edited.SidebarShowRemote;
+        settings.SidebarShowRecent = edited.SidebarShowRecent;
 
         // 远程位置（SFTP / FTP）：清单真的变了才作废已有连接（改一个无关开关不应当把连接断掉）
         var remoteLocations = edited.RemoteLocations;
@@ -941,8 +971,8 @@ public sealed partial class MainViewModel : ObservableObject
             + $"压缩输出目录={(string.IsNullOrEmpty(settings.CompressionOutputDirectory) ? "（下载）" : settings.CompressionOutputDirectory)} "
             + $"主题={ThemeHelper.ToDisplayName(settings.Theme)} "
             + $"工具条={edited.ShowToolbar} 侧边栏={edited.ShowSidebar} 双窗格={edited.DualPane} "
-            + $"侧边栏分组（主目录/收藏夹/云存储/此电脑/远程）="
-            + $"{edited.SidebarShowHome}/{edited.SidebarShowFavorites}/{edited.SidebarShowCloud}/{edited.SidebarShowComputer}/{edited.SidebarShowRemote} "
+            + $"侧边栏分组（最新访问/主目录/收藏夹/云存储/此电脑/远程）="
+            + $"{edited.SidebarShowRecent}/{edited.SidebarShowHome}/{edited.SidebarShowFavorites}/{edited.SidebarShowCloud}/{edited.SidebarShowComputer}/{edited.SidebarShowRemote} "
             + $"远程位置={settings.RemoteLocations.Count} "
             + $"主目录文件夹（桌面/文档/下载/图片/音乐/视频）="
             + $"{edited.SidebarHomeDesktop}/{edited.SidebarHomeDocuments}/{edited.SidebarHomeDownloads}/"
@@ -1017,7 +1047,8 @@ public sealed partial class MainViewModel : ObservableObject
             _settings.Current.SidebarShowFavorites,
             _settings.Current.SidebarShowCloud,
             _settings.Current.SidebarShowComputer,
-            _settings.Current.SidebarShowRemote);
+            _settings.Current.SidebarShowRemote,
+            _settings.Current.SidebarShowRecent);
 
         // 「远程」分组里有哪些位置（SFTP / FTP）；改过连接配置就把已有连接作废，下次重连
         Sidebar.ApplyRemoteLocations(_settings.Current.RemoteLocations);
@@ -1220,9 +1251,44 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void OnSidebarNavigateRequested(object? sender, string path)
     {
+        // 「最新访问」不是普通目录：侧边栏点它 → 开一个**专用标签页**列出最近访问过的目录与文件
+        if (_fileSystem.IsRecentViewPath(path))
+        {
+            OpenRecentView();
+            return;
+        }
+
         if (ActivePane.ActiveTab is { } tab)
         {
             _ = tab.NavigateAsync(path);
+        }
+    }
+
+    /// <summary>
+    /// 在活动窗格里把「最新访问」标签页切到前面；已经开着就直接切过去（不重复开）。
+    /// </summary>
+    private void OpenRecentView()
+    {
+        if (ActivePane.Tabs.FirstOrDefault(t => _fileSystem.IsRecentViewPath(t.CurrentPath)) is { } existing)
+        {
+            ActivePane.ActiveTab = existing;
+            Log.Write("「最新访问」：切到已打开的标签页");
+            return;
+        }
+
+        _ = ActivePane.OpenInNewTabAsync(RecentView.Path);
+        Log.Write("「最新访问」：新开标签页");
+    }
+
+    /// <summary>「最新访问」列表变了 → 让开着的「最新访问」标签页重读一遍（没开就什么都不做）。</summary>
+    private void OnRecentItemsChanged(object? sender, EventArgs e)
+    {
+        foreach (var pane in new[] { PrimaryPane, SecondaryPane })
+        {
+            foreach (var tab in pane.Tabs.ToList())
+            {
+                _ = tab.ReloadRecentViewAsync();
+            }
         }
     }
 
@@ -1234,6 +1300,9 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private void OnSidebarUnpinRequested(object? sender, string path) => UnpinFolderByPath(path);
+
+    /// <summary>右键「最新访问」节点 → 清空整个列表。</summary>
+    private void OnSidebarRecentClearRequested(object? sender, EventArgs e) => _recents.Clear();
 
     /// <summary>
     /// 一次“解压到目录”完成后，把正开在**解压到的目录**与**它的父目录**里的标签页重新枚举一遍
@@ -1322,6 +1391,14 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 var current = Normalize(tab.CurrentPath);
 
+                // 「最新访问」列表里的行是真实文件：它们被删 / 被移走之后要重新筛一遍
+                // （当前“目录”是虚拟路径，永远不会出现在 affected 里）
+                if (tab.IsRecentView)
+                {
+                    _ = tab.ReloadRecentViewAsync();
+                    continue;
+                }
+
                 if (e.IsDelete && DeletedAncestorOf(e.SourcePaths, current) is { } deleted)
                 {
                     if (_fileSystem.GetParentDirectory(deleted) is { } parent)
@@ -1362,12 +1439,34 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void OnPaneNavigated(object? sender, string path)
     {
+        RecordRecentDirectory(path);
+
         if (ReferenceEquals(sender, ActivePane))
         {
             RaiseActivePaneDependent();
         }
+    }
 
-        _ = path;
+    /// <summary>
+    /// 把一次导航过的目录记进「最新访问」。只记本地目录与远程位置：
+    /// 压缩包内的虚拟路径不是真实位置（记下来重启后也不一定进得去），跳过；
+    /// 「最新访问」视图自己更是不能记（否则会把自己排到最前面）。
+    /// 会话恢复期间的导航不算用户行为，见 <see cref="_restoringSession" />。
+    /// （文件是“用默认程序打开”时由 <c>FolderTabViewModel</c> 记的，两边共用同一个服务。）
+    /// </summary>
+    private void RecordRecentDirectory(string path)
+    {
+        if (_restoringSession || string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        if (_fileSystem.IsRecentViewPath(path) || _fileSystem.IsInsideArchive(path))
+        {
+            return;
+        }
+
+        _recents.Add(path, isDirectory: true);
     }
 
     private void RaiseActivePaneDependent()

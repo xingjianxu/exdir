@@ -132,7 +132,11 @@ $configRoot = Join-Path $workRoot 'cfg'
 New-Item -ItemType Directory -Force -Path (Join-Path $configRoot 'exdir') | Out-Null
 $settingsPath = Join-Path $configRoot 'exdir\config.json'
 $originalXdg = $env:XDG_CONFIG_HOME
+$originalXdgData = $env:XDG_DATA_HOME
 $env:XDG_CONFIG_HOME = $configRoot
+# 「最新访问」写在 XDG_DATA_HOME 下，而这个脚本会点远程位置导航：
+# 也指到临时工作目录里，免得把 sftp:// / ftp:// 写进用户的 recents.json
+$env:XDG_DATA_HOME = $configRoot
 $logPath = Join-Path $env:LOCALAPPDATA 'exdir\exdir.log'
 $remoteCache = Join-Path $env:LOCALAPPDATA 'exdir\remote-cache'
 
@@ -734,6 +738,7 @@ finally {
     Get-Process -Name exdir -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Kill() } catch { } }
 
     $env:XDG_CONFIG_HOME = $originalXdg
+    $env:XDG_DATA_HOME = $originalXdgData
     if (-not $env:EXDIR_KEEP_TEST_DIR) { Remove-Item $workRoot -Recurse -Force -ErrorAction SilentlyContinue } else { Write-Host "保留工作目录: $workRoot" }
     if (Test-Path $remoteCache) { Remove-Item $remoteCache -Recurse -Force -ErrorAction SilentlyContinue }
 }

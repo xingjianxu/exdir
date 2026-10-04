@@ -48,6 +48,7 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _sidebarShowCloud;
     private bool _sidebarShowComputer;
     private bool _sidebarShowRemote;
+    private bool _sidebarShowRecent;
     private bool _sidebarHomeDesktop;
     private bool _sidebarHomeDocuments;
     private bool _sidebarHomeDownloads;
@@ -101,6 +102,7 @@ public sealed class SettingsViewModel : ObservableObject
         _useBuiltInContextMenu = settings.UseBuiltInContextMenu;
         _startWithWindows = settings.StartWithWindows;
         _sidebarShowRemote = settings.SidebarShowRemote;
+        _sidebarShowRecent = settings.SidebarShowRecent;
 
         // 远程位置：编辑的是一份**深拷贝**（设置窗口自己不改 config.json）
         foreach (var location in settings.RemoteLocations)
@@ -447,6 +449,13 @@ public sealed class SettingsViewModel : ObservableObject
     {
         get => _sidebarShowRemote;
         set => SetAndNotify(ref _sidebarShowRemote, value);
+    }
+
+    /// <summary>显示「最新访问」分组（最近导航过的目录，排在最上面）。</summary>
+    public bool SidebarShowRecent
+    {
+        get => _sidebarShowRecent;
+        set => SetAndNotify(ref _sidebarShowRecent, value);
     }
 
     // ------------------------------------------------------------------ 远程位置（SFTP / FTP）

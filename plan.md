@@ -82,6 +82,13 @@
     拖动时有插入位置提示条，松手立即写 `config.json`（也是“工具条上的拖拽是由应用自己识别手势的”首个实现）。
   - 侧边栏“收藏夹”分组（2026-09，S7c）：`主目录` 下面多一个 `收藏夹` 分组，子项与工具条固定目录
     同序同名；把目录从文件列表 / 侧边栏拖到该分组或其子行上即收藏；右键收藏项可取消收藏。
+  - “最新访问”一个入口 + 专用标签页（2026-10，S7d；改版于同日）：侧边栏里只有一个入口（排在最上面，
+    不再平铺子项、不带展开箭头），点它在一个**专用标签页**（虚拟路径 `exdir://recent`）里列出最近访问过的
+    **目录与文件**，按访问时间倒序；行是真实路径（能打开 / 复制 / 删除 / 拖出去），但“当前目录”不是真目录，
+    粘贴 / 新建 / 终端 / 拖入一律拒绝。列表落盘在 `%USERPROFILE%\.local\share\exdir\recents.json`
+    （不在 config.json 里，上限 50 条；旧格式只有 `Folders` 时自动迁移），右键节点可「清空最新访问」；
+    可在设置「侧边栏」页关掉（`SidebarShowRecent`）。回归 `tools\test-recent.ps1`，见 AGENTS.md 第 4 节
+    「「最新访问」虚拟视图」与第 6 节第 107 条。
   - 云文件夹的同步状态列（2026-09，S23）：云同步目录（OneDrive / WPS 云盘 / 其它 CFAPI 同步根）
     的列表最前面多出一列状态图标（已同步 / 仅在云端 / 已固定 / 正在同步 / 同步错误 / 未同步），
     可点列头排序；非云目录整列隐藏。
@@ -106,9 +113,14 @@
     侧边栏「远程」分组点一下就能浏览（列目录 / 进子目录 / 就地展开 / 排序 / 面包屑），
     双击文件先下到本地再看，右键「下载到…」/「复制」/ 拖出去都能把远程内容弄到本地；**远程一律只读**。
     见 AGENTS.md 第 4 节“远程位置”，回归 `tools\test-remote.ps1` + `tools\remote-smoke` + `tools\remote-test-server`。
-  - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、F6、F10。
+  - 快捷键：Alt+←/→/↑、F5、Ctrl+T/W、Ctrl+H、Ctrl+B、Ctrl+F（Everything 搜索）、F6、F10。
+  - **Everything 快速搜索**（2026-10，阶段 4 的 S12 落地版）：导航条右侧搜索框（`Ctrl+F` 聚焦），
+    **默认搜索范围 = 当前目录及其子目录**，旁边「整机」开关放到全部索引；结果替换当前标签页的列表，
+    双击 = 跳到所在目录并选中。靠随包分发的 Everything SDK 客户端 `native\x64\Everything64.dll`
+    （要求本机装并运行 Everything）—— 见 AGENTS.md 第 4 节“Everything 快速搜索”，
+    回归 `tools\test-search.ps1`（10 用例 47 断言）+ `tools\everything-smoke`。
   - 工具脚本：`capture.ps1`（截图）、`inspect-ui.ps1`（UIA 控件树 / 点击）、`publish.ps1`（Release 产物）、`make-icon.ps1`。
-  - Release 产物：`dist\win-x64\exdir.exe`（自包含 + 裁剪，2026-10 含远程位置后是 **193 文件 / 93 MB**，已验证可运行）。
+  - Release 产物：`dist\win-x64\exdir.exe`（自包含 + 裁剪，2026-10 含远程位置与 Everything 搜索后是 **196 文件 / 93 MB**，已验证可运行）。
   - 已知技术债：见本文件第 5 节。
 
 ---
@@ -387,17 +399,46 @@
 
 ### Phase 4 — 搜索 / 过滤 / 视图
 
-- [ ] **S11 当前目录快速过滤**
-  - 目标：导航条右侧输入框，实时（去抖 120 ms）过滤当前列表（支持 `*`/`?` 通配）。
-  - 涉及：`Views/DetailsView.xaml(.cs)`、`ViewModels/FolderTabViewModel.cs`。
-  - 验收：1 万项目录中输入时无明显卡顿（过滤在后台线程 + 结果整体替换）。
-  - 预估：~250 行，2 个文件。
+- [~] **S11 当前目录快速过滤** —— **不做**（2026-10）
+  - 原计划：导航条右侧输入框实时（去抖 120 ms）过滤已加载的当前列表（`*` / `?` 通配）。
+  - 落地情况：下面的 S12 改成 **Everything 快速搜索** 后，“当前目录”这个范围上给的已经是同一件事
+    （而且连子目录一起搜），再做一套“只过滤已加载行”的输入框会多一个入口、多一套状态。
+    以后真需要“不递归、只过滤已经在列表里的行”时再单开一步。
 
-- [ ] **S12 递归搜索**
-  - 目标：`Ctrl+F` 打开搜索面板，后台递归枚举（可取消、可暂停），结果为“列表 + 所在目录”列。
-  - 涉及：新增 `ViewModels/SearchViewModel.cs`、`Views/SearchPanel.xaml(.cs)`、`Services/IFileSystemService.cs`（加递归枚举）。
-  - 验收：搜索 `C:\Users` 时 UI 不卡；能在中途取消；结果双击跳转到文件所在目录并选中。
-  - 预估：~550 行，5 个文件。
+- [x] **S12 递归搜索 —— 改成基于 Everything 的快速搜索**（2026-10 完成）
+  - 目标（原计划）：`Ctrl+F` 打开搜索面板，后台递归枚举（可取消、可暂停），结果为“列表 + 所在目录”列。
+  - **实际做法**：不自研递归枚举，而是查本机 **Everything** 的索引（随包分发 Everything SDK 的
+    `Everything64.dll` 当 IPC 客户端）：
+    - 导航条右侧一个搜索框（`Ctrl+F` 聚焦）+「整机」范围开关 + 结果计数；输入去抖 180 ms，
+      结果**替换当前标签页的列表**，`Esc` / 「×」/ 换目录都退出搜索模式；
+    - **默认范围 = 当前目录及其子目录**（`path:"<当前目录>\"`，结尾反斜杠必须有，见 AGENTS.md 第 101 条），
+      可切「整机」；结果行在名称右侧用暗色小字标出相对搜索根的目录；
+    - 双击结果 = 跳到它所在目录并选中（目录结果直接进去），右键菜单另有「打开所在文件夹」/「打开」；
+    - 状态栏「N 项」、列头排序、多选、复制 / 剪切 / 删除 / 压缩 / 属性、右键菜单全都不用改；
+    - 只在真实目录里可用（压缩包内 / 远程位置 / 「此电脑」禁用并写明原因）；`F5` 在搜索模式 = 重搜；
+    - 找不到 DLL / Everything 没运行时**不动列表**，只在提示条里说明（`EXDIR_EVERYTHING_DLL` 可覆盖 DLL 路径）；
+    - **索引没覆盖当前目录时会说明原因**（2026-10 补）：当前目录范围一个都没搜到、而目录里确实有东西、
+      且 Everything 里这个目录下一条都没有 → 提示条直说“Everything 的索引里没有这个目录”，并给出办法：
+      以管理员身份装一次 Everything 服务（`Everything.exe -install-service`，或「工具 → 选项 → 常规」）
+      让整块磁盘被索引，或把这个目录加进「工具 → 选项 → 索引 → 文件夹」。
+      没这句提示时，只加了「文件夹索引」的机器上看起来就像“搜索范围跑到了程序自己的工作目录”
+      （根因、以及为什么 subst 盘符当不了“索引之外的目录”，见 AGENTS.md 第 106 条）。
+  - 涉及（新增）：`Services/IEverythingSearchService.cs`、`Services/EverythingSearchService.cs`、
+    `Services/Native/EverythingInterop.cs`、`Helpers/EverythingLocator.cs`、`Helpers/EverythingQuery.cs`、
+    `Views/SearchBarView.xaml(.cs)`、`tools/everything-smoke`、`tools/test-search.ps1`。
+  - 涉及（改动）：`ViewModels/FolderTabViewModel.cs`（搜索状态 / 去抖 / 扁平结果 / 守卫）、
+    `ViewModels/FileItemViewModel.cs`（`SearchPathText`）、`Views/NavigationBarView.xaml`、
+    `Views/DetailsView.xaml(.cs)`（相对目录 + 右键菜单 + `EmptyHint` / `ErrorTitle` + 错误提示条可关掉）、
+    `ViewModels/MainViewModel.cs`（`FocusActiveSearchCommand`）、`ViewModels/PanelViewModel.cs`、
+    `MainWindow.xaml(.cs)`（`Ctrl+F` + 「编辑」菜单项）、`App.xaml.cs`（DI）、`Themes/ExdirTheme.xaml`
+    （勾选式开关样式 + 三个主题各一份勾选底色）、`exdir.csproj`、`tools/publish.ps1`、`native/`。
+  - 验收：`tools/everything-smoke`（40 断言：查询串拼接 10 + 真实查询 13 + 结果映射 14 + 索引覆盖检查 3）与
+    `tools/test-search.ps1`（11 用例 61 断言，UIA，不需交互桌面）全过，**Debug 与 `dist\win-x64\exdir.exe`
+    各跑一次**（裁剪版上注册表探测与委托式原生互操作都正常）；既有的 `test-command-line.ps1`（75）、
+    `test-settings.ps1`（117）、`test-archive-copy.ps1`（62）仍全过。
+  - 未做：本机没有交互桌面，搜索框的**视觉布局**只用 UIA 几何确认过（导航条上 200×30 DIP，
+    `tool\capture.ps1` 截图在全黑桌面上拿不到内容，与第 18 条一致），没肉看过；结果行右侧那条相对目录
+    在极窄窗格里最多外溢 140 DIP（列宽下限 80 DIP 时），没有做自适应降级。
 
 - [ ] **S13 图标 / 紧凑 / 缩略图视图**
   - 目标：落地已预留的 `ViewLayout` 枚举，导航条加视图切换按钮，每个标签页独立记住布局。

@@ -136,6 +136,7 @@ $KeyMap = [ordered]@{
     '显示工具条'             = 'toolbar'
     '显示侧边栏'             = 'sidebar'
     '双窗格模式'             = 'dualPane'
+    '显示「最新访问」分组'   = 'sidebarRecent'
     '显示「主目录」分组'     = 'sidebarHome'
     '显示「收藏夹」分组'     = 'sidebarFavorites'
     '显示「云存储」分组'     = 'sidebarCloud'
@@ -160,7 +161,7 @@ $CategoryMap = [ordered]@{
     '外观'     = @('squareTabCorners', 'animations')
     '布局'     = @('columnAutoFit', 'toolbar', 'sidebar', 'dualPane')
     '启动'     = @('startWithWindows')
-    '侧边栏'   = @('sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer', 'sidebarRemote',
+    '侧边栏'   = @('sidebarRecent', 'sidebarHome', 'sidebarFavorites', 'sidebarCloud', 'sidebarComputer', 'sidebarRemote',
                     'sidebarHomeDesktop', 'sidebarHomeDocuments', 'sidebarHomeDownloads',
                     'sidebarHomePictures', 'sidebarHomeMusic', 'sidebarHomeVideos')
     '远程'     = @()
@@ -614,7 +615,8 @@ Set-Setting 'CompressionOutputDirectory' ''
 Set-Setting 'SquareTabCorners' $true
 # 主题默认是「跟随系统」：用例 9 要断言“初值 = 跟随系统”，历史值同样会让它不可控
 Set-Setting 'Theme' 0
-# 侧边栏四个分组默认全部显示：不先归位的话，用例 1 的“初始值一致”与用例 7 都会被历史值干扰
+# 侧边栏分组默认全部显示：不先归位的话，用例 1 的“初始值一致”与用例 7 都会被历史值干扰
+Set-Setting 'SidebarShowRecent' $true
 Set-Setting 'SidebarShowHome' $true
 Set-Setting 'SidebarShowFavorites' $true
 Set-Setting 'SidebarShowCloud' $true

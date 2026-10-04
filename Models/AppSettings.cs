@@ -6,7 +6,7 @@ namespace Exdir.Models;
 /// <summary>持久化到 <c>%USERPROFILE%\.config\exdir\config.json</c> 的应用设置。</summary>
 public sealed class AppSettings
 {
-    public const int CurrentSchemaVersion = 10;
+    public const int CurrentSchemaVersion = 11;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -38,6 +38,12 @@ public sealed class AppSettings
 
     /// <summary>侧边栏「远程」分组（SFTP / FTP 位置）是否显示。</summary>
     public bool SidebarShowRemote { get; set; } = true;
+
+    /// <summary>
+    /// 侧边栏「最新访问」分组（最近导航过的目录，排在最上面）是否显示。
+    /// 列表本身落盘在 <c>%USERPROFILE%\.local\share\exdir\recents.json</c>，不在 config.json 里。
+    /// </summary>
+    public bool SidebarShowRecent { get; set; } = true;
 
     // ---------- 侧边栏：主目录里显示哪些标准文件夹 ----------
     // 侧边栏「主目录」分组本身（SidebarShowHome）控制的是这个分组在不在；

@@ -18,6 +18,7 @@ public sealed class FileItemViewModel : ObservableObject
     public const double IndentPerLevel = 14;
 
     private readonly string _displayName;
+    private readonly string? _searchPath;
     private readonly List<FileItemViewModel> _children = new();
 
     private bool _isExpanded;
@@ -25,11 +26,17 @@ public sealed class FileItemViewModel : ObservableObject
     private bool _isDropTarget;
     private ImageSource? _icon;
 
-    public FileItemViewModel(FileSystemEntry entry, bool showExtensions, ColumnLayout columns, int depth = 0)
+    public FileItemViewModel(
+        FileSystemEntry entry,
+        bool showExtensions,
+        ColumnLayout columns,
+        int depth = 0,
+        string? searchPath = null)
     {
         Entry = entry;
         Columns = columns;
         Depth = depth;
+        _searchPath = string.IsNullOrEmpty(searchPath) ? null : searchPath;
 
         _displayName = !entry.IsDirectory && !showExtensions && entry.Name.LastIndexOf('.') is var dot && dot > 0
             ? entry.Name[..dot]
@@ -53,6 +60,16 @@ public sealed class FileItemViewModel : ObservableObject
     public string DisplayName => _displayName;
 
     public string FullPath => Entry.FullPath;
+
+    /// <summary>
+    /// 搜索结果里这一项相对搜索根的目录（例如 <c>sub\deep</c>）；不在搜索模式时为 null。
+    /// 显示在名称列右侧（暗色小字）—— 递归结果里光看文件名根本分不清哪个是哪个。
+    /// “整机”范围的搜索给的是完整目录（没有共同根可比）。
+    /// </summary>
+    public string? SearchPathText => _searchPath;
+
+    /// <summary>名称列右侧要不要显示那条目录（直接位于搜索根里的项不显示）。</summary>
+    public bool HasSearchPath => _searchPath is not null;
 
     public bool IsDirectory => Entry.IsDirectory;
 

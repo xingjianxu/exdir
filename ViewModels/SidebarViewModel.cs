@@ -47,6 +47,9 @@ public enum SidebarNodeKind
     /// <summary>一个配置好的远程位置（SFTP / FTP）；展开时列的是服务器上的子目录。</summary>
     Remote,
 
+    /// <summary>「最新访问」节点（列表本身在专用标签页里，这个节点只是一个入口）。</summary>
+    RecentGroup,
+
     /// <summary>普通文件夹。</summary>
     Folder,
 }
@@ -146,12 +149,16 @@ public sealed partial class SidebarViewModel : ObservableObject
     /// <summary>「远程」分组的节点引用（SFTP / FTP 位置，见 <see cref="ApplyRemoteLocations" />）。</summary>
     private SidebarNodeViewModel? _remoteGroup;
 
+    /// <summary>「最新访问」节点的引用：一个带虚拟路径的叶子节点，点它由 MainViewModel 开专用标签页。</summary>
+    private SidebarNodeViewModel? _recentGroup;
+
     // 分组显示开关（由 MainViewModel 在启动与设置改动时推过来，见 ApplyGroupVisibility）
     private bool _showHome = true;
     private bool _showFavorites = true;
     private bool _showCloud = true;
     private bool _showComputer = true;
     private bool _showRemote = true;
+    private bool _showRecent = true;
 
     /// <summary>
     /// 「主目录」分组里当前显示哪几个标准文件夹（由设置推过来，见 <see cref="ApplyHomeFolders" />）。
@@ -188,6 +195,9 @@ public sealed partial class SidebarViewModel : ObservableObject
     /// <summary>用户右键收藏项选择「取消收藏」。参数为要移除的目录路径。</summary>
     public event EventHandler<string>? UnpinRequested;
 
+    /// <summary>用户右键「最新访问」节点选择「清空最新访问」。</summary>
+    public event EventHandler? RecentClearRequested;
+
     public ObservableCollection<SidebarNodeViewModel> Roots { get; } = new();
 
     /// <summary>重新构建整棵树（磁盘热插拔后调用）。</summary>
@@ -199,6 +209,7 @@ public sealed partial class SidebarViewModel : ObservableObject
         _homeGroup = BuildHomeGroup();
         SyncHomeFolders(_homeGroup);
         _favoritesGroup = BuildFavoritesGroup();
+        _recentGroup = BuildRecentGroup();
         _cloudGroup = BuildCloudGroup();
         _remoteGroup = BuildRemoteGroup();
         ApplyRemoteLocations(_remoteLocations.Locations);
@@ -297,16 +308,17 @@ public sealed partial class SidebarViewModel : ObservableObject
     }
 
     /// <summary>
-    /// 按设置显示 / 隐藏侧边栏的五个分组（设置窗口「侧边栏」页）。
+    /// 按设置显示 / 隐藏侧边栏的六个分组（设置窗口「侧边栏」页）。
     /// 启动时与设置改动时各调一次。
     /// </summary>
-    public void ApplyGroupVisibility(bool home, bool favorites, bool cloud, bool computer, bool remote)
+    public void ApplyGroupVisibility(bool home, bool favorites, bool cloud, bool computer, bool remote, bool recent)
     {
         _showHome = home;
         _showFavorites = favorites;
         _showCloud = cloud;
         _showComputer = computer;
         _showRemote = remote;
+        _showRecent = recent;
 
         RefreshRoots();
     }
@@ -480,6 +492,9 @@ public sealed partial class SidebarViewModel : ObservableObject
         }
     }
 
+    /// <summary>请求清空「最新访问」（右键那个节点的「清空最新访问」）。</summary>
+    public void RequestRecentClear() => RecentClearRequested?.Invoke(this, EventArgs.Empty);
+
     /// <summary>
     /// 把工具条上的固定目录镜像到「收藏夹」分组。固定目录增删或重排时由 MainViewModel 调用。
     /// 只重建这一个分组的子节点，其它分组（以及用户在树里展开的状态）不受影响。
@@ -520,7 +535,8 @@ public sealed partial class SidebarViewModel : ObservableObject
 
     private IEnumerable<SidebarNodeViewModel> AllGroups()
     {
-        // 顺序与 RefreshRoots 里的 desired 一致：收藏夹排在最上面（用户最常用）
+        // 顺序与 RefreshRoots 里的 desired 一致：最新访问排最上面，其次收藏夹
+        if (_recentGroup is not null) { yield return _recentGroup; }
         if (_favoritesGroup is not null) { yield return _favoritesGroup; }
         if (_homeGroup is not null) { yield return _homeGroup; }
         if (_cloudGroup is not null) { yield return _cloudGroup; }
@@ -535,8 +551,9 @@ public sealed partial class SidebarViewModel : ObservableObject
     /// </summary>
     private void RefreshRoots()
     {
-        var desired = new List<SidebarNodeViewModel>(5);
-        // 「收藏夹」放最上面（与 AllGroups 的顺序保持一致）
+        var desired = new List<SidebarNodeViewModel>(6);
+        // 「最新访问」与「收藏夹」放最上面（与 AllGroups 的顺序保持一致）
+        if (_showRecent && _recentGroup is not null) { desired.Add(_recentGroup); }
         if (_showFavorites && _favoritesGroup is not null) { desired.Add(_favoritesGroup); }
         if (_showHome && _homeGroup is not null) { desired.Add(_homeGroup); }
         if (_showCloud && _cloudGroup is not null) { desired.Add(_cloudGroup); }
@@ -633,6 +650,24 @@ public sealed partial class SidebarViewModel : ObservableObject
                 group.Children.Insert(i, desired[i]);
             }
         }
+    }
+
+    private SidebarNodeViewModel BuildRecentGroup()
+    {
+        // 「最新访问」在侧边栏里只有一个入口（不再把最近访问过的目录平铺在树里）：
+        // 它带一个虚拟路径，点一下就开一个专用标签页，按访问时间倒序列出最近访问过的目录与文件。
+        // canExpand: false —— 它没有可枚举的子项，不画展开箭头。
+        var node = new SidebarNodeViewModel(
+            RecentView.DisplayName,
+            RecentView.Path,
+            FileTypeHelper.RecentGlyph,
+            SidebarNodeKind.RecentGroup,
+            canExpand: false);
+        node.ChildrenLoaded = true;
+
+        // 进索引：活动标签页在「最新访问」时，侧边栏能把这一行选上（SidebarView.SyncToPath）
+        _index[RecentView.Path] = node;
+        return node;
     }
 
     private SidebarNodeViewModel BuildFavoritesGroup()

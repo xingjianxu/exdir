@@ -95,11 +95,13 @@ public partial class App : Application
 
         // 基础设施
         services.AddSingleton<ISettingsService, SettingsService>();
+
+        // 侧边栏「最新访问」：最近导航过的目录，落盘到 ~/.local/share/exdir/recents.json（独立于 config.json）
+        services.AddSingleton<IRecentItemsService, RecentItemsService>();
         services.AddSingleton<IKnownFolderService, KnownFolderService>();
         services.AddSingleton<INetworkLocationService, NetworkLocationService>();
         services.AddSingleton<ICloudSyncService, CloudSyncService>();
-        services.AddSingleton<IFileSystemService, FileSystemService>();
-        services.AddSingleton<IDriveService, DriveService>();
+        services.AddSingleton<IFileSystemService, FileSystemService>();        services.AddSingleton<IDriveService, DriveService>();
         services.AddSingleton<IShellService, ShellService>();
         services.AddSingleton<IShellIconService, ShellIconService>();
         services.AddSingleton<IShellContextMenuService, ShellContextMenuService>();
@@ -120,6 +122,9 @@ public partial class App : Application
         // 包内条目没有真实路径，写不进系统剪贴板，所以“包内复制”另记在内存里（粘贴时才解出来）
         services.AddSingleton<IArchiveClipboardService, ArchiveClipboardService>();
         services.AddSingleton<IDialogService, DialogService>();
+
+        // 「基于 Everything 的快速搜索」：只读地查本机的 Everything 索引（随包分发的 Everything64.dll）
+        services.AddSingleton<IEverythingSearchService, EverythingSearchService>();
 
         // ViewModel
         services.AddSingleton<MainViewModel>();

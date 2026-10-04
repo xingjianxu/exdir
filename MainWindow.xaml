@@ -29,6 +29,7 @@
             <KeyboardAccelerator Key="F10" Invoked="Accelerator_ToggleDualPane" />
             <KeyboardAccelerator Key="L" Modifiers="Control" Invoked="Accelerator_EditPath" />
             <KeyboardAccelerator Key="D" Modifiers="Menu" Invoked="Accelerator_EditPath" />
+            <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="Accelerator_FocusSearch" />
         </Grid.KeyboardAccelerators>
 
         <Grid.RowDefinitions>
@@ -131,6 +132,10 @@
                             Command="{x:Bind ViewModel.EditActivePathCommand}"
                             KeyboardAcceleratorTextOverride="Ctrl+L"
                             Text="编辑地址栏" />
+                        <MenuFlyoutItem
+                            Command="{x:Bind ViewModel.FocusActiveSearchCommand}"
+                            KeyboardAcceleratorTextOverride="Ctrl+F"
+                            Text="搜索（Everything）" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem
                             Command="{x:Bind ViewModel.CopyCurrentPathCommand}"

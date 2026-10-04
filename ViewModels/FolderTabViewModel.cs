@@ -35,6 +35,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private readonly IRemoteFileService _remote;
     private readonly IDialogService _dialogs;
     private readonly IKnownFolderService _knownFolders;
+    private readonly IEverythingSearchService _search;
+    private readonly IRecentItemsService _recents;
 
     private readonly List<string> _backStack = new();
     private readonly List<string> _forwardStack = new();
@@ -62,6 +64,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private IReadOnlyList<FileItemViewModel> _selection = Array.Empty<FileItemViewModel>();
     private FileSortColumn _sortColumn = FileSortColumn.Name;
     private bool _sortAscending = true;
+
+    /// <summary>
+    /// 「最新访问」视图的默认顺序就是**访问时间倒序**（服务给什么顺序就是什么顺序，不排），
+    /// 为 true 时 <see cref="BuildRootNodes" /> 不排序。用户点过列头（或拨了“文件夹排在文件前面”
+    /// 这类排序设置）之后它就变成 false，从此按选中的列排 —— 与普通目录一致。
+    /// </summary>
+    private bool _sortByAccessOrder;
     private bool _foldersFirst;
     private bool _showExtensions = true;
     private bool _enableListAnimations = true;
@@ -72,6 +81,30 @@ public sealed partial class FolderTabViewModel : ObservableObject
     private string? _statusTargetPath;
     private CancellationTokenSource? _extractCts;
     private CancellationTokenSource? _compressCts;
+
+    // ---- 「基于 Everything 的快速搜索」（见 AGENTS.md 第 4 节）
+
+    /// <summary>搜索框里的文本（每个标签页各自一份，跟着标签页走）。</summary>
+    private string _searchQuery = string.Empty;
+
+    /// <summary>列表里现在装的是搜索结果（而不是当前目录的枚举结果）。</summary>
+    private bool _isSearchMode;
+
+    /// <summary>搜索范围是不是“整机”（false = 当前目录及其子目录，默认）。</summary>
+    private bool _searchAllDrives;
+
+    /// <summary>搜索框旁边的计数文本（“12 项” / “前 5000 项 / 共 81234 项”）。</summary>
+    private string? _searchStatusText;
+
+    /// <summary>搜索的去抖 / 取消令牌：每敲一个字就换一个新的，旧的那次结果直接丢弃。</summary>
+    private CancellationTokenSource? _searchCts;
+
+    /// <summary>
+    /// 当前目录**自己枚举出来的**条目数（不含搜索结果、不含就地展开的行）。
+    /// 一次搜索一个都没命中时用它区分两种情况：目录本来就是空的（正常）
+    /// 与目录里有东西却没搜到（多半是 Everything 的索引没覆盖这个目录）。每次导航 / 刷新都重算。
+    /// </summary>
+    private int _directoryEntryCount;
 
     public FolderTabViewModel(
         IFileSystemService fileSystem,
@@ -86,7 +119,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         ICompressionService compression,
         IRemoteFileService remote,
         IKnownFolderService knownFolders,
-        IDialogService dialogs)
+        IDialogService dialogs,
+        IEverythingSearchService search,
+        IRecentItemsService recents)
     {
         _fileSystem = fileSystem;
         _shell = shell;
@@ -101,6 +136,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
         _remote = remote;
         _knownFolders = knownFolders;
         _dialogs = dialogs;
+        _search = search;
+        _recents = recents;
 
         _foldersFirst = settings.Current.FoldersFirst;
         _showExtensions = settings.Current.ShowExtensions;
@@ -151,6 +188,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsInsideArchive));
                 OnPropertyChanged(nameof(ArchiveFile));
                 OnPropertyChanged(nameof(IsRemote));
+                OnPropertyChanged(nameof(IsRecentView));
+                OnPropertyChanged(nameof(CanSearch));
+                OnPropertyChanged(nameof(SearchHint));
             }
         }
     }
@@ -176,6 +216,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// </summary>
     public bool IsRemote => _fileSystem.IsRemotePath(_currentPath);
 
+    /// <summary>
+    /// 当前标签页是「最新访问」虚拟视图（<c>exdir://recent</c>）：列表里是最近访问过的目录与文件，
+    /// 按访问时间倒序，双击进入 / 打开它们。它没有上一级、不能搜索，也不能往里写东西
+    /// （当前“目录”不是真目录）。
+    /// </summary>
+    public bool IsRecentView => _fileSystem.IsRecentViewPath(_currentPath);
+
     /// <summary>地址栏面包屑分段（随 <see cref="CurrentPath"/> 变化整体替换）。</summary>
     public IReadOnlyList<PathSegmentViewModel> PathSegments
     {
@@ -200,6 +247,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
                 return remote.Path == "/" ? RemotePath.RootDisplayOf(remote) : RemotePath.NameOf(remote);
             }
 
+            if (IsRecentView)
+            {
+                return RecentView.DisplayName;
+            }
+
             try
             {
                 var name = new DirectoryInfo(_currentPath).Name;
@@ -215,7 +267,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// <summary>标签页标题。</summary>
     public string TabHeader => string.IsNullOrEmpty(_currentPath) ? "此电脑" : CurrentDirectoryName;
 
-    public string TooltipText => _currentPath;
+    public string TooltipText => IsRecentView ? RecentView.DisplayName : _currentPath;
 
     /// <summary>路径栏中可编辑的文本。</summary>
     public string PathInput
@@ -307,11 +359,18 @@ public sealed partial class FolderTabViewModel : ObservableObject
             if (SetProperty(ref _errorMessage, value))
             {
                 OnPropertyChanged(nameof(HasError));
+                OnPropertyChanged(nameof(ErrorTitle));
             }
         }
     }
 
     public bool HasError => !string.IsNullOrEmpty(_errorMessage);
+
+    /// <summary>
+    /// 用户关掉错误 / 提示条时清掉文案：<c>InfoBar.IsOpen</c> 是 OneWay 绑到 <see cref="HasError" /> 的，
+    /// 控件自己关掉只会改本地值，不清 VM 里这份的话下次换了内容也弹不出来（见 AGENTS.md 第 90 条）。
+    /// </summary>
+    public void ClearError() => ErrorMessage = null;
 
     /// <summary>
     /// 一次操作成功后的提示（目前只有「解压到下载文件夹」）：文件列表顶部的绿色 InfoBar 显示它，
@@ -410,6 +469,432 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     public bool CanGoUp => !string.IsNullOrEmpty(_currentPath) && _fileSystem.GetParentDirectory(_currentPath) is not null;
 
+    // ------------------------------------------------------------------ Everything 快速搜索
+
+    /// <summary>
+    /// 搜索去的去抖时长（毫秒）。Everything 本身几毫秒就答，等太久反而拖手感；
+    /// 一点去抖只是为了不在快速输入时白发一堆查询。
+    /// </summary>
+    private const int SearchDebounceMs = 180;
+
+    /// <summary>
+    /// 当前标签页能不能搜索：得站在一个**真实目录**里。
+    /// 压缩包内 / 远程位置的东西不在 Everything 的索引里，搜了只会得到空结果；
+    /// “此电脑”这种没有路径的标签页也没有可限定的范围。
+    /// </summary>
+    public bool CanSearch => !IsInsideArchive && !IsRemote && !IsRecentView && !string.IsNullOrEmpty(_currentPath);
+
+    /// <summary>搜索框的悬停提示（不可用时写明原因，不至于让人以为功能没做）。</summary>
+    public string SearchHint
+    {
+        get
+        {
+            if (IsInsideArchive)
+            {
+                return "压缩包内不支持搜索";
+            }
+
+            if (IsRemote)
+            {
+                return "远程位置不支持搜索";
+            }
+
+            if (IsRecentView)
+            {
+                return "「最新访问」列表不支持搜索";
+            }
+
+            if (string.IsNullOrEmpty(_currentPath))
+            {
+                return "先打开一个目录再搜索";
+            }
+
+            return _search.IsAvailable ? "搜索（Everything）" : "未检测到 Everything";
+        }
+    }
+
+    /// <summary>搜索框里的文本：输入去抖后自动搜，回车立即搜，清空就退出搜索模式。</summary>
+    public string SearchQuery
+    {
+        get => _searchQuery;
+        set
+        {
+            if (SetProperty(ref _searchQuery, value))
+            {
+                OnPropertyChanged(nameof(ErrorTitle));
+                RestartSearchDebounce();
+            }
+        }
+    }
+
+    /// <summary>列表里现在装的是搜索结果（而不是当前目录的枚举结果）。</summary>
+    public bool IsSearchMode
+    {
+        get => _isSearchMode;
+        private set
+        {
+            if (SetProperty(ref _isSearchMode, value))
+            {
+                OnPropertyChanged(nameof(EmptyHint));
+                OnPropertyChanged(nameof(ErrorTitle));
+            }
+        }
+    }
+
+    /// <summary>搜索范围：false = 当前目录（含子目录，默认），true = 整机（整个 Everything 索引）。</summary>
+    public bool SearchAllDrives
+    {
+        get => _searchAllDrives;
+        set
+        {
+            if (SetProperty(ref _searchAllDrives, value) && _isSearchMode)
+            {
+                SearchNow();
+            }
+        }
+    }
+
+    /// <summary>搜索框旁边的计数文本；空串 = 不显示。</summary>
+    public string? SearchStatusText
+    {
+        get => _searchStatusText;
+        private set
+        {
+            if (SetProperty(ref _searchStatusText, value))
+            {
+                OnPropertyChanged(nameof(HasSearchStatus));
+            }
+        }
+    }
+
+    public bool HasSearchStatus => !string.IsNullOrEmpty(_searchStatusText);
+
+    /// <summary>
+    /// 列表为空时显示的那句话：搜索模式下是“没有匹配项”——
+    /// 不然说“此文件夹为空”会让人以为目录真的是空的。
+    /// </summary>
+    public string EmptyHint => _isSearchMode
+        ? "没有匹配项"
+        : IsRecentView
+            ? "还没有最近访问的记录"
+            : "此文件夹为空";
+
+    /// <summary>顶部提示条的标题：搜索框里有字时说“搜索”，导航失败才是“无法打开”。</summary>
+    public string ErrorTitle => _searchQuery.Length > 0 ? "搜索" : "无法打开";
+
+    /// <summary>搜索框请求聚焦（Ctrl+F）：视图订阅它去 Focus 那个输入框。</summary>
+    public event EventHandler? SearchFocusRequested;
+
+    /// <summary>Ctrl+F：把焦点交给本标签页的搜索框。</summary>
+    public void RequestSearchFocus()
+    {
+        if (CanSearch)
+        {
+            SearchFocusRequested?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>回车 / 切换搜索范围：不等去抖，立刻搜一次。</summary>
+    [RelayCommand]
+    public void SearchNow()
+    {
+        if (!CanSearch || string.IsNullOrWhiteSpace(_searchQuery))
+        {
+            return;
+        }
+
+        _ = RunSearchAsync(ReplaceSearchCts());
+    }
+
+    /// <summary>清空搜索框并回到原目录（Esc / 搜索框上那个 ×）。</summary>
+    [RelayCommand]
+    public Task ClearSearchAsync() => ExitSearchAsync();
+
+    /// <summary>退出搜索模式：清掉搜索状态 + 重新枚举当前目录（保留就地展开状态）。</summary>
+    public async Task ExitSearchAsync()
+    {
+        var wasSearching = _isSearchMode;
+        ResetSearchState();
+
+        if (wasSearching)
+        {
+            await NavigateAsync(_currentPath, pushHistory: false).ConfigureAwait(true);
+        }
+    }
+
+    /// <summary>输入变化后的去抖；输入框被清空 = 直接退出搜索模式。</summary>
+    private void RestartSearchDebounce()
+    {
+        var cts = ReplaceSearchCts();
+
+        if (!CanSearch)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_searchQuery))
+        {
+            if (_isSearchMode)
+            {
+                // 这里不能同步 await（在属性 setter 里），丢到后台跑；
+                // ExitSearchAsync → ResetSearchState 会再把 Cts 取消掉
+                _ = ExitSearchAsync();
+            }
+
+            return;
+        }
+
+        _ = DebouncedSearchAsync(cts);
+    }
+
+    private async Task DebouncedSearchAsync(CancellationTokenSource cts)
+    {
+        var token = cts.Token;
+
+        try
+        {
+            await Task.Delay(SearchDebounceMs, token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (!token.IsCancellationRequested)
+        {
+            await RunSearchAsync(cts).ConfigureAwait(true);
+        }
+    }
+
+    private void CancelSearch()
+    {
+        var previous = _searchCts;
+        _searchCts = null;
+
+        if (previous is null)
+        {
+            return;
+        }
+
+        try
+        {
+            previous.Cancel();
+            previous.Dispose();
+        }
+        catch (ObjectDisposedException)
+        {
+            // 上一轮已经收尾过了
+        }
+    }
+
+    private CancellationTokenSource ReplaceSearchCts()
+    {
+        CancelSearch();
+        return _searchCts = new CancellationTokenSource();
+    }
+
+    private async Task RunSearchAsync(CancellationTokenSource cts)
+    {
+        var token = cts.Token;
+
+        if (!CanSearch || string.IsNullOrWhiteSpace(_searchQuery))
+        {
+            return;
+        }
+
+        // 范围：当前目录（含子目录）或整机；限定词由 EverythingQuery 拼
+        var directory = _searchAllDrives ? null : _currentPath;
+
+        IsLoading = true;
+        try
+        {
+            var result = await _search
+                .SearchAsync(
+                    _searchQuery.Trim(),
+                    directory,
+                    _settings.Current.ShowHiddenFiles,
+                    EverythingQuery.MaxResults,
+                    token)
+                .ConfigureAwait(true);
+
+            if (!token.IsCancellationRequested)
+            {
+                ApplySearchResult(result, directory);
+
+                // 一个都没搜到、而目录里其实有东西：多半是 Everything 的索引没覆盖这个目录
+                // （没装/没启用 Everything 服务时，它只索引手动加进去的那几个文件夹）。
+                // 那时“没有匹配项”会让人以为搜索坏了，所以把原因与怎么办说清楚。
+                if (result.Status == EverythingSearchStatus.NoResults && directory is not null)
+                {
+                    await WarnIfDirectoryNotIndexedAsync(directory, token).ConfigureAwait(true);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 用户又敲了一个字：这一轮算了
+        }
+        catch (Exception ex)
+        {
+            if (!token.IsCancellationRequested)
+            {
+                IsSearchMode = true;
+                ErrorMessage = ex.Message;
+                Log.Exception($"Everything 搜索（{_searchQuery}）", ex);
+            }
+        }
+        finally
+        {
+            // 只有“最新那一轮”才能收掉转圈：旧的一轮收尾时新的可能正在跑
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                IsLoading = false;
+            }
+        }
+    }
+
+    private void ApplySearchResult(EverythingSearchResult result, string? directory)
+    {
+        if (result.Status is EverythingSearchStatus.NotAvailable
+            or EverythingSearchStatus.NotRunning
+            or EverythingSearchStatus.Failed)
+        {
+            // 查不了就**不动列表**：把当前目录（或上一次的结果）留在眼前，只把原因提示出来。
+            // 清空列表 + 弹错误会让人以为“这个目录空了”。
+            ErrorMessage = result.Status switch
+            {
+                EverythingSearchStatus.NotAvailable =>
+                    "未检测到 Everything：装一份 Everything 并把 Everything64.dll 放到 exdir 旁边即可（见 native/README.md）。",
+                EverythingSearchStatus.NotRunning =>
+                    result.Message ?? "Everything 没有在运行：先启动 Everything，再回来搜索。",
+                _ => result.Message ?? "Everything 查询失败。",
+            };
+
+            return;
+        }
+
+        IsSearchMode = true;
+        ErrorMessage = null;
+        ClearStatus();
+
+        _entries = result.Entries;
+        _expandedPaths.Clear();
+        _rootNodes.Clear();
+
+        foreach (var entry in _entries)
+        {
+            _rootNodes.Add(new FileItemViewModel(
+                entry,
+                _showExtensions,
+                Columns,
+                depth: 0,
+                searchPath: SearchPathFor(entry.FullPath, directory)));
+        }
+
+        _rootNodes.Sort(CompareNodes);
+
+        // 搜索结果不是云同步目录：别留着上一个目录的状态列
+        Columns.ShowSyncColumn = false;
+
+        _pendingSelection = Array.Empty<string>();
+        Selection = Array.Empty<FileItemViewModel>();
+        RebuildFlatList();
+
+        SearchStatusText = result.IsTruncated
+            ? $"前 {_entries.Count} 项 / 共 {result.TotalCount} 项"
+            : $"{_entries.Count} 项";
+
+        NotifyNavigationState();
+    }
+
+    /// <summary>
+    /// 结果行右侧那条目录：当前目录范围给“相对搜索根的目录”，整机范围给完整目录，
+    /// 直接位于搜索根里的项返回 null（不显示）。
+    /// </summary>
+    private static string? SearchPathFor(string fullPath, string? root)
+    {
+        string? parent;
+        try
+        {
+            parent = Path.GetDirectoryName(fullPath);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrEmpty(parent))
+        {
+            return null;
+        }
+
+        // 整机范围没有共同根：直接显示完整目录
+        if (string.IsNullOrEmpty(root))
+        {
+            return parent;
+        }
+
+        if (parent.Length <= root.Length || !parent.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var relative = parent[root.Length..].TrimStart('\\', '/');
+        return relative.Length == 0 ? null : relative;
+    }
+
+    /// <summary>
+    /// Everything 的索引没覆盖当前目录时给出可操作的原因。
+    ///
+    /// 三个条件同时成立才提示：一个都没搜到、这个目录在磁盘上确实有东西、Everything 里这个目录下一条都没有。
+    /// 目录本来就是空的、或者只是关键字没匹配上，都不该弹这句话。
+    /// </summary>
+    private async Task WarnIfDirectoryNotIndexedAsync(string directory, CancellationToken token)
+    {
+        if (_directoryEntryCount <= 0)
+        {
+            return;
+        }
+
+        if (await _search.IsDirectoryIndexedAsync(directory, token).ConfigureAwait(true))
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested || !IsSearchMode)
+        {
+            return;
+        }
+
+        ErrorMessage = $"Everything 的索引里没有「{directory}」，所以这里搜不到文件（「整机」范围也只能搜到索引里的内容）。"
+            + "→ 让 Everything 索引整块磁盘：以管理员身份运行一次 Everything.exe -install-service"
+            + "（或在 Everything 的「工具 → 选项 → 常规」里安装服务），"
+            + "也可以把这个目录加进「工具 → 选项 → 索引 → 文件夹」。";
+        Log.Write($"Everything 的索引没有覆盖当前目录：{directory}（当前目录 {_directoryEntryCount} 项）");
+    }
+
+    /// <summary>清掉搜索相关的一切状态（导航到别处 / 退出搜索模式时调）。</summary>
+    private void ResetSearchState()
+    {
+        CancelSearch();
+        SearchStatusText = null;
+
+        if (_isSearchMode)
+        {
+            _isSearchMode = false;
+            OnPropertyChanged(nameof(IsSearchMode));
+            OnPropertyChanged(nameof(EmptyHint));
+            OnPropertyChanged(nameof(ErrorTitle));
+        }
+
+        // 有意不走 setter：setter 会触发去抖，反过来又调 ExitSearchAsync（回环）
+        if (_searchQuery.Length > 0)
+        {
+            _searchQuery = string.Empty;
+            OnPropertyChanged(nameof(SearchQuery));
+        }
+    }
+
     // ------------------------------------------------------------------ 排序
 
     public FileSortColumn SortColumn
@@ -476,6 +961,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         _loadCts?.Dispose();
         var cts = new CancellationTokenSource();
         _loadCts = cts;
+
+        // 换目录 = 退出搜索模式（搜索框、计数、结果行右侧的相对目录都跟着清）
+        ResetSearchState();
 
         IsLoading = true;
         ErrorMessage = null;
@@ -551,6 +1039,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         }
 
         _entries = entries;
+        _directoryEntryCount = entries.Count;
         CurrentPath = normalized;
         PathInput = normalized;
 
@@ -562,10 +1051,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
             SortAscending = true;
         }
 
-        // 换了目录：上一个目录的展开状态没有意义
+        // 换了目录：上一个目录的展开状态没有意义；「最新访问」视图同时恢复“按访问时间倒序”的默认顺序
         if (!string.Equals(previous, normalized, StringComparison.OrdinalIgnoreCase))
         {
             _expandedPaths.Clear();
+            _sortByAccessOrder = _fileSystem.IsRecentViewPath(normalized);
         }
 
         _pendingSelection = !string.IsNullOrEmpty(selectPath)
@@ -592,6 +1082,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
             return;
         }
 
+        // 搜索结果里的 F5 = 拿当前关键字重搜一次（重新枚举原目录没有意义）
+        if (_isSearchMode)
+        {
+            SearchNow();
+            return;
+        }
+
         // 压缩包：先丢掉索引缓存 —— F5 的语义就是“外部改动也刷新到”
         if (ArchiveFile is { } archiveFile)
         {
@@ -610,6 +1107,35 @@ public sealed partial class FolderTabViewModel : ObservableObject
         await NavigateAsync(_currentPath, pushHistory: false, preserveSelection: true).ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// 「最新访问」列表内容变了（又访问了一条 / 被清空）之后重读一遍。
+    /// 只换行集合：不动后退历史、不动当前路径、也不记这一次变化（那是 <c>NavigateAsync</c> 的事），
+    /// 所以不会自激。非「最新访问」的标签页直接返回。
+    /// </summary>
+    public async Task ReloadRecentViewAsync()
+    {
+        if (!IsRecentView)
+        {
+            return;
+        }
+
+        try
+        {
+            _entries = await _fileSystem
+                .EnumerateDirectoryAsync(_currentPath, _settings.Current.ShowHiddenFiles)
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Log.Exception("刷新「最新访问」列表", ex);
+            return;
+        }
+
+        _directoryEntryCount = _entries.Count;
+        BuildRootNodes();
+        RebuildFlatList();
+    }
+
     // ------------------------------------------------------------------ 压缩包（只读）
 
     /// <summary>最多让用户输几次压缩包密码（输完还是不对就显示「需要密码」）。</summary>
@@ -620,6 +1146,27 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
     /// <summary>远程位置（SFTP / FTP）只读：写操作的统一拒绝文案。</summary>
     public const string RemoteReadOnlyMessage = "远程位置不支持该操作（只能浏览与下载）";
+
+    /// <summary>「最新访问」列表（虚拟视图）里不能往“当前目录”写东西时的统一拒绝文案。</summary>
+    public const string RecentViewReadOnlyMessage = "「最新访问」列表不支持该操作（它不是一个真实目录）";
+
+    /// <summary>
+    /// 当前标签页是「最新访问」虚拟视图：是的话显示提示并返回 true。
+    /// 只管**针对当前目录**的写操作（粘贴 / 新建文件夹 / 终端 / 拖入）—— 那些会把
+    /// <c>exdir://recent</c> 当成目标目录去规整，变成“目标目录不存在”这种看不懂的错。
+    /// 作用于**选中项**的操作不受影响：列表里的每一行都是真实文件，可以打开 / 复制 / 删除。
+    /// </summary>
+    private bool RefuseInRecentView()
+    {
+        if (!IsRecentView)
+        {
+            return false;
+        }
+
+        Log.Write("「最新访问」列表：当前不是真实目录，拒绝以它为目标的写操作");
+        ErrorMessage = RecentViewReadOnlyMessage;
+        return true;
+    }
 
     /// <summary>当前目录是远程位置（SFTP / FTP）；是的话显示只读提示并返回 true。</summary>
     private bool RefuseInRemote()
@@ -1103,6 +1650,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
             if (_fileSystem.FileExists(text))
             {
                 _shell.OpenWithDefaultApp(text);
+                RecordRecentFile(text);
                 CancelPathEdit();
                 return;
             }
@@ -1140,6 +1688,39 @@ public sealed partial class FolderTabViewModel : ObservableObject
 
         // 只打开第一项：目录进入，文件交给默认程序
         OpenItem(item);
+    }
+
+    /// <summary>「打开所在文件夹」：导航到选中项的目录并把它选中（搜索结果的右键菜单用）。</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void OpenContainingFolder()
+    {
+        if (_selection.FirstOrDefault() is { } item)
+        {
+            OpenSearchResult(item);
+        }
+    }
+
+    /// <summary>「打开」：用默认程序打开选中的文件（右键菜单用；双击在搜索模式里是“打开所在文件夹”）。</summary>
+    [RelayCommand(CanExecute = nameof(HasSelection))]
+    private void OpenWithDefaultApp() => OpenSelectionWithDefaultApp();
+
+    /// <summary>搜索结果行的默认动作：文件 → 去它所在的目录并选中；目录 → 直接进去。</summary>
+    private void OpenSearchResult(FileItemViewModel item)
+    {
+        if (item.IsDirectory)
+        {
+            _ = NavigateAsync(item.FullPath);
+            return;
+        }
+
+        var parent = Path.GetDirectoryName(item.FullPath);
+        if (string.IsNullOrEmpty(parent))
+        {
+            _shell.OpenWithDefaultApp(item.FullPath);
+            return;
+        }
+
+        _ = NavigateAsync(parent, pushHistory: true, selectPath: item.FullPath);
     }
 
     /// <summary>
@@ -1296,6 +1877,14 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// <summary>双击 / 回车打开某一项。目录进入，文件交给默认程序。</summary>
     public void OpenItem(FileItemViewModel item)
     {
+        // 搜索结果：双击 = 打开所在文件夹并选中它（目录结果直接进去）
+        // —— 搜完了通常是要到那个位置去做事，而不是把文件丢给默认程序
+        if (_isSearchMode)
+        {
+            OpenSearchResult(item);
+            return;
+        }
+
         if (item.IsDirectory)
         {
             _ = NavigateAsync(item.FullPath);
@@ -1326,6 +1915,24 @@ public sealed partial class FolderTabViewModel : ObservableObject
         }
 
         _shell.OpenWithDefaultApp(item.FullPath);
+        RecordRecentFile(item.FullPath);
+    }
+
+    /// <summary>
+    /// 记一次“用默认程序打开了这个文件”进「最新访问」（与目录导航用同一个服务）。
+    /// 只记真实存在的本地文件：包内条目 / 远程文件打开的是中转目录里的临时副本，记下来没有意义。
+    /// </summary>
+    private void RecordRecentFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)
+            || _fileSystem.IsRemotePath(path)
+            || _fileSystem.IsInsideArchive(path)
+            || !_fileSystem.FileExists(path))
+        {
+            return;
+        }
+
+        _recents.Add(path, isDirectory: false);
     }
 
     /// <summary>包内文件：解到临时目录再交给默认程序打开（加密包会先问密码）。</summary>
@@ -1387,6 +1994,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
         foreach (var item in _selection)
         {
             _shell.OpenWithDefaultApp(item.FullPath);
+            RecordRecentFile(item.FullPath);
         }
     }
 
@@ -1577,8 +2185,8 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private async Task PasteAsync()
     {
-        // 包内 / 远程目录都不能粘（写的是虚拟路径 / 只读位置）
-        if (RefuseInArchive() || RefuseInRemote())
+        // 包内 / 远程目录都不能粘（写的是虚拟路径 / 只读位置），「最新访问」不是真实目录
+        if (RefuseInArchive() || RefuseInRemote() || RefuseInRecentView())
         {
             return;
         }
@@ -1909,9 +2517,9 @@ public sealed partial class FolderTabViewModel : ObservableObject
         bool move,
         bool skipItemsAlreadyInTarget)
     {
-        // 包内 / 远程目录不能粘 / 拖入（写的是虚拟路径 / 只读位置）；
+        // 包内 / 远程目录不能粘 / 拖入（写的是虚拟路径 / 只读位置），「最新访问」不是真实目录；
         // 包内条目**拖出去**走的是解出来的临时副本（真实路径），不在这里拒绝
-        if (RefuseInArchive() || RefuseInRemote())
+        if (RefuseInArchive() || RefuseInRemote() || RefuseInRecentView())
         {
             return false;
         }
@@ -2021,7 +2629,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private async Task CreateNewFolderAsync()
     {
-        if (RefuseInArchive() || RefuseInRemote())
+        if (RefuseInArchive() || RefuseInRemote() || RefuseInRecentView())
         {
             return;
         }
@@ -2061,7 +2669,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private void OpenTerminal()
     {
-        if (RefuseInArchive() || RefuseInRemote())
+        if (RefuseInArchive() || RefuseInRemote() || RefuseInRecentView())
         {
             return;
         }
@@ -2072,7 +2680,7 @@ public sealed partial class FolderTabViewModel : ObservableObject
     [RelayCommand]
     private void OpenTerminalAsAdmin()
     {
-        if (RefuseInArchive() || RefuseInRemote())
+        if (RefuseInArchive() || RefuseInRemote() || RefuseInRecentView())
         {
             return;
         }
@@ -2410,6 +3018,13 @@ public sealed partial class FolderTabViewModel : ObservableObject
             return raw;
         }
 
+        if (RecentView.IsRecentViewPath(path))
+        {
+            // 「最新访问」是顶层虚拟视图：面包屑只有它自己那一段
+            raw.Add((RecentView.DisplayName, path));
+            return raw;
+        }
+
         if (path.StartsWith(@"\\", StringComparison.Ordinal))
         {
             // UNC：\\server\share 当根，再往下的每一级各自成段
@@ -2462,7 +3077,11 @@ public sealed partial class FolderTabViewModel : ObservableObject
             _rootNodes.Add(new FileItemViewModel(entry, _showExtensions, Columns));
         }
 
-        _rootNodes.Sort(CompareNodes);
+        // 「最新访问」默认保持服务给的顺序（访问时间倒序），用户点过列头之后才按列排
+        if (!_sortByAccessOrder)
+        {
+            _rootNodes.Sort(CompareNodes);
+        }
     }
 
     /// <summary>把整棵树摊平成可见行（整体替换，用于导航/排序/恢复展开）。</summary>
@@ -2488,6 +3107,10 @@ public sealed partial class FolderTabViewModel : ObservableObject
     /// <summary>排序：树的每一层都按同一列排，整体替换列表（选中项由视图按路径恢复）。</summary>
     private void ResortItems()
     {
+        // 任何一个“请排序”的动作（点列头 / 拨“文件夹排在文件前面”）都会取消「最新访问」
+        // 视图的“按访问时间”默认顺序 —— 用户明确要求排序，就听他的
+        _sortByAccessOrder = false;
+
         if (_selection.Count > 0)
         {
             _pendingSelection = _selection.Select(i => i.FullPath).ToList();

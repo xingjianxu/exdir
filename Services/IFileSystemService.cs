@@ -43,8 +43,15 @@ public interface IFileSystemService
     bool TryParseArchivePath(string path, out ArchivePath location);
 
     /// <summary>
+    /// 路径是不是「最新访问」虚拟视图（<c>exdir://recent</c>）：它不是真实目录，
+    /// 枚举出来的是最近访问过的目录与文件（按访问时间倒序），见 <c>Helpers/RecentView</c>。
+    /// </summary>
+    bool IsRecentViewPath(string path);
+
+    /// <summary>
     /// 把任意输入规整成可导航的目录路径：
     /// 真实目录 → 全路径；压缩包根 / 包内存在的目录 → 虚拟路径（<c>D:\a\b.zip\sub</c>）；
+    /// 「最新访问」虚拟视图 → 它的哨兵路径；
     /// 真实文件、不存在的路径、非法路径 → null。
     /// 包内目录要真的存在，所以这一条可能要去读压缩包，因此是异步的。
     /// </summary>
